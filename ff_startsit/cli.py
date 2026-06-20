@@ -19,6 +19,7 @@ from datetime import date, timedelta
 from pathlib import Path
 from typing import Optional, Sequence
 
+from . import report
 from .config import Settings, load_settings
 from .data.matching import normalize_name
 from .models import Player
@@ -28,10 +29,6 @@ from .roster.base import RosterError, RosterProvider
 from .roster.espn import ESPNProvider
 from .roster.manual import ManualProvider
 from .roster.sleeper import SleeperClient, SleeperError, SleeperProvider
-
-# Slots used by `lineup` (a common 1QB/PPR-ish starting set).
-LINEUP_SLOTS = ["QB", "RB", "RB", "WR", "WR", "TE", "FLEX", "K", "DEF"]
-FLEX_POSITIONS = {"RB", "WR", "TE"}
 
 
 def main(argv: Optional[Sequence[str]] = None) -> int:
@@ -66,6 +63,7 @@ def _build_parser() -> argparse.ArgumentParser:
     p_rank = sub.add_parser("rank", parents=[roster_parent], help="rank your players at a position")
     p_rank.add_argument("--pos", required=True, help="QB/RB/WR/TE/K/DEF")
     p_rank.add_argument("--week", type=int, default=None)
+    p_rank.add_argument("--md", action="store_true", help="emit markdown instead of a table")
     p_rank.add_argument("--csv", type=Path, default=None, help="also write a CSV")
     p_rank.add_argument("--json", type=Path, default=None, help="also write JSON")
     p_rank.set_defaults(func=cmd_rank)
@@ -73,11 +71,19 @@ def _build_parser() -> argparse.ArgumentParser:
     p_cmp = sub.add_parser("compare", parents=[roster_parent], help="head-to-head between players")
     p_cmp.add_argument("players", nargs="+", help="player names (quote multi-word)")
     p_cmp.add_argument("--week", type=int, default=None)
+    p_cmp.add_argument("--md", action="store_true", help="emit markdown instead of a table")
     p_cmp.set_defaults(func=cmd_compare)
 
     p_line = sub.add_parser("lineup", parents=[roster_parent], help="suggest best starter per slot")
     p_line.add_argument("--week", type=int, default=None)
+    p_line.add_argument("--md", action="store_true", help="emit markdown instead of plain text")
     p_line.set_defaults(func=cmd_lineup)
+
+    p_report = sub.add_parser("report", parents=[roster_parent],
+                              help="whole-roster markdown digest (lineup + all positions)")
+    p_report.add_argument("--week", type=int, default=None)
+    p_report.add_argument("--out", type=Path, default=None, help="write digest to a file too")
+    p_report.set_defaults(func=cmd_report)
 
     return parser
 
@@ -104,7 +110,11 @@ def cmd_rank(args, settings: Settings) -> int:
 
     week = _resolve_week(args, settings)
     rec = recommend(settings, candidates, week, command=f"rank --pos {pos}")
-    render.render_table(rec, title=f"Week {week} {pos} • {settings.scoring.upper()}")
+    title = f"Week {week} {pos} • {settings.scoring.upper()}"
+    if args.md:
+        print(render.render_markdown(rec, title=title))
+    else:
+        render.render_table(rec, title=title)
     if args.csv:
         render.export_csv(rec, args.csv)
         print(f"Wrote {args.csv}")
@@ -123,7 +133,11 @@ def cmd_compare(args, settings: Settings) -> int:
 
     week = _resolve_week(args, settings)
     rec = recommend(settings, candidates, week, command="compare")
-    render.render_table(rec, title=f"Week {week} compare • {settings.scoring.upper()}")
+    title = f"Week {week} compare • {settings.scoring.upper()}"
+    if args.md:
+        print(render.render_markdown(rec, title=title))
+    else:
+        render.render_table(rec, title=title)
     return 0
 
 
@@ -131,39 +145,42 @@ def cmd_lineup(args, settings: Settings) -> int:
     players = _get_roster(args, settings)
     week = _resolve_week(args, settings)
 
-    # Score everyone once (per position frame), then greedily fill slots.
-    by_pos: dict[str, list] = {}
-    for pos in {p.position for p in players}:
-        cands = [p for p in players if p.position == pos]
-        rec = recommend(settings, cands, week, command="lineup", log=False)
-        by_pos[pos] = [s for s in rec.scores if s.final is not None]
+    recs = report.rank_each_position(settings, players, week)
+    lineup = report.build_lineup(report.scored(recs))
 
-    used: set[str] = set()
+    if args.md:
+        lines = [f"### Suggested Week {week} lineup ({settings.scoring.upper()})",
+                 "", "| Slot | Player | Team | Score |", "|---|---|---|---|"]
+        for slot, pick in lineup:
+            if pick is None:
+                lines.append(f"| {slot} | _(no option)_ | | |")
+            else:
+                lines.append(f"| {slot} | {pick.player.name} | {pick.player.team or 'BYE'} "
+                             f"| {pick.final:.1f} |")
+        print("\n".join(lines))
+        return 0
+
     print(f"Suggested Week {week} lineup ({settings.scoring.upper()}):")
-    for slot in LINEUP_SLOTS:
-        pick = _best_for_slot(slot, by_pos, used)
+    for slot, pick in lineup:
         if pick is None:
             print(f"  {slot:5} (no option)")
-            continue
-        used.add(pick.player.key)
-        print(f"  {slot:5} {pick.player.name:24} {pick.player.team or 'BYE':4} {pick.final:.1f}")
+        else:
+            print(f"  {slot:5} {pick.player.name:24} {pick.player.team or 'BYE':4} {pick.final:.1f}")
+    return 0
+
+
+def cmd_report(args, settings: Settings) -> int:
+    players = _get_roster(args, settings)
+    week = _resolve_week(args, settings)
+    digest = report.build_digest(settings, players, week)
+    print(digest)
+    if args.out:
+        args.out.parent.mkdir(parents=True, exist_ok=True)
+        args.out.write_text(digest)
     return 0
 
 
 # --- helpers --------------------------------------------------------------
-def _best_for_slot(slot: str, by_pos: dict, used: set):
-    positions = FLEX_POSITIONS if slot == "FLEX" else {slot}
-    best = None
-    for pos in positions:
-        for s in by_pos.get(pos, []):
-            if s.player.key in used:
-                continue
-            if best is None or (s.final or 0) > (best.final or 0):
-                best = s
-            break  # by_pos[pos] is already sorted; first unused is best for that pos
-    return best
-
-
 def _resolve_named(players: Sequence[Player], names: Sequence[str]) -> list[Player]:
     wanted = [normalize_name(n) for n in names]
     out: list[Player] = []
