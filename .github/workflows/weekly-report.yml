@@ -1,0 +1,65 @@
+name: Weekly start/sit report
+
+# Posts your lineup + rankings as a GitHub Issue you can read on your phone.
+# Runs Thursday afternoon (before TNF) and Sunday morning (before the early games),
+# and can be triggered manually from the GitHub mobile app (Actions -> Run workflow).
+on:
+  schedule:
+    - cron: "0 21 * * 4"   # Thursday ~21:00 UTC (≈5pm ET EDT / 4pm EST)
+    - cron: "0 13 * * 0"   # Sunday   ~13:00 UTC (≈9am ET EDT / 8am EST)
+  workflow_dispatch:
+    inputs:
+      week:
+        description: "NFL week (blank = auto-detect)"
+        required: false
+        default: ""
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  report:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install
+        run: pip install -e .
+
+      - name: Generate digest
+        env:
+          FF_ROSTER_SOURCE: espn
+          ESPN_LEAGUE_ID: ${{ secrets.ESPN_LEAGUE_ID }}
+          ESPN_TEAM_ID: ${{ secrets.ESPN_TEAM_ID }}
+          ESPN_S2: ${{ secrets.ESPN_S2 }}
+          ESPN_SWID: ${{ secrets.ESPN_SWID }}
+          ODDS_API_KEY: ${{ secrets.ODDS_API_KEY }}
+          FANTASYPROS_API_KEY: ${{ secrets.FANTASYPROS_API_KEY }}
+          INPUT_WEEK: ${{ github.event.inputs.week }}
+        run: |
+          WEEK_ARG=""
+          if [ -n "$INPUT_WEEK" ]; then WEEK_ARG="--week $INPUT_WEEK"; fi
+          python -m ff_startsit report $WEEK_ARG --out report.md
+          # Mirror to the run summary (viewable in the GitHub mobile app).
+          cat report.md >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Post / update issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          WEEK=$(grep -oE 'Week [0-9]+' report.md | head -1 | grep -oE '[0-9]+' || true)
+          TITLE="Week ${WEEK:-?} start/sit"
+          NUM=$(gh issue list --state open --search "in:title \"$TITLE\"" \
+                --json number,title --jq ".[] | select(.title==\"$TITLE\") | .number" | head -1)
+          if [ -n "$NUM" ]; then
+            echo "Updating issue #$NUM"
+            gh issue comment "$NUM" --body-file report.md
+          else
+            echo "Creating issue: $TITLE"
+            gh issue create --title "$TITLE" --body-file report.md
+          fi

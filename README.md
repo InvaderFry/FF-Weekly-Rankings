@@ -76,9 +76,53 @@ ffstartsit rank --pos RB --league 778899 --team 4   # a different ESPN league/te
 ffstartsit rank --pos WR --source manual            # use your manual CSV
 ```
 
+There's also a whole-roster digest:
+
+```bash
+ffstartsit report                            # lineup + every position, as markdown
+```
+
 Each `rank`/`compare` run appends a row to `.cache/results_log.jsonl` capturing
 the candidates, every signal's raw + normalized value, the weights used, and the
 pick — the data a #7 calibrator will learn from.
+
+## Use it from your phone (GitHub Actions)
+
+You don't need to run anything locally to use this on the go. GitHub Actions
+runners have internet access, so they run the tool for you and surface results in
+the GitHub mobile app. Two workflows ship in `.github/workflows/`:
+
+- **Weekly digest** (`weekly-report.yml`) — runs Thursday afternoon and Sunday
+  morning (and on-demand via *Actions → Run workflow*), then posts your lineup +
+  rankings as a **GitHub Issue** titled `Week N start/sit`. Watch the repo
+  (Watch → All Activity) to get a phone notification each time.
+- **ChatOps** (`chatops.yml`) — comment a slash command on any issue and the bot
+  reply-comments the answer:
+
+  | Command | Does |
+  |---|---|
+  | `/lineup` | suggested starter at each slot |
+  | `/rank RB` | rank your RBs (any position) |
+  | `/compare Josh Allen \| Jalen Hurts` | head-to-head with close-call flag |
+  | `/report` | the full digest on demand |
+
+  Inline options work on any command: `week N`, `source espn\|sleeper\|manual`,
+  `league ID`, `team ID` — e.g. `/rank WR week 5`.
+
+### One-time setup
+Add these in **repo → Settings → Secrets and variables → Actions → New repository
+secret** (same values as your local `.env`):
+
+`ESPN_LEAGUE_ID`, `ESPN_S2`, `ESPN_SWID` (private league) — and optionally
+`ESPN_TEAM_ID` (public league), `ODDS_API_KEY`, `FANTASYPROS_API_KEY`.
+
+Notes:
+- Only the **repo owner's** comments trigger ChatOps, and only a fixed set of
+  commands runs — secrets are never echoed.
+- Cron times are UTC and drift ~1h with daylight saving; edit the `cron:` lines in
+  `weekly-report.yml` to taste.
+- ESPN cookies expire periodically — if the digest starts erroring, re-grab
+  `ESPN_S2`/`ESPN_SWID` and update the secrets.
 
 ## How scoring works
 
@@ -94,10 +138,12 @@ pick — the data a #7 calibrator will learn from.
 
 ```
 ff_startsit/
-  cli.py            entry point: sync / rank / compare / lineup
+  cli.py            entry point: sync / rank / compare / lineup / report
   config.py         .env-driven Settings (weights, threshold, scoring)
   models.py         Player, Game, SignalValue, PlayerScore, Recommendation
   pipeline.py       assemble signals -> fetch -> blend -> log
+  report.py         whole-roster markdown digest + shared lineup builder
+  chatops.py        parse "/rank RB" style comments -> CLI argv (for Actions)
   sources/
     base.py         Signal ABC  <-- add new signals here (the #7 seam)
     ecr.py          FantasyPros ECR (API key + scrape fallback)

@@ -1,0 +1,75 @@
+name: ChatOps start/sit
+
+# Comment a slash command on any issue and the bot replies:
+#   /lineup                    /report
+#   /rank RB                   /rank WR week 5
+#   /compare Josh Allen | Jalen Hurts
+# Optional inline options on any command: week N, source espn|sleeper|manual, league ID, team ID.
+on:
+  issue_comment:
+    types: [created]
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    # Only the repo owner can run commands, and only on slash-prefixed comments.
+    if: >
+      startsWith(github.event.comment.body, '/') &&
+      github.event.comment.author_association == 'OWNER'
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install
+        run: pip install -e .
+
+      - name: Run command
+        env:
+          # Pass the comment via env (never interpolated into the shell) to avoid injection.
+          COMMENT_BODY: ${{ github.event.comment.body }}
+          FF_ROSTER_SOURCE: espn
+          ESPN_LEAGUE_ID: ${{ secrets.ESPN_LEAGUE_ID }}
+          ESPN_TEAM_ID: ${{ secrets.ESPN_TEAM_ID }}
+          ESPN_S2: ${{ secrets.ESPN_S2 }}
+          ESPN_SWID: ${{ secrets.ESPN_SWID }}
+          ODDS_API_KEY: ${{ secrets.ODDS_API_KEY }}
+          FANTASYPROS_API_KEY: ${{ secrets.FANTASYPROS_API_KEY }}
+        run: |
+          python - <<'PY'
+          import contextlib, io, os
+          from ff_startsit.chatops import parse_command
+          from ff_startsit.cli import main
+
+          argv = parse_command(os.environ.get("COMMENT_BODY", ""))
+          if not argv:
+              raise SystemExit(0)  # not a recognized command -> stay silent
+
+          buf = io.StringIO()
+          try:
+              with contextlib.redirect_stdout(buf), contextlib.redirect_stderr(buf):
+                  main(argv)
+              out = buf.getvalue().strip() or "_(no output)_"
+          except Exception as exc:  # noqa: BLE001 - surface any failure to the comment
+              out = f"⚠️ Error running `{' '.join(argv)}`:\n\n```\n{exc}\n```"
+
+          with open("reply.md", "w", encoding="utf-8") as fh:
+              fh.write(f"> `{' '.join(argv)}`\n\n{out}\n")
+          PY
+
+      - name: Reply
+        if: hashFiles('reply.md') != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh issue comment "${{ github.event.issue.number }}" --body-file reply.md
+          # Acknowledge the triggering comment (best-effort).
+          gh api -X POST \
+            "repos/${{ github.repository }}/issues/comments/${{ github.event.comment.id }}/reactions" \
+            -f content='+1' >/dev/null 2>&1 || true
