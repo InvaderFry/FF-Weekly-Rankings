@@ -1,0 +1,9 @@
+{
+  "100": {"full_name": "Patrick Runner", "first_name": "Patrick", "last_name": "Runner", "team": "KC", "position": "RB"},
+  "101": {"full_name": "Chicago Back", "first_name": "Chicago", "last_name": "Back", "team": "CHI", "position": "RB"},
+  "102": {"full_name": "Buffalo Rusher", "first_name": "Buffalo", "last_name": "Rusher", "team": "BUF", "position": "RB"},
+  "103": {"full_name": "Benched Guy", "first_name": "Benched", "last_name": "Guy", "team": null, "position": "RB"},
+  "200": {"full_name": "Some Kicker", "first_name": "Some", "last_name": "Kicker", "team": "GB", "position": "K"},
+  "KC": {"full_name": "Kansas City", "team": "KC", "position": "DEF"},
+  "999": {"full_name": "Practice Squad", "team": "NE", "position": "OL"}
+}

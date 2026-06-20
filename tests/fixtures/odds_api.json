@@ -1,0 +1,55 @@
+[
+  {
+    "id": "evt1",
+    "home_team": "Kansas City Chiefs",
+    "away_team": "Buffalo Bills",
+    "bookmakers": [
+      {
+        "key": "draftkings",
+        "markets": [
+          {"key": "totals", "outcomes": [
+            {"name": "Over", "point": 47.5},
+            {"name": "Under", "point": 47.5}
+          ]},
+          {"key": "spreads", "outcomes": [
+            {"name": "Kansas City Chiefs", "point": -3.0},
+            {"name": "Buffalo Bills", "point": 3.0}
+          ]}
+        ]
+      },
+      {
+        "key": "fanduel",
+        "markets": [
+          {"key": "totals", "outcomes": [
+            {"name": "Over", "point": 48.5},
+            {"name": "Under", "point": 48.5}
+          ]},
+          {"key": "spreads", "outcomes": [
+            {"name": "Kansas City Chiefs", "point": -3.0},
+            {"name": "Buffalo Bills", "point": 3.0}
+          ]}
+        ]
+      }
+    ]
+  },
+  {
+    "id": "evt2",
+    "home_team": "Chicago Bears",
+    "away_team": "Green Bay Packers",
+    "bookmakers": [
+      {
+        "key": "draftkings",
+        "markets": [
+          {"key": "totals", "outcomes": [
+            {"name": "Over", "point": 38.0},
+            {"name": "Under", "point": 38.0}
+          ]},
+          {"key": "spreads", "outcomes": [
+            {"name": "Chicago Bears", "point": 6.0},
+            {"name": "Green Bay Packers", "point": -6.0}
+          ]}
+        ]
+      }
+    ]
+  }
+]

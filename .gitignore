@@ -1,0 +1,22 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+.venv/
+venv/
+
+# Env / secrets
+.env
+
+# App data cache & logs (kept out of VCS)
+.cache/
+data/cache/
+*.log
+results_log.jsonl
+
+# Test / tooling
+.pytest_cache/
+.coverage
