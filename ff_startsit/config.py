@@ -18,8 +18,19 @@ SCORING_CODES = {"ppr": "PPR", "half": "HALF", "std": "STD"}
 
 @dataclass
 class Settings:
+    # Roster source: espn (default) | sleeper | manual
+    roster_source: str = "espn"
+    # ESPN
+    espn_league_id: str = ""
+    espn_team_id: str = ""
+    espn_s2: str = ""
+    espn_swid: str = ""
+    # Sleeper
     sleeper_username: str = ""
     sleeper_league_id: str = ""
+    # Manual
+    manual_roster_file: Path = field(default_factory=lambda: Path("manual_roster.csv"))
+    # Signals
     odds_api_key: str = ""
     fantasypros_api_key: str = ""
     scoring: str = "ppr"
@@ -54,7 +65,17 @@ def load_settings(env_file: str | os.PathLike | None = None) -> Settings:
     if scoring not in SCORING_CODES:
         scoring = "ppr"
 
+    roster_source = (os.getenv("FF_ROSTER_SOURCE") or "espn").lower()
+    if roster_source not in {"espn", "sleeper", "manual"}:
+        roster_source = "espn"
+
     return Settings(
+        roster_source=roster_source,
+        espn_league_id=os.getenv("ESPN_LEAGUE_ID", "").strip(),
+        espn_team_id=os.getenv("ESPN_TEAM_ID", "").strip(),
+        espn_s2=os.getenv("ESPN_S2", "").strip(),
+        espn_swid=os.getenv("ESPN_SWID", "").strip(),
+        manual_roster_file=Path(os.getenv("FF_MANUAL_ROSTER", "manual_roster.csv")),
         sleeper_username=os.getenv("SLEEPER_USERNAME", "").strip(),
         sleeper_league_id=os.getenv("SLEEPER_LEAGUE_ID", "").strip(),
         odds_api_key=os.getenv("ODDS_API_KEY", "").strip(),

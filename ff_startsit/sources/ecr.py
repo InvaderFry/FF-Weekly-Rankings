@@ -120,7 +120,10 @@ class ECRSignal(Signal):
                     return rows
             except (requests.RequestException, ValueError):
                 pass  # fall through to scrape
-        rows = self._fetch_scrape(position)
+        try:
+            rows = self._fetch_scrape(position)
+        except requests.RequestException:
+            return []  # offline / page unreachable -> signal simply has no data
         self.last_source = "scrape"
         return rows
 

@@ -26,24 +26,43 @@ cp .env.example .env   # then edit .env
 
 ## Configure (`.env`)
 
+### Signals & tuning
+
 | Variable | Required | Notes |
 |---|---|---|
-| `SLEEPER_USERNAME` | yes | Roster is pulled from Sleeper (free, no auth). |
-| `SLEEPER_LEAGUE_ID` | no | Defaults to your first NFL league this season. |
 | `ODDS_API_KEY` | no | Free key from [the-odds-api.com](https://the-odds-api.com/). Without it, the app runs on ECR alone and labels Vegas "unavailable". |
 | `FANTASYPROS_API_KEY` | no | Tried first; otherwise the app scrapes the public rankings page. |
 | `FF_SCORING` | no | `ppr` (default), `half`, or `std`. |
 | `FF_WEIGHT_ECR` / `FF_WEIGHT_VEGAS` | no | Blend weights (default 0.75 / 0.25). |
 | `FF_CLOSE_CALL_THRESHOLD` | no | 0–100 gap under which a matchup is "too close to call" (default 5). |
 
+### Roster source
+
+The roster comes from one of three sources, set by `FF_ROSTER_SOURCE` (default
+`espn`) and overridable per command with `--source {espn,sleeper,manual}`,
+`--league <id>`, and `--team <id>`.
+
+| Source | Variables | Notes |
+|---|---|---|
+| **espn** (default) | `ESPN_LEAGUE_ID` (req), `ESPN_TEAM_ID`, `ESPN_S2`, `ESPN_SWID` | **Private** league: paste the `espn_s2` + `SWID` cookies from your logged-in browser (DevTools → Application → Cookies); the app then auto-detects *your* team via the SWID. **Public** league: no cookies, but set `ESPN_TEAM_ID` (from `.../teams/<ID>`). |
+| **sleeper** | `SLEEPER_USERNAME` (req), `SLEEPER_LEAGUE_ID` | Free, no auth. League defaults to your first NFL league this season. |
+| **manual** | `FF_MANUAL_ROSTER` (CSV path) | A hand-edited CSV with headers `name,team,position`. Copy `manual_roster.csv.example` to start. Team accepts abbreviations or full names; `DEF`/`DST` both work. |
+
+> The ESPN read API is unofficial and cookies expire periodically — re-grab them
+> if `sync` starts returning 401/403.
+
 ## Use
 
 ```bash
-ffstartsit sync                              # cache your roster + player metadata
+ffstartsit sync                              # pull & cache your roster (default: ESPN)
 ffstartsit rank --pos RB                     # rank your RBs for the current week
 ffstartsit rank --pos WR --week 5 --csv out.csv
 ffstartsit compare "Player A" "Player B"     # head-to-head, with close-call flag
 ffstartsit lineup                            # best starter at each standard slot
+
+# Source overrides (one default league in .env, switch per command):
+ffstartsit rank --pos RB --league 778899 --team 4   # a different ESPN league/team
+ffstartsit rank --pos WR --source manual            # use your manual CSV
 ```
 
 Each `rank`/`compare` run appends a row to `.cache/results_log.jsonl` capturing
@@ -72,9 +91,14 @@ ff_startsit/
     base.py         Signal ABC  <-- add new signals here (the #7 seam)
     ecr.py          FantasyPros ECR (API key + scrape fallback)
     vegas.py        The Odds API -> implied team totals
-  roster/sleeper.py Sleeper username -> league -> roster -> Players
+  roster/
+    base.py         RosterProvider ABC  <-- add new roster sources here
+    espn.py         ESPN league (cookies + team auto-detect / id fallback)
+    sleeper.py      Sleeper username -> league -> roster (+ SleeperProvider)
+    manual.py       hand-edited CSV roster
   data/
     teams.py        team-abbreviation normalization across sources
+    espn_maps.py    ESPN proTeamId / positionId -> canonical codes
     matching.py     name/position matching of external rows onto the roster
   engine/
     normalize.py    raw -> 0..100 (pure)
@@ -100,7 +124,9 @@ ff_startsit/
 Tests run fully offline against saved fixtures (`tests/fixtures/`): implied-total
 math, ECR API + scrape parsing, name/team matching incl. unmatched players,
 normalization edge cases, blend weighting + close-call/disagreement flags, Sleeper
-metadata parsing, and an end-to-end pipeline run with fake signals.
+metadata parsing, ESPN roster parsing (team auto-detect by SWID + id, D/ST),
+manual-CSV parsing, the roster-provider factory, and an end-to-end pipeline run
+with fake signals.
 
 > Note: live API calls require outbound network; in restricted environments run
 > the unit tests (offline) and do the live end-to-end run on your own machine.

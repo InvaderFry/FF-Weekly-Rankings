@@ -37,15 +37,21 @@ def recommend(
     """Fetch every available signal for ``players`` and blend into a ranking."""
     signals = list(signals) if signals is not None else build_signals(settings)
 
+    from .sources.base import unavailable_for
+
     signal_values = {}
     higher_is_better = {}
     for sig in signals:
         if not sig.is_available():
             # Still record an all-unavailable map so the note surfaces to the user.
-            from .sources.base import unavailable_for
             signal_values[sig.name] = unavailable_for(players, f"{sig.name} unavailable")
         else:
-            signal_values[sig.name] = sig.fetch(week, players)
+            try:
+                signal_values[sig.name] = sig.fetch(week, players)
+            except Exception:
+                # A signal failing (e.g. network) must not crash the run — the
+                # blend degrades to whatever other signals are available.
+                signal_values[sig.name] = unavailable_for(players, f"{sig.name} fetch failed")
         higher_is_better[sig.name] = sig.higher_is_better
 
     rec = blend(

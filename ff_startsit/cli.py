@@ -1,10 +1,13 @@
 """``ffstartsit`` command-line entry point.
 
 Subcommands:
-  sync      cache your Sleeper roster + player metadata
+  sync      pull and cache your roster (ESPN by default; Sleeper or manual too)
   rank      rank your players at a position for the week
   compare   head-to-head between two (or more) players, with close-call flag
   lineup    suggest the best starter at each standard position (stretch)
+
+Roster source defaults to ESPN (FF_ROSTER_SOURCE), overridable per command with
+--source {espn,sleeper,manual} plus --league / --team.
 """
 
 from __future__ import annotations
@@ -12,6 +15,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+from datetime import date, timedelta
 from pathlib import Path
 from typing import Optional, Sequence
 
@@ -20,9 +24,11 @@ from .data.matching import normalize_name
 from .models import Player
 from .output import render
 from .pipeline import recommend
-from .roster.sleeper import SleeperClient, SleeperError
+from .roster.base import RosterError, RosterProvider
+from .roster.espn import ESPNProvider
+from .roster.manual import ManualProvider
+from .roster.sleeper import SleeperClient, SleeperError, SleeperProvider
 
-ROSTER_CACHE = "roster.json"
 # Slots used by `lineup` (a common 1QB/PPR-ish starting set).
 LINEUP_SLOTS = ["QB", "RB", "RB", "WR", "WR", "TE", "FLEX", "K", "DEF"]
 FLEX_POSITIONS = {"RB", "WR", "TE"}
@@ -38,7 +44,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     settings = load_settings()
     try:
         return args.func(args, settings)
-    except SleeperError as exc:
+    except (RosterError, SleeperError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 2
 
@@ -47,22 +53,29 @@ def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="ffstartsit", description=__doc__)
     sub = parser.add_subparsers(dest="command")
 
-    p_sync = sub.add_parser("sync", help="cache your Sleeper roster")
+    # Shared roster-source flags for every command.
+    roster_parent = argparse.ArgumentParser(add_help=False)
+    roster_parent.add_argument("--source", choices=["espn", "sleeper", "manual"],
+                               default=None, help="roster source (default: FF_ROSTER_SOURCE)")
+    roster_parent.add_argument("--league", default=None, help="override league id")
+    roster_parent.add_argument("--team", default=None, help="override ESPN team id")
+
+    p_sync = sub.add_parser("sync", parents=[roster_parent], help="pull and cache your roster")
     p_sync.set_defaults(func=cmd_sync)
 
-    p_rank = sub.add_parser("rank", help="rank your players at a position")
+    p_rank = sub.add_parser("rank", parents=[roster_parent], help="rank your players at a position")
     p_rank.add_argument("--pos", required=True, help="QB/RB/WR/TE/K/DEF")
     p_rank.add_argument("--week", type=int, default=None)
     p_rank.add_argument("--csv", type=Path, default=None, help="also write a CSV")
     p_rank.add_argument("--json", type=Path, default=None, help="also write JSON")
     p_rank.set_defaults(func=cmd_rank)
 
-    p_cmp = sub.add_parser("compare", help="head-to-head between players")
+    p_cmp = sub.add_parser("compare", parents=[roster_parent], help="head-to-head between players")
     p_cmp.add_argument("players", nargs="+", help="player names (quote multi-word)")
     p_cmp.add_argument("--week", type=int, default=None)
     p_cmp.set_defaults(func=cmd_compare)
 
-    p_line = sub.add_parser("lineup", help="suggest best starter per slot")
+    p_line = sub.add_parser("lineup", parents=[roster_parent], help="suggest best starter per slot")
     p_line.add_argument("--week", type=int, default=None)
     p_line.set_defaults(func=cmd_lineup)
 
@@ -71,18 +84,17 @@ def _build_parser() -> argparse.ArgumentParser:
 
 # --- commands -------------------------------------------------------------
 def cmd_sync(args, settings: Settings) -> int:
-    _require_username(settings)
-    client = SleeperClient(settings.data_dir)
-    players = client.get_roster_players(settings.sleeper_username, settings.sleeper_league_id)
-    _save_roster(settings, players)
-    print(f"Synced {len(players)} players to {_roster_path(settings)}")
+    provider = build_roster_provider(settings, args.source, args.league, args.team)
+    players = provider.get_roster_players()
+    path = _save_roster(settings, provider, players)
+    print(f"Synced {len(players)} players ({provider.name}) to {path}")
     for p in sorted(players, key=lambda x: (x.position, x.name)):
         print(f"  {p.position:4} {p.name:24} {p.team or 'BYE'}")
     return 0
 
 
 def cmd_rank(args, settings: Settings) -> int:
-    players = _load_or_sync_roster(settings)
+    players = _get_roster(args, settings)
     pos = args.pos.upper()
     pos = "DEF" if pos == "DST" else pos
     candidates = [p for p in players if p.position == pos]
@@ -103,7 +115,7 @@ def cmd_rank(args, settings: Settings) -> int:
 
 
 def cmd_compare(args, settings: Settings) -> int:
-    players = _load_or_sync_roster(settings)
+    players = _get_roster(args, settings)
     candidates = _resolve_named(players, args.players)
     if len(candidates) < 2:
         print("Need at least two matching players to compare.", file=sys.stderr)
@@ -116,7 +128,7 @@ def cmd_compare(args, settings: Settings) -> int:
 
 
 def cmd_lineup(args, settings: Settings) -> int:
-    players = _load_or_sync_roster(settings)
+    players = _get_roster(args, settings)
     week = _resolve_week(args, settings)
 
     # Score everyone once (per position frame), then greedily fill slots.
@@ -166,40 +178,91 @@ def _resolve_named(players: Sequence[Player], names: Sequence[str]) -> list[Play
     return out
 
 
+# --- roster providers -----------------------------------------------------
+def build_roster_provider(settings: Settings, source: Optional[str] = None,
+                          league: Optional[str] = None,
+                          team: Optional[str] = None) -> RosterProvider:
+    """Pick a roster provider: explicit --source > FF_ROSTER_SOURCE > espn."""
+    source = (source or settings.roster_source or "espn").lower()
+    if source == "espn":
+        return ESPNProvider(
+            league_id=league or settings.espn_league_id,
+            season=_current_season(settings),
+            team_id=team or settings.espn_team_id,
+            espn_s2=settings.espn_s2,
+            swid=settings.espn_swid,
+        )
+    if source == "sleeper":
+        return SleeperProvider(
+            username=settings.sleeper_username,
+            league_id=league or settings.sleeper_league_id,
+            data_dir=settings.data_dir,
+        )
+    if source == "manual":
+        return ManualProvider(settings.manual_roster_file)
+    raise RosterError(f"unknown roster source: {source!r}")
+
+
+def _get_roster(args, settings: Settings) -> list[Player]:
+    """Load the roster from cache, fetching (and caching) on a miss."""
+    provider = build_roster_provider(settings, args.source, args.league, args.team)
+    path = _roster_path(settings, provider)
+    if path.exists():
+        data = json.loads(path.read_text())
+        return [Player(**row) for row in data]
+    players = provider.get_roster_players()
+    _save_roster(settings, provider, players)
+    return players
+
+
+def _roster_path(settings: Settings, provider: RosterProvider) -> Path:
+    return settings.data_dir / f"roster_{provider.cache_tag()}.json"
+
+
+def _save_roster(settings: Settings, provider: RosterProvider,
+                 players: Sequence[Player]) -> Path:
+    path = _roster_path(settings, provider)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps([p.__dict__ for p in players], indent=2))
+    return path
+
+
+# --- week / season resolution (league-agnostic) ---------------------------
 def _resolve_week(args, settings: Settings) -> int:
     if getattr(args, "week", None):
         return args.week
     try:
+        # Sleeper's /state/nfl is free, needs no auth, and is league-agnostic.
         return SleeperClient(settings.data_dir).current_week()
     except Exception:
+        return _date_week()
+
+
+def _current_season(settings: Settings) -> str:
+    try:
+        season = SleeperClient(settings.data_dir).current_season()
+        if season:
+            return season
+    except Exception:
+        pass
+    return _date_season()
+
+
+def _date_season() -> str:
+    today = date.today()
+    return str(today.year if today.month >= 3 else today.year - 1)
+
+
+def _date_week() -> int:
+    """Rough NFL week from today's date — only a fallback when /state/nfl fails."""
+    today = date.today()
+    year = int(_date_season())
+    # Week 1 kicks off around the first Thursday of September.
+    sept1 = date(year, 9, 1)
+    first_thu = sept1 + timedelta(days=(3 - sept1.weekday()) % 7)
+    if today < first_thu:
         return 1
-
-
-def _require_username(settings: Settings) -> None:
-    if not settings.sleeper_username:
-        raise SleeperError("SLEEPER_USERNAME is not set (see .env.example).")
-
-
-def _roster_path(settings: Settings) -> Path:
-    return settings.data_dir / ROSTER_CACHE
-
-
-def _save_roster(settings: Settings, players: Sequence[Player]) -> None:
-    path = _roster_path(settings)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps([p.__dict__ for p in players], indent=2))
-
-
-def _load_or_sync_roster(settings: Settings) -> list[Player]:
-    path = _roster_path(settings)
-    if path.exists():
-        data = json.loads(path.read_text())
-        return [Player(**row) for row in data]
-    _require_username(settings)
-    client = SleeperClient(settings.data_dir)
-    players = client.get_roster_players(settings.sleeper_username, settings.sleeper_league_id)
-    _save_roster(settings, players)
-    return players
+    return max(1, min(18, (today - first_thu).days // 7 + 1))
 
 
 if __name__ == "__main__":

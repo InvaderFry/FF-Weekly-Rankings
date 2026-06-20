@@ -11,6 +11,9 @@ venv/
 # Env / secrets
 .env
 
+# Personal roster at repo root (keep the .example and test fixtures tracked)
+/manual_roster.csv
+
 # App data cache & logs (kept out of VCS)
 .cache/
 data/cache/

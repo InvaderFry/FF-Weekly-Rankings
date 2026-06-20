@@ -19,6 +19,7 @@ import requests
 
 from ..data.teams import normalize_team
 from ..models import Player
+from .base import RosterError, RosterProvider
 
 BASE = "https://api.sleeper.app/v1"
 PLAYERS_CACHE_TTL = 24 * 3600  # seconds
@@ -116,6 +117,26 @@ def build_players(player_ids: list[str], meta: dict) -> list[Player]:
             team = normalize_team(info.get("team"))
         players.append(Player(key=str(pid), name=name, team=team, position=position))
     return players
+
+
+class SleeperProvider(RosterProvider):
+    """Adapt the existing SleeperClient to the RosterProvider interface."""
+
+    name = "sleeper"
+
+    def __init__(self, username: str, league_id: str, data_dir: Path,
+                 client: Optional[SleeperClient] = None):
+        if not username:
+            raise RosterError("SLEEPER_USERNAME is not set (see .env.example).")
+        self.username = username
+        self.league_id = league_id
+        self.client = client or SleeperClient(data_dir)
+
+    def cache_tag(self) -> str:
+        return f"sleeper_{self.league_id}" if self.league_id else "sleeper"
+
+    def get_roster_players(self) -> list[Player]:
+        return self.client.get_roster_players(self.username, self.league_id)
 
 
 def _fallback_season() -> str:

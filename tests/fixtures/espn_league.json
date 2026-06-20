@@ -1,0 +1,32 @@
+{
+  "id": 123456,
+  "seasonId": 2025,
+  "scoringPeriodId": 3,
+  "teams": [
+    {
+      "id": 1,
+      "name": "My Team",
+      "owners": ["{AAAA1111-BBBB-2222-CCCC-3333DDDD4444}"],
+      "roster": {
+        "entries": [
+          {"playerPoolEntry": {"player": {"id": 3139477, "fullName": "Patrick Mahomes", "defaultPositionId": 1, "proTeamId": 12}}},
+          {"playerPoolEntry": {"player": {"id": 4262921, "fullName": "Bijan Robinson", "defaultPositionId": 2, "proTeamId": 1}}},
+          {"playerPoolEntry": {"player": {"id": 4047365, "fullName": "Justin Jefferson", "defaultPositionId": 3, "proTeamId": 16}}},
+          {"playerPoolEntry": {"player": {"id": -16012, "fullName": "Chiefs D/ST", "defaultPositionId": 16, "proTeamId": 12}}},
+          {"playerPoolEntry": {"player": {"id": 999999, "fullName": "Some Linebacker", "defaultPositionId": 9, "proTeamId": 17}}}
+        ]
+      }
+    },
+    {
+      "id": 2,
+      "name": "Rival Team",
+      "owners": ["{ZZZZ9999-YYYY-8888-XXXX-7777WWWW6666}"],
+      "roster": {
+        "entries": [
+          {"playerPoolEntry": {"player": {"id": 3916387, "fullName": "Josh Allen", "defaultPositionId": 1, "proTeamId": 2}}},
+          {"playerPoolEntry": {"player": {"id": 4239993, "fullName": "Jonathan Taylor", "defaultPositionId": 2, "proTeamId": 11}}}
+        ]
+      }
+    }
+  ]
+}
