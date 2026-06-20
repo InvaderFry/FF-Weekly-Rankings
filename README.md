@@ -20,9 +20,14 @@ inputs from your real outcomes.
 
 ```bash
 python3 -m venv .venv
-.venv/bin/pip install -e ".[dev]"
-cp .env.example .env   # then edit .env
+source .venv/bin/activate          # Windows: .venv\Scripts\activate
+pip install -e ".[dev]"
+cp .env.example .env               # then edit .env
 ```
+
+Activating the venv is what puts the `ffstartsit` command on your `PATH` (along
+with `pip` and `python`). If you skip activation, the command won't be found —
+see the note under [Use](#use) for how to run it anyway.
 
 ## Configure (`.env`)
 
@@ -52,6 +57,12 @@ The roster comes from one of three sources, set by `FF_ROSTER_SOURCE` (default
 > if `sync` starts returning 401/403.
 
 ## Use
+
+> **`ffstartsit: command not found`?** The command lives in `.venv/bin/`, so it's
+> only on your `PATH` once the venv is activated. Any of these work:
+> - `source .venv/bin/activate` (Windows: `.venv\Scripts\activate`), then `ffstartsit ...`
+> - run it directly without activating: `.venv/bin/ffstartsit ...`
+> - run it as a module: `python -m ff_startsit ...`
 
 ```bash
 ffstartsit sync                              # pull & cache your roster (default: ESPN)
