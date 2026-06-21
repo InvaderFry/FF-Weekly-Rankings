@@ -94,8 +94,10 @@ the GitHub mobile app. Two workflows ship in `.github/workflows/`:
 
 - **Weekly digest** (`weekly-report.yml`) — runs Thursday afternoon and Sunday
   morning (and on-demand via *Actions → Run workflow*), then posts your lineup +
-  rankings as a **GitHub Issue** titled `Week N start/sit`. Watch the repo
-  (Watch → All Activity) to get a phone notification each time.
+  rankings as a **GitHub Issue**. It runs **both ranking modes**: FantasyPros to
+  `Week N start/sit`, and (if configured) your analysts to `Week N start/sit
+  (journalists)`. Watch the repo (Watch → All Activity) to get a phone notification
+  each time.
 - **ChatOps** (`chatops.yml`) — comment a slash command on any issue and the bot
   reply-comments the answer:
 
@@ -115,6 +117,13 @@ secret** (same values as your local `.env`):
 
 `ESPN_LEAGUE_ID`, `ESPN_S2`, `ESPN_SWID` (private league) — and optionally
 `ESPN_TEAM_ID` (public league), `ODDS_API_KEY`, `FANTASYPROS_API_KEY`.
+
+**For the journalists digest**, also add a repo **variable** (not a secret) under
+the **Variables** tab → `JOURNALISTS_CSV`, pasting your rankings in the
+`name,team,position,richard,eisenberg,boone` format. The workflow writes it to a
+file before running, so you can update your ranks from the browser/phone each week.
+If the variable is unset, the journalists digest is simply skipped (FantasyPros
+still posts).
 
 Notes:
 - Only the **repo owner's** comments trigger ChatOps, and only a fixed set of

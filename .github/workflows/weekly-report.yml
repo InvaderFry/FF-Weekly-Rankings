@@ -1,8 +1,9 @@
 name: Weekly start/sit report
 
 # Posts your lineup + rankings as a GitHub Issue you can read on your phone.
-# Runs Thursday afternoon (before TNF) and Sunday morning (before the early games),
-# and can be triggered manually from the GitHub mobile app (Actions -> Run workflow).
+# Runs once per backbone (FantasyPros + journalists) on Thursday afternoon (before
+# TNF) and Sunday morning (before the early games), and can be triggered manually
+# from the GitHub mobile app (Actions -> Run workflow).
 on:
   schedule:
     - cron: "0 21 * * 4"   # Thursday ~21:00 UTC (≈5pm ET EDT / 4pm EST)
@@ -21,6 +22,14 @@ permissions:
 jobs:
   report:
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - ranking: fantasypros
+            title_suffix: ""
+          - ranking: journalists
+            title_suffix: " (journalists)"
     steps:
       - uses: actions/checkout@v4
 
@@ -31,9 +40,21 @@ jobs:
       - name: Install
         run: pip install -e .
 
+      # Journalists mode needs the rankings CSV, which isn't in git. Materialize it
+      # from the JOURNALISTS_CSV repo variable (Settings -> Actions -> Variables).
+      - name: Provide journalists rankings
+        if: matrix.ranking == 'journalists' && vars.JOURNALISTS_CSV != ''
+        env:
+          JOURNALISTS_CSV: ${{ vars.JOURNALISTS_CSV }}
+        run: printf '%s\n' "$JOURNALISTS_CSV" > journalists_rankings.csv
+
       - name: Generate digest
+        # Skip the journalists leg entirely when no rankings are provided (avoids a
+        # confusing Vegas-only "journalists" digest). FantasyPros always runs.
+        if: matrix.ranking != 'journalists' || vars.JOURNALISTS_CSV != ''
         env:
           FF_ROSTER_SOURCE: espn
+          FF_RANKING_SOURCE: ${{ matrix.ranking }}
           ESPN_LEAGUE_ID: ${{ secrets.ESPN_LEAGUE_ID }}
           ESPN_TEAM_ID: ${{ secrets.ESPN_TEAM_ID }}
           ESPN_S2: ${{ secrets.ESPN_S2 }}
@@ -49,11 +70,13 @@ jobs:
           cat report.md >> "$GITHUB_STEP_SUMMARY"
 
       - name: Post / update issue
+        if: matrix.ranking != 'journalists' || vars.JOURNALISTS_CSV != ''
         env:
           GH_TOKEN: ${{ github.token }}
+          TITLE_SUFFIX: ${{ matrix.title_suffix }}
         run: |
           WEEK=$(grep -oE 'Week [0-9]+' report.md | head -1 | grep -oE '[0-9]+' || true)
-          TITLE="Week ${WEEK:-?} start/sit"
+          TITLE="Week ${WEEK:-?} start/sit${TITLE_SUFFIX}"
           NUM=$(gh issue list --state open --search "in:title \"$TITLE\"" \
                 --json number,title --jq ".[] | select(.title==\"$TITLE\") | .number" | head -1)
           if [ -n "$NUM" ]; then
