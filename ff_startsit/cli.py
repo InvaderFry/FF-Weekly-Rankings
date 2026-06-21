@@ -57,10 +57,17 @@ def _build_parser() -> argparse.ArgumentParser:
     roster_parent.add_argument("--league", default=None, help="override league id")
     roster_parent.add_argument("--team", default=None, help="override ESPN team id")
 
+    # Ranking-backbone selector, shared by the scoring commands (not sync).
+    ranking_parent = argparse.ArgumentParser(add_help=False)
+    ranking_parent.add_argument("--ranking", choices=["fantasypros", "journalists"],
+                                default=None,
+                                help="consensus backbone (default: FF_RANKING_SOURCE)")
+
     p_sync = sub.add_parser("sync", parents=[roster_parent], help="pull and cache your roster")
     p_sync.set_defaults(func=cmd_sync)
 
-    p_rank = sub.add_parser("rank", parents=[roster_parent], help="rank your players at a position")
+    p_rank = sub.add_parser("rank", parents=[roster_parent, ranking_parent],
+                            help="rank your players at a position")
     p_rank.add_argument("--pos", required=True, help="QB/RB/WR/TE/K/DEF")
     p_rank.add_argument("--week", type=int, default=None)
     p_rank.add_argument("--md", action="store_true", help="emit markdown instead of a table")
@@ -68,18 +75,20 @@ def _build_parser() -> argparse.ArgumentParser:
     p_rank.add_argument("--json", type=Path, default=None, help="also write JSON")
     p_rank.set_defaults(func=cmd_rank)
 
-    p_cmp = sub.add_parser("compare", parents=[roster_parent], help="head-to-head between players")
+    p_cmp = sub.add_parser("compare", parents=[roster_parent, ranking_parent],
+                           help="head-to-head between players")
     p_cmp.add_argument("players", nargs="+", help="player names (quote multi-word)")
     p_cmp.add_argument("--week", type=int, default=None)
     p_cmp.add_argument("--md", action="store_true", help="emit markdown instead of a table")
     p_cmp.set_defaults(func=cmd_compare)
 
-    p_line = sub.add_parser("lineup", parents=[roster_parent], help="suggest best starter per slot")
+    p_line = sub.add_parser("lineup", parents=[roster_parent, ranking_parent],
+                            help="suggest best starter per slot")
     p_line.add_argument("--week", type=int, default=None)
     p_line.add_argument("--md", action="store_true", help="emit markdown instead of plain text")
     p_line.set_defaults(func=cmd_lineup)
 
-    p_report = sub.add_parser("report", parents=[roster_parent],
+    p_report = sub.add_parser("report", parents=[roster_parent, ranking_parent],
                               help="whole-roster markdown digest (lineup + all positions)")
     p_report.add_argument("--week", type=int, default=None)
     p_report.add_argument("--out", type=Path, default=None, help="write digest to a file too")
@@ -100,6 +109,7 @@ def cmd_sync(args, settings: Settings) -> int:
 
 
 def cmd_rank(args, settings: Settings) -> int:
+    _apply_ranking(args, settings)
     players = _get_roster(args, settings)
     pos = args.pos.upper()
     pos = "DEF" if pos == "DST" else pos
@@ -110,7 +120,7 @@ def cmd_rank(args, settings: Settings) -> int:
 
     week = _resolve_week(args, settings)
     rec = recommend(settings, candidates, week, command=f"rank --pos {pos}")
-    title = f"Week {week} {pos} • {settings.scoring.upper()}"
+    title = f"Week {week} {pos} • {settings.scoring.upper()} • {settings.ranking_source}"
     if args.md:
         print(render.render_markdown(rec, title=title))
     else:
@@ -125,6 +135,7 @@ def cmd_rank(args, settings: Settings) -> int:
 
 
 def cmd_compare(args, settings: Settings) -> int:
+    _apply_ranking(args, settings)
     players = _get_roster(args, settings)
     candidates = _resolve_named(players, args.players)
     if len(candidates) < 2:
@@ -133,7 +144,7 @@ def cmd_compare(args, settings: Settings) -> int:
 
     week = _resolve_week(args, settings)
     rec = recommend(settings, candidates, week, command="compare")
-    title = f"Week {week} compare • {settings.scoring.upper()}"
+    title = f"Week {week} compare • {settings.scoring.upper()} • {settings.ranking_source}"
     if args.md:
         print(render.render_markdown(rec, title=title))
     else:
@@ -142,6 +153,7 @@ def cmd_compare(args, settings: Settings) -> int:
 
 
 def cmd_lineup(args, settings: Settings) -> int:
+    _apply_ranking(args, settings)
     players = _get_roster(args, settings)
     week = _resolve_week(args, settings)
 
@@ -170,6 +182,7 @@ def cmd_lineup(args, settings: Settings) -> int:
 
 
 def cmd_report(args, settings: Settings) -> int:
+    _apply_ranking(args, settings)
     players = _get_roster(args, settings)
     week = _resolve_week(args, settings)
     digest = report.build_digest(settings, players, week)
@@ -181,6 +194,12 @@ def cmd_report(args, settings: Settings) -> int:
 
 
 # --- helpers --------------------------------------------------------------
+def _apply_ranking(args, settings: Settings) -> None:
+    """Let --ranking override the configured backbone for this invocation."""
+    if getattr(args, "ranking", None):
+        settings.ranking_source = args.ranking
+
+
 def _resolve_named(players: Sequence[Player], names: Sequence[str]) -> list[Player]:
     wanted = [normalize_name(n) for n in names]
     out: list[Player] = []

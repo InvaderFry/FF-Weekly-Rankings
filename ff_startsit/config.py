@@ -33,6 +33,11 @@ class Settings:
     # Signals
     odds_api_key: str = ""
     fantasypros_api_key: str = ""
+    # Ranking backbone: fantasypros (default) | journalists
+    ranking_source: str = "fantasypros"
+    journalists_file: Path = field(default_factory=lambda: Path("journalists_rankings.csv"))
+    cbs_rankings_url: str = ""   # optional scraper override
+    boone_article_url: str = ""  # optional scraper override
     scoring: str = "ppr"
     weights: dict[str, float] = field(default_factory=lambda: {"ecr": 0.75, "vegas": 0.25})
     close_call_threshold: float = 5.0
@@ -69,8 +74,16 @@ def load_settings(env_file: str | os.PathLike | None = None) -> Settings:
     if roster_source not in {"espn", "sleeper", "manual"}:
         roster_source = "espn"
 
+    ranking_source = (os.getenv("FF_RANKING_SOURCE") or "fantasypros").lower()
+    if ranking_source not in {"fantasypros", "journalists"}:
+        ranking_source = "fantasypros"
+
     return Settings(
         roster_source=roster_source,
+        ranking_source=ranking_source,
+        journalists_file=Path(os.getenv("FF_JOURNALISTS_FILE", "journalists_rankings.csv")),
+        cbs_rankings_url=os.getenv("CBS_RANKINGS_URL", "").strip(),
+        boone_article_url=os.getenv("BOONE_ARTICLE_URL", "").strip(),
         espn_league_id=os.getenv("ESPN_LEAGUE_ID", "").strip(),
         espn_team_id=os.getenv("ESPN_TEAM_ID", "").strip(),
         espn_s2=os.getenv("ESPN_S2", "").strip(),

@@ -14,16 +14,23 @@ from .models import Player, Recommendation
 from .results_log import log_recommendation
 from .sources.base import Signal
 from .sources.ecr import ECRSignal
+from .sources.journalists import JournalistsSignal
 from .sources.vegas import VegasSignal
 
 
 def build_signals(settings: Settings, season: Optional[int] = None) -> list[Signal]:
-    """The v1 signal set. Add a usage signal here for #7 — nothing else changes."""
-    return [
-        ECRSignal(api_key=settings.fantasypros_api_key, scoring=settings.scoring,
-                  season=season),
-        VegasSignal(api_key=settings.odds_api_key),
-    ]
+    """The signal set: a consensus backbone (the `ecr` slot) + Vegas.
+
+    The backbone is FantasyPros ECR by default, or the journalists blend (CBS
+    Richard/Eisenberg + Yahoo Boone) when ``ranking_source == 'journalists'``. Add
+    a usage signal here for #7 — nothing else changes.
+    """
+    if settings.ranking_source == "journalists":
+        backbone: Signal = JournalistsSignal(settings)
+    else:
+        backbone = ECRSignal(api_key=settings.fantasypros_api_key,
+                             scoring=settings.scoring, season=season)
+    return [backbone, VegasSignal(api_key=settings.odds_api_key)]
 
 
 def recommend(

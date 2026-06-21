@@ -69,7 +69,7 @@ def build_digest(settings: Settings, players: Sequence[Player], week: int) -> st
     by_pos = scored(recs)
 
     lines: list[str] = [
-        f"# 🏈 Week {week} start/sit — {settings.scoring.upper()}",
+        f"# 🏈 Week {week} start/sit — {settings.scoring.upper()} • {settings.ranking_source}",
         f"_Generated {date.today().isoformat()}._",
         "",
         "## Suggested lineup",

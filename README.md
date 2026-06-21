@@ -134,6 +134,43 @@ Notes:
 4. The top two are compared: within the threshold, or signals disagreeing on the
    order → flagged **close call**.
 
+## Ranking modes (which experts form the backbone)
+
+The consensus backbone is selectable with `FF_RANKING_SOURCE` (default
+`fantasypros`) or `--ranking {fantasypros,journalists}` per command. **Vegas is
+always layered on top** either way; only the consensus source changes. The active
+mode is shown in every output title (e.g. `Week 5 RB • PPR • journalists`).
+
+- **`fantasypros`** (default) — broad FantasyPros ECR (see above).
+- **`journalists`** — your hand-picked analysts: **CBS Dave Richard + Jamey
+  Eisenberg** and **Yahoo Justin Boone** (half-PPR). Their per-player ranks are
+  **equal-averaged** into one consensus. CBS is scoring-aware: PPR for PPR leagues,
+  Standard for standard, and **PPR+Standard averaged for half-PPR**.
+
+```bash
+ffstartsit rank --pos RB --ranking journalists
+# from your phone: comment "/rank RB ranking journalists"
+```
+
+### How journalists mode gets its data
+CBS and Yahoo are bot-protected with no public API, so this mode is **CSV-first
+with best-effort scraping**:
+
+- **CSV (reliable, the default path):** maintain `journalists_rankings.csv` —
+  headers `name,team,position,richard,eisenberg,boone`, one rank per analyst, blank
+  cells allowed. Copy `journalists_rankings.csv.example` to start. Set the path with
+  `FF_JOURNALISTS_FILE`.
+- **Scrapers (optional, experimental):** set `CBS_RANKINGS_URL` (template may use
+  `{scoring}`/`{analyst}`) and/or `BOONE_ARTICLE_URL` to a page you've verified; the
+  scraper runs first and **falls back to the CSV** if it's blocked or the parse
+  fails. Left blank, the mode uses the CSV only. The parsers are defensive but were
+  not validated against live pages — confirm extraction before relying on them.
+  Boone's weekly article URL changes and isn't auto-derived, so Boone is best
+  maintained via the CSV.
+
+If no analyst yields data, the backbone reports unavailable and the blend runs on
+Vegas alone (no crash).
+
 ## Architecture
 
 ```
@@ -147,6 +184,7 @@ ff_startsit/
   sources/
     base.py         Signal ABC  <-- add new signals here (the #7 seam)
     ecr.py          FantasyPros ECR (API key + scrape fallback)
+    journalists.py  CBS Richard/Eisenberg + Yahoo Boone backbone (CSV + scrapers)
     vegas.py        The Odds API -> implied team totals
   roster/
     base.py         RosterProvider ABC  <-- add new roster sources here

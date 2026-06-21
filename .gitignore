@@ -11,8 +11,9 @@ venv/
 # Env / secrets
 .env
 
-# Personal roster at repo root (keep the .example and test fixtures tracked)
+# Personal roster / rankings at repo root (keep the .example and test fixtures tracked)
 /manual_roster.csv
+/journalists_rankings.csv
 
 # App data cache & logs (kept out of VCS)
 .cache/

@@ -19,8 +19,10 @@ from typing import Optional
 
 POSITIONS = {"QB", "RB", "WR", "TE", "K", "DEF", "DST"}
 SOURCES = {"espn", "sleeper", "manual"}
-# Inline option keywords usable on any command: `week N`, `source X`, `league ID`, `team ID`.
-_OPTION_KEYS = {"week", "source", "league", "team"}
+RANKINGS = {"fantasypros", "journalists"}
+# Inline option keywords usable on any command: `week N`, `source X`, `league ID`,
+# `team ID`, `ranking fantasypros|journalists`.
+_OPTION_KEYS = {"week", "source", "league", "team", "ranking"}
 
 
 def _first_line(body: str) -> str:
@@ -46,6 +48,10 @@ def _split_options(tokens: list[str]) -> tuple[list[str], list[str]]:
             if tok == "source":
                 if value.lower() not in SOURCES:
                     return tokens, []  # invalid -> ignore options, let caller decide
+                value = value.lower()
+            elif tok == "ranking":
+                if value.lower() not in RANKINGS:
+                    return tokens, []
                 value = value.lower()
             flags += [f"--{tok}", value]
             i += 2
