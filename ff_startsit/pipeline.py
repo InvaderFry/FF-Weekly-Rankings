@@ -14,6 +14,7 @@ from .models import Player, Recommendation
 from .results_log import log_recommendation
 from .sources.base import Signal
 from .sources.ecr import ECRSignal
+from .sources.injury import InjurySignal
 from .sources.vegas import VegasSignal
 
 
@@ -23,6 +24,7 @@ def build_signals(settings: Settings, season: Optional[int] = None) -> list[Sign
         ECRSignal(api_key=settings.fantasypros_api_key, scoring=settings.scoring,
                   season=season),
         VegasSignal(api_key=settings.odds_api_key),
+        InjurySignal(data_dir=settings.data_dir, enabled=settings.injury_enabled),
     ]
 
 

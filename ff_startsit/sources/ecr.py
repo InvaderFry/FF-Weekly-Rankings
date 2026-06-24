@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import json
 import re
+import sys
 from datetime import datetime
 from typing import Iterable, Optional
 
@@ -89,6 +90,7 @@ class ECRSignal(Signal):
         self.session = session or requests.Session()
         self.timeout = timeout
         self.last_source: str = ""  # "api" or "scrape", for diagnostics
+        self._rows_cache: dict[tuple[str, int], list[ExternalRow]] = {}
 
     def is_available(self) -> bool:
         return True  # scrape fallback means ECR is always attemptable
@@ -112,6 +114,14 @@ class ECRSignal(Signal):
         return out
 
     def _rows_for_position(self, position: str, week: int) -> list[ExternalRow]:
+        cache_key = (position, week)
+        if cache_key in self._rows_cache:
+            return self._rows_cache[cache_key]
+        rows = self._rows_uncached(position, week)
+        self._rows_cache[cache_key] = rows
+        return rows
+
+    def _rows_uncached(self, position: str, week: int) -> list[ExternalRow]:
         if self.api_key:
             try:
                 rows = self._fetch_api(position, week)
@@ -125,6 +135,11 @@ class ECRSignal(Signal):
         except requests.RequestException:
             return []  # offline / page unreachable -> signal simply has no data
         self.last_source = "scrape"
+        if not rows:
+            # Reached the page but parsed nothing: the embedded ecrData blob is
+            # gone or changed shape. Warn so a silently-broken scrape is visible.
+            print(f"warning: FantasyPros scrape for {position} returned no "
+                  "rankings — the page format may have changed.", file=sys.stderr)
         return rows
 
     def _fetch_api(self, position: str, week: int) -> list[ExternalRow]:
