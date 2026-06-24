@@ -38,6 +38,9 @@ class Settings:
         default_factory=lambda: {"ecr": 0.65, "vegas": 0.20, "injury": 0.15})
     close_call_threshold: float = 5.0
     injury_enabled: bool = True
+    # Distribution
+    discord_webhook_url: str = ""
+    dashboard_url: str = ""
     data_dir: Path = field(default_factory=lambda: Path(".cache"))
 
     @property
@@ -132,5 +135,7 @@ def load_settings(env_file: str | os.PathLike | None = None) -> Settings:
         weights=weights,
         close_call_threshold=threshold,
         injury_enabled=_b("FF_INJURY", True),
+        discord_webhook_url=os.getenv("DISCORD_WEBHOOK_URL", "").strip(),
+        dashboard_url=os.getenv("FF_DASHBOARD_URL", "").strip(),
         data_dir=Path(os.getenv("FF_DATA_DIR", ".cache")),
     )

@@ -85,6 +85,8 @@ There's also a whole-roster digest:
 
 ```bash
 ffstartsit report                            # lineup + every position, as markdown
+ffstartsit dashboard --out site/index.html   # the same, as a static HTML page
+ffstartsit notify --url https://you.github.io/repo/   # push to a Discord webhook
 ```
 
 Each `rank`/`compare` run appends a row to `.cache/results_log.jsonl` capturing
@@ -98,9 +100,13 @@ runners have internet access, so they run the tool for you and surface results i
 the GitHub mobile app. Two workflows ship in `.github/workflows/`:
 
 - **Weekly digest** (`weekly-report.yml`) — runs Thursday afternoon and Sunday
-  morning (and on-demand via *Actions → Run workflow*), then posts your lineup +
-  rankings as a **GitHub Issue** titled `Week N start/sit`. Watch the repo
-  (Watch → All Activity) to get a phone notification each time.
+  morning (and on-demand via *Actions → Run workflow*). Each run:
+  - posts your lineup + rankings as a **GitHub Issue** titled `Week N start/sit`
+    (watch the repo → All Activity for a phone notification),
+  - publishes a styled **HTML dashboard to GitHub Pages** (full lineup +
+    rankings, with injury/close-call rows highlighted), and
+  - **pings Discord** with the lineup, alerts, and a link to the dashboard — if a
+    `DISCORD_WEBHOOK_URL` secret is set.
 - **ChatOps** (`chatops.yml`) — comment a slash command on any issue and the bot
   reply-comments the answer:
 
@@ -120,6 +126,14 @@ secret** (same values as your local `.env`):
 
 `ESPN_LEAGUE_ID`, `ESPN_S2`, `ESPN_SWID` (private league) — and optionally
 `ESPN_TEAM_ID` (public league), `ODDS_API_KEY`, `FANTASYPROS_API_KEY`.
+
+For the **dashboard + Discord** delivery:
+- **Enable GitHub Pages once:** repo → *Settings → Pages → Build and deployment →
+  Source = GitHub Actions*. After the next weekly run your dashboard lives at
+  `https://<owner>.github.io/<repo>/`.
+- **Discord (optional):** create an incoming webhook (Discord → *Server Settings →
+  Integrations → Webhooks → New Webhook → Copy URL*) and add it as the
+  `DISCORD_WEBHOOK_URL` repository secret. Leave it unset to skip Discord.
 
 Notes:
 - Only the **repo owner's** comments trigger ChatOps, and only a fixed set of
@@ -168,7 +182,10 @@ ff_startsit/
     normalize.py    raw -> 0..100 (pure)
     blend.py        weighted ensemble + close-call flagging (pure)
   results_log.py    append-only JSONL decision log (the #7 hook)
-  output/render.py  rich table + CSV/JSON export
+  output/
+    render.py       rich table + markdown + CSV/JSON export
+    html.py         self-contained HTML dashboard (for GitHub Pages)
+    discord.py      Discord webhook payload + send (push notifications)
 ```
 
 ### Growing into #7 (ensemble + self-calibration)

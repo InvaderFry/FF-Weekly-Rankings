@@ -1,6 +1,7 @@
 name: Weekly start/sit report
 
-# Posts your lineup + rankings as a GitHub Issue you can read on your phone.
+# Posts your lineup + rankings as a GitHub Issue, publishes an HTML dashboard to
+# GitHub Pages, and (if configured) pings Discord with the summary + dashboard link.
 # Runs Thursday afternoon (before TNF) and Sunday morning (before the early games),
 # and can be triggered manually from the GitHub mobile app (Actions -> Run workflow).
 on:
@@ -17,10 +18,25 @@ on:
 permissions:
   contents: read
   issues: write
+  pages: write          # publish the dashboard to GitHub Pages
+  id-token: write       # required by actions/deploy-pages
 
 jobs:
   report:
     runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    env:
+      FF_ROSTER_SOURCE: espn
+      ESPN_LEAGUE_ID: ${{ secrets.ESPN_LEAGUE_ID }}
+      ESPN_TEAM_ID: ${{ secrets.ESPN_TEAM_ID }}
+      ESPN_S2: ${{ secrets.ESPN_S2 }}
+      ESPN_SWID: ${{ secrets.ESPN_SWID }}
+      ODDS_API_KEY: ${{ secrets.ODDS_API_KEY }}
+      FANTASYPROS_API_KEY: ${{ secrets.FANTASYPROS_API_KEY }}
+      DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+      INPUT_WEEK: ${{ github.event.inputs.week }}
     steps:
       - uses: actions/checkout@v4
 
@@ -31,23 +47,17 @@ jobs:
       - name: Install
         run: pip install -e .
 
-      - name: Generate digest
-        env:
-          FF_ROSTER_SOURCE: espn
-          ESPN_LEAGUE_ID: ${{ secrets.ESPN_LEAGUE_ID }}
-          ESPN_TEAM_ID: ${{ secrets.ESPN_TEAM_ID }}
-          ESPN_S2: ${{ secrets.ESPN_S2 }}
-          ESPN_SWID: ${{ secrets.ESPN_SWID }}
-          ODDS_API_KEY: ${{ secrets.ODDS_API_KEY }}
-          FANTASYPROS_API_KEY: ${{ secrets.FANTASYPROS_API_KEY }}
-          INPUT_WEEK: ${{ github.event.inputs.week }}
+      - name: Generate digest + dashboard
         run: |
           WEEK_ARG=""
           if [ -n "$INPUT_WEEK" ]; then WEEK_ARG="--week $INPUT_WEEK"; fi
           python -m ff_startsit report $WEEK_ARG --out report.md
-          # Mirror to the run summary (viewable in the GitHub mobile app).
+          python -m ff_startsit dashboard $WEEK_ARG --out ./site/index.html
+          # Mirror the digest to the run summary (viewable in the GitHub mobile app).
           cat report.md >> "$GITHUB_STEP_SUMMARY"
 
+      # Post the issue first so the core digest always lands, even if Pages/Discord
+      # aren't configured yet.
       - name: Post / update issue
         env:
           GH_TOKEN: ${{ github.token }}
@@ -63,3 +73,19 @@ jobs:
             echo "Creating issue: $TITLE"
             gh issue create --title "$TITLE" --body-file report.md
           fi
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: ./site
+
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
+
+      - name: Notify Discord
+        if: ${{ env.DISCORD_WEBHOOK_URL != '' }}
+        run: |
+          WEEK_ARG=""
+          if [ -n "$INPUT_WEEK" ]; then WEEK_ARG="--week $INPUT_WEEK"; fi
+          python -m ff_startsit notify $WEEK_ARG --url "${{ steps.deployment.outputs.page_url }}"

@@ -5,6 +5,9 @@ Subcommands:
   rank      rank your players at a position for the week
   compare   head-to-head between two (or more) players, with close-call flag
   lineup    suggest the best starter at each standard position (stretch)
+  report    whole-roster markdown digest (lineup + all positions)
+  dashboard build a static HTML dashboard (for GitHub Pages)
+  notify    send the week's summary to a Discord webhook
 
 Roster source defaults to ESPN (FF_ROSTER_SOURCE), overridable per command with
 --source {espn,sleeper,manual} plus --league / --team.
@@ -84,6 +87,19 @@ def _build_parser() -> argparse.ArgumentParser:
     p_report.add_argument("--week", type=int, default=None)
     p_report.add_argument("--out", type=Path, default=None, help="write digest to a file too")
     p_report.set_defaults(func=cmd_report)
+
+    p_dash = sub.add_parser("dashboard", parents=[roster_parent],
+                            help="build a static HTML dashboard (for GitHub Pages)")
+    p_dash.add_argument("--week", type=int, default=None)
+    p_dash.add_argument("--out", type=Path, default=Path("site/index.html"),
+                        help="output path (default: site/index.html)")
+    p_dash.set_defaults(func=cmd_dashboard)
+
+    p_notify = sub.add_parser("notify", parents=[roster_parent],
+                              help="send the week's summary to a Discord webhook")
+    p_notify.add_argument("--week", type=int, default=None)
+    p_notify.add_argument("--url", default=None, help="dashboard URL to link (or FF_DASHBOARD_URL)")
+    p_notify.set_defaults(func=cmd_notify)
 
     return parser
 
@@ -177,6 +193,41 @@ def cmd_report(args, settings: Settings) -> int:
     if args.out:
         args.out.parent.mkdir(parents=True, exist_ok=True)
         args.out.write_text(digest)
+    return 0
+
+
+def cmd_dashboard(args, settings: Settings) -> int:
+    from datetime import date
+
+    from .output.html import build_dashboard_html
+
+    players = _get_roster(args, settings)
+    week = _resolve_week(args, settings)
+    recs = report.rank_each_position(settings, players, week)
+    lineup = report.build_lineup(report.scored(recs))
+    html = build_dashboard_html(week, settings.scoring, lineup, recs,
+                                generated_on=date.today().isoformat())
+    args.out.parent.mkdir(parents=True, exist_ok=True)
+    args.out.write_text(html)
+    print(f"Wrote dashboard to {args.out}")
+    return 0
+
+
+def cmd_notify(args, settings: Settings) -> int:
+    from .output.discord import build_discord_payload, send_discord
+
+    if not settings.discord_webhook_url:
+        print("DISCORD_WEBHOOK_URL is not set — nothing to send.", file=sys.stderr)
+        return 1
+
+    players = _get_roster(args, settings)
+    week = _resolve_week(args, settings)
+    recs = report.rank_each_position(settings, players, week)
+    lineup = report.build_lineup(report.scored(recs))
+    dashboard_url = args.url or settings.dashboard_url or None
+    payload = build_discord_payload(week, settings.scoring, lineup, recs, dashboard_url)
+    send_discord(settings.discord_webhook_url, payload)
+    print("Sent Discord notification.")
     return 0
 
 
