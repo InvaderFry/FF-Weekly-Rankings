@@ -87,6 +87,8 @@ There's also a whole-roster digest:
 ffstartsit report                            # lineup + every position, as markdown
 ffstartsit dashboard --out site/index.html   # the same, as a static HTML page
 ffstartsit notify --url https://you.github.io/repo/   # push to a Discord webhook
+# All three from a single scoring pass (what the weekly Action runs):
+ffstartsit publish --report report.md --dashboard site/index.html --discord --url https://you.github.io/repo/
 ```
 
 Each `rank`/`compare` run appends a row to `.cache/results_log.jsonl` capturing

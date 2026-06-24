@@ -47,12 +47,17 @@ jobs:
       - name: Install
         run: pip install -e .
 
-      - name: Generate digest + dashboard
+      - name: Publish (one scoring pass -> digest + dashboard + Discord)
         run: |
           WEEK_ARG=""
           if [ -n "$INPUT_WEEK" ]; then WEEK_ARG="--week $INPUT_WEEK"; fi
-          python -m ff_startsit report $WEEK_ARG --out report.md
-          python -m ff_startsit dashboard $WEEK_ARG --out ./site/index.html
+          # Deterministic project Pages URL so the Discord link is valid even
+          # though the notification fires before the deploy step below completes.
+          OWNER="${GITHUB_REPOSITORY%%/*}"; REPO="${GITHUB_REPOSITORY##*/}"
+          DASH_URL="https://${OWNER,,}.github.io/${REPO}/"
+          python -m ff_startsit publish $WEEK_ARG \
+            --report report.md --dashboard ./site/index.html \
+            --discord --url "$DASH_URL"
           # Mirror the digest to the run summary (viewable in the GitHub mobile app).
           cat report.md >> "$GITHUB_STEP_SUMMARY"
 
@@ -82,10 +87,3 @@ jobs:
       - name: Deploy to GitHub Pages
         id: deployment
         uses: actions/deploy-pages@v4
-
-      - name: Notify Discord
-        if: ${{ env.DISCORD_WEBHOOK_URL != '' }}
-        run: |
-          WEEK_ARG=""
-          if [ -n "$INPUT_WEEK" ]; then WEEK_ARG="--week $INPUT_WEEK"; fi
-          python -m ff_startsit notify $WEEK_ARG --url "${{ steps.deployment.outputs.page_url }}"

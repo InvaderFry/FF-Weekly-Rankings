@@ -8,6 +8,7 @@ Subcommands:
   report    whole-roster markdown digest (lineup + all positions)
   dashboard build a static HTML dashboard (for GitHub Pages)
   notify    send the week's summary to a Discord webhook
+  publish   one scoring pass -> digest + dashboard + Discord (used by the Action)
 
 Roster source defaults to ESPN (FF_ROSTER_SOURCE), overridable per command with
 --source {espn,sleeper,manual} plus --league / --team.
@@ -100,6 +101,15 @@ def _build_parser() -> argparse.ArgumentParser:
     p_notify.add_argument("--week", type=int, default=None)
     p_notify.add_argument("--url", default=None, help="dashboard URL to link (or FF_DASHBOARD_URL)")
     p_notify.set_defaults(func=cmd_notify)
+
+    p_pub = sub.add_parser("publish", parents=[roster_parent],
+                           help="one scoring pass -> digest + dashboard + Discord")
+    p_pub.add_argument("--week", type=int, default=None)
+    p_pub.add_argument("--report", type=Path, default=None, help="write the markdown digest here")
+    p_pub.add_argument("--dashboard", type=Path, default=None, help="write the HTML dashboard here")
+    p_pub.add_argument("--discord", action="store_true", help="also send the Discord notification")
+    p_pub.add_argument("--url", default=None, help="dashboard URL to link (or FF_DASHBOARD_URL)")
+    p_pub.set_defaults(func=cmd_publish)
 
     return parser
 
@@ -228,6 +238,49 @@ def cmd_notify(args, settings: Settings) -> int:
     payload = build_discord_payload(week, settings.scoring, lineup, recs, dashboard_url)
     send_discord(settings.discord_webhook_url, payload)
     print("Sent Discord notification.")
+    return 0
+
+
+def cmd_publish(args, settings: Settings) -> int:
+    """One scoring pass -> markdown digest + HTML dashboard + Discord, as requested."""
+    from datetime import date
+
+    from .output.discord import build_discord_payload, send_discord
+    from .output.html import build_dashboard_html
+
+    players = _get_roster(args, settings)
+    week = _resolve_week(args, settings)
+
+    # The single scoring pass shared by every output.
+    recs = report.rank_each_position(settings, players, week)
+    lineup = report.build_lineup(report.scored(recs))
+
+    digest = report.render_digest(week, settings.scoring, recs)
+    print(digest)
+    if args.report:
+        args.report.parent.mkdir(parents=True, exist_ok=True)
+        args.report.write_text(digest)
+
+    if args.dashboard:
+        html = build_dashboard_html(week, settings.scoring, lineup, recs,
+                                    generated_on=date.today().isoformat())
+        args.dashboard.parent.mkdir(parents=True, exist_ok=True)
+        args.dashboard.write_text(html)
+        print(f"Wrote dashboard to {args.dashboard}")
+
+    if args.discord:
+        if not settings.discord_webhook_url:
+            print("DISCORD_WEBHOOK_URL is not set — skipping Discord.", file=sys.stderr)
+        else:
+            dashboard_url = args.url or settings.dashboard_url or None
+            payload = build_discord_payload(week, settings.scoring, lineup, recs, dashboard_url)
+            try:
+                send_discord(settings.discord_webhook_url, payload)
+                print("Sent Discord notification.")
+            except Exception as exc:
+                # A Discord hiccup must not sink the digest/dashboard the rest of
+                # the workflow depends on — warn and carry on.
+                print(f"warning: Discord notification failed: {exc}", file=sys.stderr)
     return 0
 
 
