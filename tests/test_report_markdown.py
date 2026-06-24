@@ -51,6 +51,18 @@ def test_build_lineup_fills_slots_without_reuse():
     assert len(used) == len(set(used))
 
 
+def test_render_digest_from_precomputed_recs():
+    recs = {
+        "QB": _rec(_ps("q", "Quincy", "QB", 88.0, team="BUF")),
+        "RB": _rec(_ps("1", "Alpha", "RB", 90.0), _ps("2", "Bravo", "RB", 10.0)),
+    }
+    digest = report.render_digest(3, "ppr", recs)
+    assert "# 🏈 Week 3 start/sit — PPR" in digest
+    assert "## Suggested lineup" in digest
+    assert "### QB" in digest and "### RB" in digest
+    assert "Quincy" in digest and "Alpha" in digest
+
+
 def test_build_digest_monkeypatched(monkeypatch):
     players = [
         Player("1", "Alpha", "KC", "RB"),

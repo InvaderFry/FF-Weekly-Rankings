@@ -74,10 +74,19 @@ def build_lineup(by_pos: dict[str, list[PlayerScore]]) -> list[tuple[str, Option
 def build_digest(settings: Settings, players: Sequence[Player], week: int) -> str:
     """Assemble the full whole-roster markdown digest (one scoring pass)."""
     recs = rank_each_position(settings, players, week)
+    return render_digest(week, settings.scoring, recs)
+
+
+def render_digest(week: int, scoring: str, recs: dict[str, Recommendation]) -> str:
+    """Render precomputed per-position recs as the markdown digest.
+
+    Split out from ``build_digest`` so callers that already have ``recs`` (e.g.
+    the ``publish`` command) can render without triggering another scoring pass.
+    """
     by_pos = scored(recs)
 
     lines: list[str] = [
-        f"# 🏈 Week {week} start/sit — {settings.scoring.upper()}",
+        f"# 🏈 Week {week} start/sit — {scoring.upper()}",
         f"_Generated {date.today().isoformat()}._",
         "",
         "## Suggested lineup",
