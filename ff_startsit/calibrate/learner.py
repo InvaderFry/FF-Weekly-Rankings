@@ -8,8 +8,11 @@ candidates the way the real results did.
 
 Objective: **pairwise ranking concordance** — across every pair of candidates within
 a decision whose actual points differ, the fraction the blend ordered correctly
-(dense and stable on small samples). We also report **top-pick hit-rate** — how often
-the #1 candidate was the week's actual best — as the intuitive headline.
+(dense and stable on small samples). To keep weightings comparable, we score only
+candidates that carry every tuned signal (see ``join_outcomes``), so the pair
+denominator is identical for the current weights and every trial. We also report
+**top-pick hit-rate** — how often the #1 candidate was the week's actual best — as
+the intuitive headline.
 """
 
 from __future__ import annotations
@@ -57,9 +60,18 @@ def signals_in(decisions: Sequence[Decision]) -> list[str]:
     return canonical + extra
 
 
-def join_outcomes(decisions: Sequence[Decision],
-                  provider: OutcomeProvider) -> list[JoinedDecision]:
-    """Attach actual points to each candidate, keeping decisions with >=2 joined."""
+def join_outcomes(decisions: Sequence[Decision], provider: OutcomeProvider,
+                  signals: Sequence[str]) -> list[JoinedDecision]:
+    """Attach actual points to each candidate, keeping decisions with >=2 joined.
+
+    Only candidates carrying *every* tuned signal in ``signals`` are kept, so the
+    comparable-pair set is identical under every weight vector — without this, a
+    weighting that leans on a sparse signal (e.g. a bye-week player with no Vegas
+    line) would be scored on a smaller, different denominator than the others and
+    look spuriously better. This trades a few partial-signal candidates (typically
+    just byes) for an apples-to-apples objective.
+    """
+    needed = set(signals)
     joined: list[JoinedDecision] = []
     # Cache the per-(season, week, scoring) lookup so we fetch each slice once.
     cache: dict[tuple[str, int, str], Optional[OutcomeLookup]] = {}
@@ -72,7 +84,7 @@ def join_outcomes(decisions: Sequence[Decision],
             continue
         rows: JoinedDecision = []
         for c in d.candidates:
-            if not c.normalized:
+            if not needed.issubset(c.normalized):
                 continue
             pts = lookup(c.key, c.name, c.position)
             if pts is None:
@@ -157,9 +169,11 @@ def calibrate(decisions: Sequence[Decision], provider: OutcomeProvider, *,
               min_pairs: int = 30) -> CalibrationResult:
     """Join logged decisions to outcomes and grid-search the best blend weights."""
     signals = signals_in(decisions)
-    joined = join_outcomes(decisions, provider)
+    joined = join_outcomes(decisions, provider, signals)
 
     current = {s: float(base_weights.get(s, 0.0)) for s in signals}
+    # ``join_outcomes`` fixed the comparable set, so ``pairs`` is the shared
+    # denominator for every weighting — sound to report and to gate --write on.
     current_conc, pairs = concordance(joined, current)
     current_hr = hit_rate(joined, current)
 

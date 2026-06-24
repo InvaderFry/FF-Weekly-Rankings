@@ -96,6 +96,38 @@ def test_min_pairs_guard_marks_thin_data(tmp_path):
     assert result.enough_data is False
 
 
+def test_partial_signal_candidates_excluded_for_fixed_denominator(tmp_path):
+    """A candidate missing a tuned signal (e.g. a bye-week player with no Vegas
+    line) is dropped, so every weighting is scored on the same comparable set."""
+    rows = [{
+        "ts": "2024-10-01T12:00:00+00:00", "command": "rank --pos RB",
+        "week": 1, "scoring": "ppr",
+        "weights": {"ecr": 0.65, "vegas": 0.20}, "close_call": False,
+        "notes": [], "pick": "A", "candidates": [
+            {"key": "a", "name": "A", "team": "KC", "position": "RB",
+             "final": 0.0, "normalized": {"ecr": 90.0, "vegas": 80.0},
+             "raw": {}, "flags": []},
+            {"key": "b", "name": "B", "team": "KC", "position": "RB",
+             "final": 0.0, "normalized": {"ecr": 60.0, "vegas": 40.0},
+             "raw": {}, "flags": []},
+            # Bye week: ECR only, no Vegas line -> excluded from the comparison.
+            {"key": "c", "name": "C", "team": None, "position": "RB",
+             "final": 0.0, "normalized": {"ecr": 30.0},
+             "raw": {}, "flags": []},
+        ],
+    }]
+    log = tmp_path / "results_log.jsonl"
+    log.write_text("\n".join(json.dumps(r) for r in rows))
+    outcomes = {"a": 20.0, "b": 10.0, "c": 5.0}
+
+    decisions = load_decisions(log)
+    result = calibrate(decisions, _provider(outcomes),
+                       base_weights={"ecr": 0.65, "vegas": 0.20}, step=0.5,
+                       min_pairs=1)
+    # Only A and B are comparable (C lacks vegas): C(2,2) = 1 pair, not C(3,2)=3.
+    assert result.pairs_used == 1
+
+
 def test_unjoinable_outcomes_yield_no_pairs(tmp_path):
     log = tmp_path / "results_log.jsonl"
     _write_log(log)
