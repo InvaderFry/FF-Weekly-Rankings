@@ -46,10 +46,12 @@ def blend(
         for sig_name in signal_values:
             sv = signal_values[sig_name].get(p.key, SignalValue(raw=None, available=False))
             ps.raw[sig_name] = sv
+            # Surface any note as a flag — whether the value is missing (bye,
+            # unmatched) or present but noteworthy (e.g. an injury designation).
+            if sv.note:
+                ps.flags.append(f"{sig_name}: {sv.note}")
             norm = normalized.get(sig_name, {}).get(p.key)
             if norm is None:
-                if not sv.available and sv.note:
-                    ps.flags.append(f"{sig_name}: {sv.note}")
                 continue
             ps.normalized[sig_name] = norm
             w = float(weights.get(sig_name, 0.0))

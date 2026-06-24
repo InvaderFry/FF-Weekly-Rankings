@@ -78,6 +78,7 @@ class VegasSignal(Signal):
         self.api_key = api_key
         self.session = session or requests.Session()
         self.timeout = timeout
+        self._games: Optional[list[Game]] = None  # per-instance cache
 
     def is_available(self) -> bool:
         return bool(self.api_key)
@@ -106,6 +107,10 @@ class VegasSignal(Signal):
         return out
 
     def _fetch_games(self) -> list[Game]:
+        # The odds endpoint returns every upcoming game regardless of position,
+        # so one fetch serves a whole-roster pass; cache it on the instance.
+        if self._games is not None:
+            return self._games
         resp = self.session.get(
             ODDS_URL,
             params={
@@ -117,4 +122,5 @@ class VegasSignal(Signal):
             timeout=self.timeout,
         )
         resp.raise_for_status()
-        return parse_odds_response(resp.json())
+        self._games = parse_odds_response(resp.json())
+        return self._games

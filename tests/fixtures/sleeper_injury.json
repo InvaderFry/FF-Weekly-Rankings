@@ -1,0 +1,9 @@
+{
+  "100": {"full_name": "Patrick Runner", "first_name": "Patrick", "last_name": "Runner", "team": "KC", "position": "RB", "injury_status": null},
+  "101": {"full_name": "Chicago Back", "first_name": "Chicago", "last_name": "Back", "team": "CHI", "position": "RB", "injury_status": "Questionable"},
+  "102": {"full_name": "Buffalo Rusher", "first_name": "Buffalo", "last_name": "Rusher", "team": "BUF", "position": "RB", "injury_status": "Out"},
+  "104": {"full_name": "Doubtful Dan", "first_name": "Doubtful", "last_name": "Dan", "team": "DAL", "position": "RB", "injury_status": "Doubtful"},
+  "200": {"full_name": "Some Kicker", "first_name": "Some", "last_name": "Kicker", "team": "GB", "position": "K", "injury_status": "IR"},
+  "KC": {"full_name": "Kansas City", "team": "KC", "position": "DEF", "injury_status": null},
+  "999": {"full_name": "Practice Squad", "team": "NE", "position": "OL", "injury_status": "Out"}
+}

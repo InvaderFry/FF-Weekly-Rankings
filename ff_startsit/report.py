@@ -13,7 +13,7 @@ from typing import Optional, Sequence
 from .config import Settings
 from .models import Player, PlayerScore, Recommendation
 from .output.render import render_markdown
-from .pipeline import recommend
+from .pipeline import build_signals, recommend
 
 # A common 1QB/PPR-ish starting set used for the suggested lineup.
 LINEUP_SLOTS = ["QB", "RB", "RB", "WR", "WR", "TE", "FLEX", "K", "DEF"]
@@ -24,11 +24,19 @@ POSITION_ORDER = ["QB", "RB", "WR", "TE", "K", "DEF"]
 
 def rank_each_position(settings: Settings, players: Sequence[Player], week: int,
                        log: bool = False) -> dict[str, Recommendation]:
-    """Rank each position group once. One scoring pass = one set of API calls."""
+    """Rank each position group once. One scoring pass = one set of API calls.
+
+    The signal instances are built once and reused across positions so each
+    signal can memoize its fetch — Vegas pulls every game regardless of
+    position, and ECR caches per position — keeping a whole-roster pass cheap on
+    network calls and API quota.
+    """
+    signals = build_signals(settings)
     recs: dict[str, Recommendation] = {}
     for pos in {p.position for p in players}:
         cands = [p for p in players if p.position == pos]
-        recs[pos] = recommend(settings, cands, week, command="report", log=log)
+        recs[pos] = recommend(settings, cands, week, signals=signals,
+                              command="report", log=log)
     return recs
 
 

@@ -123,6 +123,13 @@ class ESPNProvider(RosterProvider):
         except requests.RequestException as exc:
             raise RosterError(f"ESPN request failed: {exc}") from exc
         if resp.status_code in (401, 403):
+            had_cookies = bool(self.espn_s2 and self.swid)
+            if had_cookies:
+                raise RosterError(
+                    "ESPN denied access (401/403) despite cookies — they have "
+                    "likely expired. Re-grab ESPN_S2 and ESPN_SWID from your "
+                    "browser (DevTools -> Application -> Cookies) and update .env."
+                )
             raise RosterError(
                 "ESPN denied access (401/403). For a private league set ESPN_S2 "
                 "and ESPN_SWID; for a public one the league must be viewable."

@@ -1,14 +1,18 @@
 # FF Weekly Start/Sit
 
 A command-line tool that tells you **who to start and who to sit** each week. It
-blends two signals:
+blends three signals:
 
 - **ECR (#4)** — FantasyPros Expert Consensus Rankings, the robust "wisdom of the
   crowd" backbone.
 - **Vegas (#5)** — implied team totals derived from betting spreads + totals (via
   The Odds API), used to nudge players in better/worse scoring environments.
+- **Injury** — availability from the free public Sleeper player data (no key): a
+  healthy player scores full marks while a Questionable/Doubtful/Out designation
+  drags the score down and is shown as a flag. Injured players sink but still
+  appear, so you decide.
 
-It then **flags the close calls** — when the two signals disagree or the top
+It then **flags the close calls** — when the signals disagree or the top
 options are within a hair of each other — instead of pretending it knows.
 
 This is a v1 deliberately shaped as the skeleton for an **ensemble +
@@ -38,7 +42,8 @@ see the note under [Use](#use) for how to run it anyway.
 | `ODDS_API_KEY` | no | Free key from [the-odds-api.com](https://the-odds-api.com/). Without it, the app runs on ECR alone and labels Vegas "unavailable". |
 | `FANTASYPROS_API_KEY` | no | Tried first; otherwise the app scrapes the public rankings page. |
 | `FF_SCORING` | no | `ppr` (default), `half`, or `std`. |
-| `FF_WEIGHT_ECR` / `FF_WEIGHT_VEGAS` | no | Blend weights (default 0.75 / 0.25). |
+| `FF_WEIGHT_ECR` / `FF_WEIGHT_VEGAS` / `FF_WEIGHT_INJURY` | no | Blend weights (default 0.65 / 0.20 / 0.15). Negative or all-zero weights are rejected and the defaults used. |
+| `FF_INJURY` | no | `1` (default) to use the injury signal; `0`/`false` to disable it. |
 | `FF_CLOSE_CALL_THRESHOLD` | no | 0–100 gap under which a matchup is "too close to call" (default 5). |
 
 ### Roster source
@@ -126,9 +131,10 @@ Notes:
 
 ## How scoring works
 
-1. Each signal returns a native value per player (ECR rank; implied team total).
-2. Values are scaled to **0–100 within the candidate set** — lower ECR rank and
-   higher implied total both map toward 100.
+1. Each signal returns a native value per player (ECR rank; implied team total;
+   injury-availability score).
+2. Values are scaled to **0–100 within the candidate set** — lower ECR rank,
+   higher implied total, and higher availability all map toward 100.
 3. `final = weighted average of available signals` (a missing signal, e.g. a bye,
    is dropped and the rest re-normalized, so nobody is penalized for missing data).
 4. The top two are compared: within the threshold, or signals disagreeing on the
@@ -148,6 +154,7 @@ ff_startsit/
     base.py         Signal ABC  <-- add new signals here (the #7 seam)
     ecr.py          FantasyPros ECR (API key + scrape fallback)
     vegas.py        The Odds API -> implied team totals
+    injury.py       Sleeper injury status -> availability score
   roster/
     base.py         RosterProvider ABC  <-- add new roster sources here
     espn.py         ESPN league (cookies + team auto-detect / id fallback)
