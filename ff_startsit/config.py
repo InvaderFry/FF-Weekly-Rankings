@@ -51,6 +51,11 @@ class Settings:
     def results_log_path(self) -> Path:
         return self.data_dir / "results_log.jsonl"
 
+    @property
+    def learned_weights_path(self) -> Path:
+        """Where ``calibrate --write`` persists learned blend weights (#7)."""
+        return self.data_dir / "learned_weights.json"
+
 
 def _f(name: str, default: float) -> float:
     val = os.getenv(name)
@@ -85,6 +90,23 @@ def _validate_weights(weights: dict[str, float],
     return weights
 
 
+def _load_learned_weights(path: Path) -> dict[str, float]:
+    """Read calibrated weights written by ``calibrate --write`` (empty if absent).
+
+    A corrupt or non-numeric file is ignored with a warning rather than crashing
+    load — the defaults then stand.
+    """
+    if not path.exists():
+        return {}
+    try:
+        import json
+        data = json.loads(path.read_text())
+        return {str(k): float(v) for k, v in data.items()}
+    except Exception:
+        _warn(f"Could not read learned weights at {path}; ignoring.")
+        return {}
+
+
 def _warn(message: str) -> None:
     try:
         from rich import print as rprint
@@ -105,12 +127,18 @@ def load_settings(env_file: str | os.PathLike | None = None) -> Settings:
     if roster_source not in {"espn", "sleeper", "manual"}:
         roster_source = "espn"
 
+    data_dir = Path(os.getenv("FF_DATA_DIR", ".cache"))
+
+    # Weight precedence: hardcoded defaults < learned file (calibrate --write) <
+    # explicit FF_WEIGHT_* env overrides. Config stays the single owner of weights.
     default_weights = {"ecr": 0.65, "vegas": 0.20, "injury": 0.15}
+    base = dict(default_weights)
+    base.update(_load_learned_weights(data_dir / "learned_weights.json"))
     weights = _validate_weights(
         {
-            "ecr": _f("FF_WEIGHT_ECR", default_weights["ecr"]),
-            "vegas": _f("FF_WEIGHT_VEGAS", default_weights["vegas"]),
-            "injury": _f("FF_WEIGHT_INJURY", default_weights["injury"]),
+            "ecr": _f("FF_WEIGHT_ECR", base["ecr"]),
+            "vegas": _f("FF_WEIGHT_VEGAS", base["vegas"]),
+            "injury": _f("FF_WEIGHT_INJURY", base["injury"]),
         },
         default_weights,
     )
@@ -137,5 +165,5 @@ def load_settings(env_file: str | os.PathLike | None = None) -> Settings:
         injury_enabled=_b("FF_INJURY", True),
         discord_webhook_url=os.getenv("DISCORD_WEBHOOK_URL", "").strip(),
         dashboard_url=os.getenv("FF_DASHBOARD_URL", "").strip(),
-        data_dir=Path(os.getenv("FF_DATA_DIR", ".cache")),
+        data_dir=data_dir,
     )

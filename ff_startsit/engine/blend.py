@@ -13,10 +13,30 @@ confidence.
 
 from __future__ import annotations
 
-from typing import Iterable, Mapping
+from typing import Iterable, Mapping, Optional
 
 from ..models import Player, PlayerScore, Recommendation, SignalValue
 from .normalize import to_0_100
+
+
+def weighted_final(normalized: Mapping[str, float],
+                   weights: Mapping[str, float]) -> Optional[float]:
+    """Blend one player's normalized (0-100) signal scores into a final score.
+
+    A weighted average over only the signals present in ``normalized`` — a missing
+    signal (bye, unmatched) is simply absent, and the remaining weights re-normalize
+    so the player is never penalized for missing data. Returns ``None`` when no
+    weighted signal is available. This is the single source of truth shared by the
+    live blend and the #7 calibrator, which re-blends logged ``normalized`` values
+    under trial weights.
+    """
+    acc = 0.0
+    wsum = 0.0
+    for sig_name, norm in normalized.items():
+        w = float(weights.get(sig_name, 0.0))
+        acc += w * norm
+        wsum += w
+    return round(acc / wsum, 2) if wsum > 0 else None
 
 
 def blend(
@@ -41,8 +61,6 @@ def blend(
     scores: list[PlayerScore] = []
     for p in players:
         ps = PlayerScore(player=p)
-        wsum = 0.0
-        acc = 0.0
         for sig_name in signal_values:
             sv = signal_values[sig_name].get(p.key, SignalValue(raw=None, available=False))
             ps.raw[sig_name] = sv
@@ -54,10 +72,7 @@ def blend(
             if norm is None:
                 continue
             ps.normalized[sig_name] = norm
-            w = float(weights.get(sig_name, 0.0))
-            acc += w * norm
-            wsum += w
-        ps.final = round(acc / wsum, 2) if wsum > 0 else None
+        ps.final = weighted_final(ps.normalized, weights)
         scores.append(ps)
 
     # 3. Order best -> worst (players with no score sink to the bottom).

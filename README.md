@@ -15,10 +15,10 @@ blends three signals:
 It then **flags the close calls** — when the signals disagree or the top
 options are within a hair of each other — instead of pretending it knows.
 
-This is a v1 deliberately shaped as the skeleton for an **ensemble +
-self-calibration** system (#7): signals are pluggable, blend weights are
-configurable, and every decision is logged so a future learner can re-weight the
-inputs from your real outcomes.
+It's built as an **ensemble + self-calibration** system (#7): signals are
+pluggable, blend weights are configurable, and every decision is logged — so the
+`calibrate` command can re-weight the inputs from your real outcomes (see
+[Self-calibration](#self-calibration-calibrate-7)).
 
 ## Install
 
@@ -93,7 +93,33 @@ ffstartsit publish --report report.md --dashboard site/index.html --discord --ur
 
 Each `rank`/`compare` run appends a row to `.cache/results_log.jsonl` capturing
 the candidates, every signal's raw + normalized value, the weights used, and the
-pick — the data a #7 calibrator will learn from.
+pick — the data the calibrator learns from.
+
+### Self-calibration (`calibrate`, #7)
+
+Once you've logged a few weeks of `rank`/`compare` runs, `calibrate` joins that
+log against **actual** weekly fantasy points and learns the blend weights that
+would have ranked *your* players best:
+
+```bash
+ffstartsit calibrate                 # report current vs learned weights
+ffstartsit calibrate --week 5        # only weeks 5; also --season YYYY
+ffstartsit calibrate --write         # persist the learned weights (auto-applied next run)
+```
+
+- **Outcomes source:** the free, no-auth Sleeper weekly-stats endpoint, which
+  returns precomputed PPR/Half/Standard points keyed by the same player id the log
+  uses (ESPN/manual rosters fall back to name+position matching). No key needed.
+- **Learner:** a pure-Python grid search over the weight simplex. For each trial it
+  re-blends the logged `normalized` scores (no re-fetching) and scores them by
+  **pairwise ranking concordance** — how often the blend ordered two players the
+  way their real points did. It also reports **top-pick hit-rate** (how often the
+  #1 pick was the week's actual best) for the current vs learned weights.
+- **Apply:** `--write` saves `.cache/learned_weights.json`; the next run picks it up
+  automatically (precedence: defaults → learned file → explicit `FF_WEIGHT_*`).
+  It refuses to write on thin data (`--min-pairs`, default 30) or when your current
+  weights already match the best on the grid — surfacing coin-flips over false
+  confidence, same as the rest of the tool.
 
 ## Use it from your phone (GitHub Actions)
 
@@ -182,7 +208,11 @@ ff_startsit/
     matching.py     name/position matching of external rows onto the roster
   engine/
     normalize.py    raw -> 0..100 (pure)
-    blend.py        weighted ensemble + close-call flagging (pure)
+    blend.py        weighted ensemble (weighted_final) + close-call flagging (pure)
+  calibrate/        self-calibration (#7): learn weights from logged outcomes
+    outcomes.py     Sleeper weekly stats -> actual points (id + name/pos join)
+    log_reader.py   read results_log.jsonl back into Decisions
+    learner.py      grid-search weights by ranking concordance / hit-rate
   results_log.py    append-only JSONL decision log (the #7 hook)
   output/
     render.py       rich table + markdown + CSV/JSON export
@@ -195,8 +225,10 @@ ff_startsit/
   `pipeline.build_signals`, give it a weight. Nothing in the engine changes.
 - **Re-weight:** weights live only in `config.Settings`; a calibrator can rewrite
   them programmatically.
-- **Learn:** join `results_log.jsonl` against actual weekly fantasy points to fit
-  weights that work in *your* leagues. (The learner itself is future work.)
+- **Learn:** `ffstartsit calibrate` joins `results_log.jsonl` against actual weekly
+  fantasy points (Sleeper stats) and grid-searches the weights that best ordered
+  your players; `--write` persists them. See
+  [Self-calibration](#self-calibration-calibrate-7) above.
 
 ## Tests
 
