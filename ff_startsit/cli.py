@@ -9,6 +9,7 @@ Subcommands:
   dashboard build a static HTML dashboard (for GitHub Pages)
   notify    send the week's summary to a Discord webhook
   publish   one scoring pass -> digest + dashboard + Discord (used by the Action)
+  calibrate learn blend weights from your logged decisions vs actual outcomes (#7)
 
 Roster source defaults to ESPN (FF_ROSTER_SOURCE), overridable per command with
 --source {espn,sleeper,manual} plus --league / --team.
@@ -110,6 +111,18 @@ def _build_parser() -> argparse.ArgumentParser:
     p_pub.add_argument("--discord", action="store_true", help="also send the Discord notification")
     p_pub.add_argument("--url", default=None, help="dashboard URL to link (or FF_DASHBOARD_URL)")
     p_pub.set_defaults(func=cmd_publish)
+
+    p_cal = sub.add_parser("calibrate",
+                           help="learn blend weights from your logged decisions vs actual outcomes (#7)")
+    p_cal.add_argument("--season", default=None, help="only use decisions from this season")
+    p_cal.add_argument("--week", type=int, default=None, help="only use decisions from this week")
+    p_cal.add_argument("--step", type=float, default=0.05, help="weight grid resolution (default 0.05)")
+    p_cal.add_argument("--min-pairs", type=int, default=30, dest="min_pairs",
+                       help="minimum joined pairs required to trust/write a result (default 30)")
+    p_cal.add_argument("--log", type=Path, default=None, help="results log path (default: the cache log)")
+    p_cal.add_argument("--write", action="store_true",
+                       help="persist the learned weights so future runs auto-apply them")
+    p_cal.set_defaults(func=cmd_calibrate)
 
     return parser
 
@@ -282,6 +295,98 @@ def cmd_publish(args, settings: Settings) -> int:
                 # the workflow depends on — warn and carry on.
                 print(f"warning: Discord notification failed: {exc}", file=sys.stderr)
     return 0
+
+
+def cmd_calibrate(args, settings: Settings, outcome_provider=None) -> int:
+    """Join the decision log to actual outcomes and fit better blend weights (#7).
+
+    ``outcome_provider`` is injectable so tests run fully offline; in normal use it
+    defaults to the free Sleeper weekly-stats source.
+    """
+    from .calibrate import calibrate as run_calibrate
+    from .calibrate import load_decisions
+
+    log_path = args.log or settings.results_log_path
+    decisions = load_decisions(log_path, season=args.season, week=args.week)
+    if not decisions:
+        print(f"No logged decisions in {log_path}. Run some rank/compare passes first?",
+              file=sys.stderr)
+        return 1
+
+    provider = outcome_provider or _sleeper_outcome_provider(settings)
+    result = run_calibrate(decisions, provider, base_weights=settings.weights,
+                           step=args.step, min_pairs=args.min_pairs)
+    _print_calibration(result)
+
+    if not result.pairs_used:
+        print("Could not join any logged decision to an actual outcome yet — "
+              "outcomes post after games are played.", file=sys.stderr)
+        return 1
+
+    if args.write:
+        if not result.enough_data:
+            print(f"Only {result.pairs_used} joined pairs (< --min-pairs "
+                  f"{args.min_pairs}); not writing — gather more data first.",
+                  file=sys.stderr)
+            return 1
+        if result.best_concordance <= result.current_concordance:
+            print("Your current weights already match the best found — nothing to write.")
+            return 0
+        from .config import _validate_weights
+        weights = _validate_weights(dict(result.best_weights), settings.weights)
+        path = settings.learned_weights_path
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(weights, indent=2))
+        print(f"\nWrote learned weights to {path} — future runs apply them automatically.")
+    return 0
+
+
+def _fmt_weights(weights, order: Sequence[str]) -> str:
+    return "  ".join(f"{s}={weights.get(s, 0.0):.2f}" for s in order)
+
+
+def _print_calibration(result) -> None:
+    print(f"Calibration over {result.decisions_used} decision(s), "
+          f"{result.pairs_used} comparable pair(s); tuning {', '.join(result.signals) or '(none)'}.")
+    if not result.pairs_used:
+        return
+    print(f"  current  weights: {_fmt_weights(result.current_weights, result.signals)}")
+    print(f"           concordance {result.current_concordance:.3f}  "
+          f"top-pick hit-rate {result.current_hit_rate:.3f}")
+    print(f"  learned  weights: {_fmt_weights(result.best_weights, result.signals)}")
+    print(f"           concordance {result.best_concordance:.3f}  "
+          f"top-pick hit-rate {result.best_hit_rate:.3f}")
+    gain = result.best_concordance - result.current_concordance
+    if not result.enough_data:
+        print(f"  note: thin sample — {result.pairs_used} pairs; treat as directional only.")
+    elif gain <= 0:
+        print("  note: current weights are already as good as anything on the grid.")
+    else:
+        print(f"  note: +{gain:.3f} concordance available. Re-run with --write to apply.")
+
+
+def _sleeper_outcome_provider(settings: Settings):
+    """Build the default (Sleeper) outcome lookup factory: (season, week, scoring)->fn."""
+    from .calibrate.outcomes import SleeperStatsClient, build_outcome_lookup
+
+    stats_client = SleeperStatsClient(settings.data_dir)
+    meta_cache: dict[str, dict] = {}
+
+    def provider(season: str, week: int, scoring: str):
+        try:
+            stats = stats_client.weekly_points(season, week, scoring)
+        except Exception:
+            return None
+        if not stats:
+            return None
+        if "meta" not in meta_cache:
+            try:
+                meta_cache["meta"] = SleeperClient(settings.data_dir).load_player_metadata()
+            except Exception:
+                meta_cache["meta"] = {}
+        return build_outcome_lookup(stats, meta_cache["meta"]).get
+
+    return provider
 
 
 # --- helpers --------------------------------------------------------------
