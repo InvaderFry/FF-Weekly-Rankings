@@ -35,9 +35,11 @@ class Settings:
     fantasypros_api_key: str = ""
     scoring: str = "ppr"
     weights: dict[str, float] = field(
-        default_factory=lambda: {"ecr": 0.65, "vegas": 0.20, "injury": 0.15})
+        default_factory=lambda: {"ecr": 0.60, "vegas": 0.18, "injury": 0.12,
+                                 "weather": 0.10})
     close_call_threshold: float = 5.0
     injury_enabled: bool = True
+    weather_enabled: bool = True
     # Before Week 1 there is no live data; fill runs with bundled sample data
     # (clearly labeled) instead of an empty lineup. FF_PRESEASON_FILL=0 disables.
     preseason_fill: bool = True
@@ -137,7 +139,7 @@ def load_settings(env_file: str | os.PathLike | None = None) -> Settings:
 
     # Weight precedence: hardcoded defaults < learned file (calibrate --write) <
     # explicit FF_WEIGHT_* env overrides. Config stays the single owner of weights.
-    default_weights = {"ecr": 0.65, "vegas": 0.20, "injury": 0.15}
+    default_weights = {"ecr": 0.60, "vegas": 0.18, "injury": 0.12, "weather": 0.10}
     base = dict(default_weights)
     base.update(_load_learned_weights(data_dir / "learned_weights.json"))
     weights = _validate_weights(
@@ -145,6 +147,7 @@ def load_settings(env_file: str | os.PathLike | None = None) -> Settings:
             "ecr": _f("FF_WEIGHT_ECR", base["ecr"]),
             "vegas": _f("FF_WEIGHT_VEGAS", base["vegas"]),
             "injury": _f("FF_WEIGHT_INJURY", base["injury"]),
+            "weather": _f("FF_WEIGHT_WEATHER", base["weather"]),
         },
         default_weights,
     )
@@ -169,6 +172,7 @@ def load_settings(env_file: str | os.PathLike | None = None) -> Settings:
         weights=weights,
         close_call_threshold=threshold,
         injury_enabled=_b("FF_INJURY", True),
+        weather_enabled=_b("FF_WEATHER", True),
         preseason_fill=_b("FF_PRESEASON_FILL", True),
         discord_webhook_url=os.getenv("DISCORD_WEBHOOK_URL", "").strip(),
         dashboard_url=os.getenv("FF_DASHBOARD_URL", "").strip(),

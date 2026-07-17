@@ -123,6 +123,13 @@ def _build_parser() -> argparse.ArgumentParser:
                        help="persist the learned weights so future runs auto-apply them")
     p_cal.set_defaults(func=cmd_calibrate)
 
+    p_bt = sub.add_parser("backtest",
+                          help="report how your logged picks actually did + close-call honesty (#7)")
+    p_bt.add_argument("--season", default=None, help="only use decisions from this season")
+    p_bt.add_argument("--week", type=int, default=None, help="only use decisions from this week")
+    p_bt.add_argument("--log", type=Path, default=None, help="results log path (default: the cache log)")
+    p_bt.set_defaults(func=cmd_backtest)
+
     return parser
 
 
@@ -399,6 +406,67 @@ def _sleeper_outcome_provider(settings: Settings):
         return build_outcome_lookup(stats, meta_cache["meta"]).get
 
     return provider
+
+
+def cmd_backtest(args, settings: Settings, outcome_provider=None) -> int:
+    """Report how logged picks actually did, and whether close-call flags are honest.
+
+    Unlike ``calibrate`` (which searches for better weights), this replays each
+    decision under the weights it actually used. ``outcome_provider`` is injectable
+    so tests run offline; it defaults to the free Sleeper weekly-stats source.
+    """
+    from .calibrate import backtest as run_backtest
+    from .calibrate import load_decisions
+
+    log_path = args.log or settings.results_log_path
+    decisions = load_decisions(log_path, season=args.season, week=args.week)
+    if not decisions:
+        print(f"No logged decisions in {log_path}. Run some rank/compare passes first?",
+              file=sys.stderr)
+        return 1
+
+    provider = outcome_provider or _sleeper_outcome_provider(settings)
+    result = run_backtest(decisions, provider, base_weights=settings.weights)
+
+    if not result.decisions_used:
+        print("Could not join any logged decision to an actual outcome yet — "
+              "outcomes post after games are played.", file=sys.stderr)
+        return 1
+
+    _print_backtest(result)
+    return 0
+
+
+def _print_backtest(result) -> None:
+    print(f"Backtest over {result.decisions_used} evaluatable decision(s) "
+          f"({result.candidates_joined} candidates joined to outcomes).")
+    print(f"  top-pick hit-rate {result.hit_rate:.3f} "
+          f"({result.hits}/{result.decisions_used})")
+    print(f"  avg points left on bench per decision: {result.avg_points_lost:.2f}")
+    print("  close-call honesty:")
+    if result.confident_n:
+        print(f"    confident picks : hit-rate {result.confident_hit_rate:.3f} "
+              f"({result.confident_hits}/{result.confident_n})")
+    else:
+        print("    confident picks : (none)")
+    if result.close_call_n:
+        print(f"    close-call picks: hit-rate {result.close_call_hit_rate:.3f} "
+              f"({result.close_call_hits}/{result.close_call_n})")
+    else:
+        print("    close-call picks: (none flagged)")
+    if result.confident_n and result.close_call_n:
+        gap = result.confident_hit_rate - result.close_call_hit_rate
+        if gap > 0:
+            print(f"    -> confident picks hit {gap:.3f} more often — the flag is "
+                  "surfacing the genuinely close calls.")
+        else:
+            print("    -> flagged picks did not fare worse than confident ones on this "
+                  "sample; treat as directional (thin data).")
+    if len(result.weeks) > 1:
+        print("  by week:")
+        for wk in result.weeks:
+            print(f"    {wk.season} wk{wk.week}: hit-rate {wk.hit_rate:.3f} "
+                  f"({wk.hits}/{wk.decisions})")
 
 
 # --- helpers --------------------------------------------------------------

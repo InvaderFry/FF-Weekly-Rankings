@@ -1,0 +1,9 @@
+{
+  "latitude": 42.77,
+  "longitude": -78.79,
+  "daily": {
+    "time": ["2024-10-06", "2024-10-07", "2024-10-08"],
+    "wind_speed_10m_max": [22.0, 6.0, 10.0],
+    "precipitation_probability_max": [80, 0, 20]
+  }
+}

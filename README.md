@@ -11,6 +11,9 @@ blends three signals:
   healthy player scores full marks while a Questionable/Doubtful/Out designation
   drags the score down and is shown as a flag. Injured players sink but still
   appear, so you decide.
+- **Weather** — free public Open-Meteo forecasts (no key): high wind and rain at
+  an outdoor stadium nudge that team's players down (and surface as a flag), while
+  dome and retractable-roof games score neutral. Fair-weather games are untouched.
 
 It then **flags the close calls** — when the signals disagree or the top
 options are within a hair of each other — instead of pretending it knows.
@@ -42,8 +45,9 @@ see the note under [Use](#use) for how to run it anyway.
 | `ODDS_API_KEY` | no | Free key from [the-odds-api.com](https://the-odds-api.com/). Without it, the app runs on ECR alone and labels Vegas "unavailable". |
 | `FANTASYPROS_API_KEY` | no | Tried first; otherwise the app scrapes the public rankings page. |
 | `FF_SCORING` | no | `ppr` (default), `half`, or `std`. |
-| `FF_WEIGHT_ECR` / `FF_WEIGHT_VEGAS` / `FF_WEIGHT_INJURY` | no | Blend weights (default 0.65 / 0.20 / 0.15). Negative or all-zero weights are rejected and the defaults used. |
+| `FF_WEIGHT_ECR` / `FF_WEIGHT_VEGAS` / `FF_WEIGHT_INJURY` / `FF_WEIGHT_WEATHER` | no | Blend weights (default 0.60 / 0.18 / 0.12 / 0.10). Negative or all-zero weights are rejected and the defaults used. |
 | `FF_INJURY` | no | `1` (default) to use the injury signal; `0`/`false` to disable it. |
+| `FF_WEATHER` | no | `1` (default) to use the weather signal (free, no key); `0`/`false` to disable it. |
 | `FF_CLOSE_CALL_THRESHOLD` | no | 0–100 gap under which a matchup is "too close to call" (default 5). |
 
 ### Roster source
@@ -121,6 +125,31 @@ ffstartsit calibrate --write         # persist the learned weights (auto-applied
   weights already match the best on the grid — surfacing coin-flips over false
   confidence, same as the rest of the tool.
 
+### Backtest (`backtest`)
+
+Where `calibrate` *searches* for better weights, `backtest` *reports how the picks
+you already made turned out* — replaying each logged decision under the weights it
+actually used (re-blending the stored scores, never re-fetching) and joining the
+top pick to real weekly points from the same free Sleeper source:
+
+```bash
+ffstartsit backtest                  # all logged weeks
+ffstartsit backtest --week 5         # one week; also --season YYYY
+```
+
+It prints two things:
+
+- **Accuracy** — top-pick hit-rate (how often the #1 pick was the week's actual
+  best) and the average points left on the bench.
+- **Close-call honesty** — the product's core promise, measured. It splits your
+  decisions into *confident* (not flagged) and *close call* (flagged) and compares
+  hit-rates. A trustworthy flag should hit clearly more often on the confident set
+  than on the coin-flips it warned you about — so you can see whether "too close to
+  call" actually meant it.
+
+Like `calibrate`, it needs a few logged weeks with posted outcomes to say anything;
+with an empty log or outcomes not yet posted, it says so and exits.
+
 ## Use it from your phone (GitHub Actions)
 
 You don't need to run anything locally to use this on the go. GitHub Actions
@@ -197,7 +226,7 @@ Notes:
 ## How scoring works
 
 1. Each signal returns a native value per player (ECR rank; implied team total;
-   injury-availability score).
+   injury-availability score; weather-conditions score).
 2. Values are scaled to **0–100 within the candidate set** — lower ECR rank,
    higher implied total, and higher availability all map toward 100.
 3. `final = weighted average of available signals` (a missing signal, e.g. a bye,
@@ -220,6 +249,7 @@ ff_startsit/
     ecr.py          FantasyPros ECR (API key + scrape fallback)
     vegas.py        The Odds API -> implied team totals
     injury.py       Sleeper injury status -> availability score
+    weather.py      Open-Meteo forecast -> conditions score (no key)
   roster/
     base.py         RosterProvider ABC  <-- add new roster sources here
     espn.py         ESPN league (cookies + team auto-detect / id fallback)
@@ -227,6 +257,7 @@ ff_startsit/
     manual.py       hand-edited CSV roster
   data/
     teams.py        team-abbreviation normalization across sources
+    stadiums.py     per-team stadium lat/lon + dome flag (for weather)
     espn_maps.py    ESPN proTeamId / positionId -> canonical codes
     matching.py     name/position matching of external rows onto the roster
   engine/
@@ -236,6 +267,7 @@ ff_startsit/
     outcomes.py     Sleeper weekly stats -> actual points (id + name/pos join)
     log_reader.py   read results_log.jsonl back into Decisions
     learner.py      grid-search weights by ranking concordance / hit-rate
+    backtest.py     replay logged picks vs outcomes; close-call honesty check
   results_log.py    append-only JSONL decision log (the #7 hook)
   output/
     render.py       rich table + markdown + CSV/JSON export
