@@ -107,11 +107,20 @@ def _position_section(pos: str, rec: Recommendation) -> str:
 def build_dashboard_html(week: int, scoring: str,
                          lineup: Sequence[tuple[str, Optional[PlayerScore]]],
                          recs: dict[str, Recommendation],
-                         generated_on: str) -> str:
-    """Render the full dashboard as a self-contained HTML document."""
+                         generated_on: str,
+                         banner: Optional[str] = None) -> str:
+    """Render the full dashboard as a self-contained HTML document.
+
+    ``banner`` (the preseason sample-data warning) renders as a callout at the
+    top of the page.
+    """
     sections = [
         f"<h1>🏈 Week {escape(str(week))} start/sit — {escape(scoring.upper())}</h1>",
         f"<div class='meta'>Generated {escape(generated_on)}</div>",
+    ]
+    if banner:
+        sections.append(f"<div class='callout'><strong>{escape(banner)}</strong></div>")
+    sections += [
         "<h2>Suggested lineup</h2>",
         _lineup_table(lineup),
         "<h2>Rankings by position</h2>",

@@ -14,6 +14,7 @@ from .config import Settings
 from .models import Player, PlayerScore, Recommendation
 from .output.render import render_markdown
 from .pipeline import build_signals, recommend
+from .season import preseason_banner
 
 # A common 1QB/PPR-ish starting set used for the suggested lineup.
 LINEUP_SLOTS = ["QB", "RB", "RB", "WR", "WR", "TE", "FLEX", "K", "DEF"]
@@ -74,14 +75,18 @@ def build_lineup(by_pos: dict[str, list[PlayerScore]]) -> list[tuple[str, Option
 def build_digest(settings: Settings, players: Sequence[Player], week: int) -> str:
     """Assemble the full whole-roster markdown digest (one scoring pass)."""
     recs = rank_each_position(settings, players, week)
-    return render_digest(week, settings.scoring, recs)
+    return render_digest(week, settings.scoring, recs,
+                         banner=preseason_banner(settings))
 
 
-def render_digest(week: int, scoring: str, recs: dict[str, Recommendation]) -> str:
+def render_digest(week: int, scoring: str, recs: dict[str, Recommendation],
+                  banner: Optional[str] = None) -> str:
     """Render precomputed per-position recs as the markdown digest.
 
     Split out from ``build_digest`` so callers that already have ``recs`` (e.g.
     the ``publish`` command) can render without triggering another scoring pass.
+    ``banner`` (e.g. the preseason sample-data warning) renders as a blockquote
+    under the title.
     """
     by_pos = scored(recs)
 
@@ -89,6 +94,10 @@ def render_digest(week: int, scoring: str, recs: dict[str, Recommendation]) -> s
         f"# 🏈 Week {week} start/sit — {scoring.upper()}",
         f"_Generated {date.today().isoformat()}._",
         "",
+    ]
+    if banner:
+        lines += [f"> {banner}", ""]
+    lines += [
         "## Suggested lineup",
         "",
         "| Slot | Player | Team | Score |",

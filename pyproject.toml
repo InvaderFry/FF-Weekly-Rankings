@@ -25,5 +25,8 @@ ffstartsit = "ff_startsit.cli:main"
 where = ["."]
 include = ["ff_startsit*"]
 
+[tool.setuptools.package-data]
+ff_startsit = ["data/*.json"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]

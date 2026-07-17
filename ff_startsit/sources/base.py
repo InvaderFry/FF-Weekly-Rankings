@@ -22,6 +22,10 @@ class Signal(ABC):
     #: totals); False when lower is better (ECR rank). Drives normalization.
     higher_is_better: bool = True
 
+    #: True only for the bundled preseason sample signals — runs built on them
+    #: must never be written to the #7 results log (see pipeline.recommend).
+    is_sample: bool = False
+
     @abstractmethod
     def is_available(self) -> bool:
         """Whether this signal can produce data at all (e.g. has a key)."""

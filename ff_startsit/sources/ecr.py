@@ -14,7 +14,6 @@ from __future__ import annotations
 import json
 import re
 import sys
-from datetime import datetime
 from typing import Iterable, Optional
 
 import requests
@@ -181,6 +180,5 @@ def _api_scoring(scoring: str) -> str:
 
 
 def _current_season() -> int:
-    now = datetime.utcnow()
-    # NFL season is named for the year it starts; before March it's the prior year.
-    return now.year if now.month >= 3 else now.year - 1
+    from ..season import season_year
+    return season_year()

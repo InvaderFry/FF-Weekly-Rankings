@@ -20,11 +20,10 @@ from __future__ import annotations
 import argparse
 import json
 import sys
-from datetime import date, timedelta
 from pathlib import Path
 from typing import Optional, Sequence
 
-from . import report
+from . import report, season
 from .config import Settings, load_settings
 from .data.matching import normalize_name
 from .models import Player
@@ -148,6 +147,7 @@ def cmd_rank(args, settings: Settings) -> int:
         return 1
 
     week = _resolve_week(args, settings)
+    _print_preseason_banner(settings, md=args.md)
     rec = recommend(settings, candidates, week, command=f"rank --pos {pos}")
     title = f"Week {week} {pos} • {settings.scoring.upper()}"
     if args.md:
@@ -171,6 +171,7 @@ def cmd_compare(args, settings: Settings) -> int:
         return 1
 
     week = _resolve_week(args, settings)
+    _print_preseason_banner(settings, md=args.md)
     rec = recommend(settings, candidates, week, command="compare")
     title = f"Week {week} compare • {settings.scoring.upper()}"
     if args.md:
@@ -183,6 +184,7 @@ def cmd_compare(args, settings: Settings) -> int:
 def cmd_lineup(args, settings: Settings) -> int:
     players = _get_roster(args, settings)
     week = _resolve_week(args, settings)
+    _print_preseason_banner(settings, md=args.md)
 
     recs = report.rank_each_position(settings, players, week)
     lineup = report.build_lineup(report.scored(recs))
@@ -229,7 +231,8 @@ def cmd_dashboard(args, settings: Settings) -> int:
     recs = report.rank_each_position(settings, players, week)
     lineup = report.build_lineup(report.scored(recs))
     html = build_dashboard_html(week, settings.scoring, lineup, recs,
-                                generated_on=date.today().isoformat())
+                                generated_on=date.today().isoformat(),
+                                banner=season.preseason_banner(settings))
     args.out.parent.mkdir(parents=True, exist_ok=True)
     args.out.write_text(html)
     print(f"Wrote dashboard to {args.out}")
@@ -248,7 +251,9 @@ def cmd_notify(args, settings: Settings) -> int:
     recs = report.rank_each_position(settings, players, week)
     lineup = report.build_lineup(report.scored(recs))
     dashboard_url = args.url or settings.dashboard_url or None
-    payload = build_discord_payload(week, settings.scoring, lineup, recs, dashboard_url)
+    payload = build_discord_payload(week, settings.scoring, lineup, recs, dashboard_url,
+                                    banner=season.preseason_banner(settings),
+                                    commands_url=_commands_url(settings))
     send_discord(settings.discord_webhook_url, payload)
     print("Sent Discord notification.")
     return 0
@@ -263,12 +268,16 @@ def cmd_publish(args, settings: Settings) -> int:
 
     players = _get_roster(args, settings)
     week = _resolve_week(args, settings)
+    banner = season.preseason_banner(settings)
+    if banner:
+        # Make the Action log say it too, not just the rendered outputs.
+        print(f"warning: {banner}", file=sys.stderr)
 
     # The single scoring pass shared by every output.
     recs = report.rank_each_position(settings, players, week)
     lineup = report.build_lineup(report.scored(recs))
 
-    digest = report.render_digest(week, settings.scoring, recs)
+    digest = report.render_digest(week, settings.scoring, recs, banner=banner)
     print(digest)
     if args.report:
         args.report.parent.mkdir(parents=True, exist_ok=True)
@@ -276,7 +285,8 @@ def cmd_publish(args, settings: Settings) -> int:
 
     if args.dashboard:
         html = build_dashboard_html(week, settings.scoring, lineup, recs,
-                                    generated_on=date.today().isoformat())
+                                    generated_on=date.today().isoformat(),
+                                    banner=banner)
         args.dashboard.parent.mkdir(parents=True, exist_ok=True)
         args.dashboard.write_text(html)
         print(f"Wrote dashboard to {args.dashboard}")
@@ -286,7 +296,9 @@ def cmd_publish(args, settings: Settings) -> int:
             print("DISCORD_WEBHOOK_URL is not set — skipping Discord.", file=sys.stderr)
         else:
             dashboard_url = args.url or settings.dashboard_url or None
-            payload = build_discord_payload(week, settings.scoring, lineup, recs, dashboard_url)
+            payload = build_discord_payload(week, settings.scoring, lineup, recs, dashboard_url,
+                                            banner=banner,
+                                            commands_url=_commands_url(settings))
             try:
                 send_discord(settings.discord_webhook_url, payload)
                 print("Sent Discord notification.")
@@ -453,6 +465,22 @@ def _save_roster(settings: Settings, provider: RosterProvider,
     return path
 
 
+def _print_preseason_banner(settings: Settings, md: bool = False) -> None:
+    """Lead interactive/markdown output with the preseason warning, if any."""
+    banner = season.preseason_banner(settings)
+    if not banner:
+        return
+    if md:
+        print(f"> {banner}\n")
+    else:
+        print(f"{banner}\n")
+
+
+def _commands_url(settings: Settings) -> Optional[str]:
+    """Where Discord readers go to actually use /lineup-style commands."""
+    return f"{settings.repo_url}/issues" if settings.repo_url else None
+
+
 # --- week / season resolution (league-agnostic) ---------------------------
 def _resolve_week(args, settings: Settings) -> int:
     if getattr(args, "week", None):
@@ -475,20 +503,12 @@ def _current_season(settings: Settings) -> str:
 
 
 def _date_season() -> str:
-    today = date.today()
-    return str(today.year if today.month >= 3 else today.year - 1)
+    return season.date_season()
 
 
 def _date_week() -> int:
     """Rough NFL week from today's date — only a fallback when /state/nfl fails."""
-    today = date.today()
-    year = int(_date_season())
-    # Week 1 kicks off around the first Thursday of September.
-    sept1 = date(year, 9, 1)
-    first_thu = sept1 + timedelta(days=(3 - sept1.weekday()) % 7)
-    if today < first_thu:
-        return 1
-    return max(1, min(18, (today - first_thu).days // 7 + 1))
+    return season.date_week()
 
 
 if __name__ == "__main__":
