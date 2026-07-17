@@ -5,7 +5,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## What this is
 
 `ffstartsit` is a CLI that tells you who to start/sit each fantasy week by blending
-signals (ECR + Vegas + injury) into a normalized ensemble score, and — its core
+signals (ECR + Vegas + injury + weather) into a normalized ensemble score, and — its core
 product promise — **flags the close calls instead of faking confidence**. It is
 built as an ensemble + self-calibration system; the code and docs refer to that
 design as **"#7"** throughout (the Signal seam, the results log, and the
@@ -85,6 +85,13 @@ stats endpoint (`outcomes.py`), and grid-searches the weight simplex
 (`learner.py`) by pairwise ranking concordance — **re-blending the logged
 `normalized` values, never re-fetching**. It refuses to `--write` on thin data
 (`--min-pairs`) or when current weights already tie the grid best.
+
+`backtest` (`calibrate/backtest.py`) is the read-only companion: it replays each
+logged decision under **the weights that run actually used** (`Decision.weights`),
+joins the pick to the same Sleeper outcomes, and reports top-pick hit-rate plus a
+**confident-vs-close-call hit-rate split** — the honesty check on close-call
+flagging. It reuses `weighted_final`, the `OutcomeProvider` seam, and `load_decisions`;
+it never writes weights.
 
 ### Output & delivery
 

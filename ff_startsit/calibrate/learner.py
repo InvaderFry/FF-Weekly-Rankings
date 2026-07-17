@@ -55,7 +55,7 @@ def signals_in(decisions: Sequence[Decision]) -> list[str]:
     for d in decisions:
         for c in d.candidates:
             seen.update(c.normalized.keys())
-    canonical = [s for s in ("ecr", "vegas", "injury") if s in seen]
+    canonical = [s for s in ("ecr", "vegas", "injury", "weather") if s in seen]
     extra = sorted(seen - set(canonical))
     return canonical + extra
 

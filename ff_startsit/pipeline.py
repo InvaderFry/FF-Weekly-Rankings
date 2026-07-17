@@ -17,6 +17,7 @@ from .sources.base import Signal
 from .sources.ecr import ECRSignal
 from .sources.injury import InjurySignal
 from .sources.vegas import VegasSignal
+from .sources.weather import WeatherSignal
 
 
 def build_signals(settings: Settings, season: Optional[int] = None,
@@ -38,6 +39,7 @@ def build_signals(settings: Settings, season: Optional[int] = None,
                   season=season),
         VegasSignal(api_key=settings.odds_api_key),
         InjurySignal(data_dir=settings.data_dir, enabled=settings.injury_enabled),
+        WeatherSignal(enabled=settings.weather_enabled),
     ]
 
 
