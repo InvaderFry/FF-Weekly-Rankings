@@ -20,6 +20,12 @@ from ..models import PlayerScore, Recommendation
 # Discord limits we stay safely under.
 _FIELD_VALUE_MAX = 1024
 _EMBED_COLOR = 0x2EA043  # green
+_BANNER_COLOR = 0xD29922  # amber — something needs the reader's attention
+
+# The /commands only work as GitHub issue comments (chatops.py); Discord
+# delivery is a one-way webhook, so tell readers where the commands live.
+_COMMANDS_NOTE = ("`/lineup`, `/report`, `/rank RB`, `/compare A | B` work as "
+                  "comments on the weekly GitHub issue — not here in Discord.")
 
 
 def _lineup_lines(lineup: Sequence[tuple[str, Optional[PlayerScore]]]) -> str:
@@ -54,13 +60,22 @@ def _clip(text: str, limit: int) -> str:
 def build_discord_payload(week: int, scoring: str,
                           lineup: Sequence[tuple[str, Optional[PlayerScore]]],
                           recs: dict[str, Recommendation],
-                          dashboard_url: Optional[str] = None) -> dict:
-    """Return a Discord webhook JSON body for the week's summary."""
-    description = _clip(_lineup_lines(lineup), 4096)
+                          dashboard_url: Optional[str] = None,
+                          banner: Optional[str] = None,
+                          commands_url: Optional[str] = None) -> dict:
+    """Return a Discord webhook JSON body for the week's summary.
+
+    ``banner`` (the preseason sample-data warning) leads the description and
+    flips the embed amber; ``commands_url`` adds a field pointing readers at
+    the GitHub issue where the ``/`` commands actually work.
+    """
+    description = _lineup_lines(lineup)
+    if banner:
+        description = f"**{banner}**\n\n{description}"
     embed: dict = {
         "title": f"🏈 Week {week} start/sit — {scoring.upper()}",
-        "description": description,
-        "color": _EMBED_COLOR,
+        "description": _clip(description, 4096),
+        "color": _BANNER_COLOR if banner else _EMBED_COLOR,
         "fields": [],
     }
     if dashboard_url:
@@ -77,6 +92,15 @@ def build_discord_payload(week: int, scoring: str,
         embed["fields"].append(
             {"name": "Full dashboard", "value": dashboard_url, "inline": False}
         )
+
+    if commands_url:
+        embed["fields"].append(
+            {"name": "💬 Commands",
+             "value": _clip(f"{_COMMANDS_NOTE}\n{commands_url}", _FIELD_VALUE_MAX),
+             "inline": False}
+        )
+    else:
+        embed["footer"] = {"text": _COMMANDS_NOTE.replace("`", "")}
 
     return {"embeds": [embed]}
 

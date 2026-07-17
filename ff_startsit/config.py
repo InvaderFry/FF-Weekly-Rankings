@@ -38,9 +38,15 @@ class Settings:
         default_factory=lambda: {"ecr": 0.65, "vegas": 0.20, "injury": 0.15})
     close_call_threshold: float = 5.0
     injury_enabled: bool = True
+    # Before Week 1 there is no live data; fill runs with bundled sample data
+    # (clearly labeled) instead of an empty lineup. FF_PRESEASON_FILL=0 disables.
+    preseason_fill: bool = True
     # Distribution
     discord_webhook_url: str = ""
     dashboard_url: str = ""
+    # Repo web URL, used to point Discord readers at the issue-comment commands.
+    # FF_REPO_URL, else derived from the GITHUB_* vars GitHub Actions sets.
+    repo_url: str = ""
     data_dir: Path = field(default_factory=lambda: Path(".cache"))
 
     @property
@@ -163,7 +169,22 @@ def load_settings(env_file: str | os.PathLike | None = None) -> Settings:
         weights=weights,
         close_call_threshold=threshold,
         injury_enabled=_b("FF_INJURY", True),
+        preseason_fill=_b("FF_PRESEASON_FILL", True),
         discord_webhook_url=os.getenv("DISCORD_WEBHOOK_URL", "").strip(),
         dashboard_url=os.getenv("FF_DASHBOARD_URL", "").strip(),
+        repo_url=_repo_url(),
         data_dir=data_dir,
     )
+
+
+def _repo_url() -> str:
+    """FF_REPO_URL, else the GITHUB_* vars every Actions run exports."""
+    explicit = os.getenv("FF_REPO_URL", "").strip()
+    if explicit:
+        return explicit.rstrip("/")
+    repo = os.getenv("GITHUB_REPOSITORY", "").strip()
+    if repo:
+        server = (os.getenv("GITHUB_SERVER_URL", "").strip()
+                  or "https://github.com").rstrip("/")
+        return f"{server}/{repo}"
+    return ""

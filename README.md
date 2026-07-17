@@ -148,6 +148,29 @@ the GitHub mobile app. Two workflows ship in `.github/workflows/`:
   Inline options work on any command: `week N`, `source espn\|sleeper\|manual`,
   `league ID`, `team ID` — e.g. `/rank WR week 5`.
 
+  > **These commands are GitHub issue comments — they do NOT work in Discord.**
+  > The Discord integration is a one-way incoming webhook: the tool *posts* the
+  > weekly summary to your channel, but nothing is listening for messages there
+  > (there is no Discord bot). To use a command, open the week's
+  > `Week N start/sit` issue on GitHub (or any issue) and post the command as a
+  > comment — the Actions bot replies within a minute or so. The Discord embed
+  > includes a **💬 Commands** link that takes you straight to the issues page.
+
+### Preseason (before Week 1)
+
+Before the season kicks off (the first Thursday of September) there are no
+weekly ECR rankings and no Vegas lines, so a live run has nothing to score.
+Instead of posting an empty lineup, runs during the preseason:
+
+- carry a **⚠️ PRESEASON warning** on the report, dashboard, and Discord embed
+  (the embed turns amber), and
+- are **auto-filled with bundled, clearly-labeled sample data** so you can see
+  the tool end-to-end with your real roster. Sample runs are never written to
+  the results log, so they can't skew `calibrate` (#7).
+
+Set `FF_PRESEASON_FILL=0` to disable the sample fill and show the warning with
+empty slots instead.
+
 ### One-time setup
 Add these in **repo → Settings → Secrets and variables → Actions → New repository
 secret** (same values as your local `.env`):

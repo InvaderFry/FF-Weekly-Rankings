@@ -12,14 +12,27 @@ from .config import Settings
 from .engine.blend import blend
 from .models import Player, Recommendation
 from .results_log import log_recommendation
+from .season import is_preseason
 from .sources.base import Signal
 from .sources.ecr import ECRSignal
 from .sources.injury import InjurySignal
 from .sources.vegas import VegasSignal
 
 
-def build_signals(settings: Settings, season: Optional[int] = None) -> list[Signal]:
-    """The v1 signal set. Add a usage signal here for #7 — nothing else changes."""
+def build_signals(settings: Settings, season: Optional[int] = None,
+                  preseason: Optional[bool] = None) -> list[Signal]:
+    """The v1 signal set. Add a usage signal here for #7 — nothing else changes.
+
+    Before Week 1 there is no live ECR/Vegas data, so (unless disabled via
+    ``FF_PRESEASON_FILL=0``) preseason runs get the bundled sample signals
+    instead of an all-``None`` blend. ``preseason`` is injectable for tests;
+    ``None`` means "detect from today's date".
+    """
+    if preseason is None:
+        preseason = is_preseason()
+    if preseason and settings.preseason_fill:
+        from .sources.sample import build_sample_signals
+        return build_sample_signals()
     return [
         ECRSignal(api_key=settings.fantasypros_api_key, scoring=settings.scoring,
                   season=season),
@@ -38,6 +51,11 @@ def recommend(
 ) -> Recommendation:
     """Fetch every available signal for ``players`` and blend into a ranking."""
     signals = list(signals) if signals is not None else build_signals(settings)
+
+    # Sample (preseason) runs must never feed the #7 calibration log — the
+    # learner would happily fit weights to made-up data.
+    if any(getattr(s, "is_sample", False) for s in signals):
+        log = False
 
     from .sources.base import unavailable_for
 
