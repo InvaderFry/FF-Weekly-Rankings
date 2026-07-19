@@ -35,6 +35,10 @@ jobs:
       ESPN_SWID: ${{ secrets.ESPN_SWID }}
       ODDS_API_KEY: ${{ secrets.ODDS_API_KEY }}
       FANTASYPROS_API_KEY: ${{ secrets.FANTASYPROS_API_KEY }}
+      # Repository *variable* (Settings -> Secrets and variables -> Actions ->
+      # Variables tab), not a secret: journalist ids aren't sensitive. Unset ->
+      # the Preferred journalists section is simply omitted. See docs/SETUP.md.
+      FF_PREFERRED_EXPERTS: ${{ vars.FF_PREFERRED_EXPERTS }}
       DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
       INPUT_WEEK: ${{ github.event.inputs.week }}
     steps:

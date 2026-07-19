@@ -38,6 +38,11 @@ see the note under [Use](#use) for how to run it anyway.
 
 ## Configure (`.env`)
 
+> **Step-by-step walkthrough:** [docs/SETUP.md](docs/SETUP.md) covers every
+> variable in detail — finding your ESPN league id and cookies, the
+> preferred-journalist expert ids, and setting up the GitHub Actions
+> secrets/variables for the automated weekly runs.
+
 ### Signals & tuning
 
 | Variable | Required | Notes |
@@ -101,8 +106,9 @@ If you trust a few specific rankers — say Justin Boone, Jamey Eisenberg, and
 Dave Richard — you can add a **"Preferred journalists"** section to the report
 and dashboard: each journalist's own weekly rank per player, plus their
 average. It's a side-by-side view only; it never enters the blended score or
-calibration. Set `FF_PREFERRED_EXPERTS` to FantasyPros expert ids
-(see `.env.example` for how to find them), then:
+calibration. Set `FF_PREFERRED_EXPERTS` to FantasyPros expert ids —
+[docs/SETUP.md](docs/SETUP.md#3-preferred-journalists-ff_preferred_experts)
+walks through finding them — then:
 
 ```bash
 ffstartsit journalists               # just this section, on demand
@@ -215,11 +221,18 @@ Set `FF_PRESEASON_FILL=0` to disable the sample fill and show the warning with
 empty slots instead.
 
 ### One-time setup
+
+> Detailed click-by-click instructions: [docs/SETUP.md](docs/SETUP.md#6-github-actions-setup-the-twice-weekly-runs).
+
 Add these in **repo → Settings → Secrets and variables → Actions → New repository
 secret** (same values as your local `.env`):
 
 `ESPN_LEAGUE_ID`, `ESPN_S2`, `ESPN_SWID` (private league) — and optionally
 `ESPN_TEAM_ID` (public league), `ODDS_API_KEY`, `FANTASYPROS_API_KEY`.
+
+For the **Preferred journalists** section in the scheduled runs, add
+`FF_PREFERRED_EXPERTS` on the **Variables** tab (it's not sensitive) with the
+same `id:Name,...` value as your local `.env`.
 
 For the **dashboard + Discord** delivery:
 - **Enable GitHub Pages once:** repo → *Settings → Pages → Build and deployment →
