@@ -15,6 +15,7 @@ from .models import Player, PlayerScore, Recommendation
 from .output.render import render_markdown
 from .pipeline import build_signals, recommend
 from .season import preseason_banner
+from .sources.journalists import JournalistFetcher, JournalistView, parse_experts
 
 # A common 1QB/PPR-ish starting set used for the suggested lineup.
 LINEUP_SLOTS = ["QB", "RB", "RB", "WR", "WR", "TE", "FLEX", "K", "DEF"]
@@ -72,15 +73,34 @@ def build_lineup(by_pos: dict[str, list[PlayerScore]]) -> list[tuple[str, Option
     return out
 
 
+def build_journalist_view(settings: Settings, players: Sequence[Player],
+                          week: int) -> Optional[JournalistView]:
+    """Build the preferred-journalists view, or None when disabled/no data."""
+    experts = parse_experts(settings.preferred_experts)
+    if not experts:
+        return None
+    fetcher = JournalistFetcher(experts, api_key=settings.fantasypros_api_key,
+                                scoring=settings.scoring)
+    try:
+        return fetcher.build_view(players, week)
+    except Exception as exc:  # a broken journalist feed must never sink a run
+        import sys
+        print(f"warning: preferred-journalists view unavailable: {exc}",
+              file=sys.stderr)
+        return None
+
+
 def build_digest(settings: Settings, players: Sequence[Player], week: int) -> str:
     """Assemble the full whole-roster markdown digest (one scoring pass)."""
     recs = rank_each_position(settings, players, week)
     return render_digest(week, settings.scoring, recs,
-                         banner=preseason_banner(settings))
+                         banner=preseason_banner(settings),
+                         journalists=build_journalist_view(settings, players, week))
 
 
 def render_digest(week: int, scoring: str, recs: dict[str, Recommendation],
-                  banner: Optional[str] = None) -> str:
+                  banner: Optional[str] = None,
+                  journalists: Optional[JournalistView] = None) -> str:
     """Render precomputed per-position recs as the markdown digest.
 
     Split out from ``build_digest`` so callers that already have ``recs`` (e.g.
@@ -119,4 +139,38 @@ def render_digest(week: int, scoring: str, recs: dict[str, Recommendation],
         lines.append("")
         lines.append(render_markdown(rec, title=pos))
 
+    if journalists is not None:
+        lines.append("")
+        lines.append(render_journalists_markdown(journalists))
+
+    return "\n".join(lines)
+
+
+def render_journalists_markdown(view: JournalistView) -> str:
+    """Render the Preferred journalists section as GFM tables.
+
+    One table per position: each journalist's own weekly rank plus their
+    average, best average first. Display-only — no blend scores here.
+    """
+    names = ", ".join(e.name for e in view.experts)
+    lines = [
+        "## Preferred journalists",
+        f"_Average weekly rank across: {names}. Side-by-side view only — "
+        "not part of the blended score._",
+    ]
+    for pos in POSITION_ORDER:
+        rows = view.by_position.get(pos)
+        if not rows:
+            continue
+        header = ["#", "Player", "Team", "Avg rank"] + [e.name for e in view.experts]
+        lines += ["", f"### {pos}", "",
+                  "| " + " | ".join(header) + " |",
+                  "|" + "---|" * len(header)]
+        for i, row in enumerate(rows, start=1):
+            cells = [str(i), row.player.name, row.player.team or "BYE",
+                     f"{row.avg_rank:.1f}"]
+            for e in view.experts:
+                rank = row.ranks.get(e.id)
+                cells.append("—" if rank is None else f"{rank:.0f}")
+            lines.append("| " + " | ".join(cells) + " |")
     return "\n".join(lines)

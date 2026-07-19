@@ -40,6 +40,10 @@ class Settings:
     close_call_threshold: float = 5.0
     injury_enabled: bool = True
     weather_enabled: bool = True
+    # Preferred journalists (display-only view): "id:Name,id:Name" FantasyPros
+    # expert ids. Empty/0/off disables the section. Never part of the blend
+    # weights — this is a side-by-side view, not a signal.
+    preferred_experts: str = ""
     # Before Week 1 there is no live data; fill runs with bundled sample data
     # (clearly labeled) instead of an empty lineup. FF_PRESEASON_FILL=0 disables.
     preseason_fill: bool = True
@@ -171,6 +175,7 @@ def load_settings(env_file: str | os.PathLike | None = None) -> Settings:
         scoring=scoring,
         weights=weights,
         close_call_threshold=threshold,
+        preferred_experts=os.getenv("FF_PREFERRED_EXPERTS", "").strip(),
         injury_enabled=_b("FF_INJURY", True),
         weather_enabled=_b("FF_WEATHER", True),
         preseason_fill=_b("FF_PRESEASON_FILL", True),

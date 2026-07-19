@@ -76,6 +76,52 @@ def parse_scrape_html(html: str) -> list[ExternalRow]:
     return parse_api_response(data)
 
 
+def fetch_api_rows(session: requests.Session, api_key: str, season: int, scoring: str,
+                   position: str, week: int, timeout: int = 20,
+                   filters: Optional[str] = None) -> list[ExternalRow]:
+    """Fetch rankings rows from the consensus-rankings API.
+
+    ``filters`` is a colon-separated string of FantasyPros expert ids; when set,
+    the returned consensus covers only those experts (a single id yields that
+    expert's individual ranks).
+    """
+    params = {
+        "type": "weekly",
+        "scoring": _api_scoring(scoring),
+        "position": _api_pos(position),
+        "week": week,
+    }
+    if filters:
+        params["filters"] = filters
+    resp = session.get(
+        API_URL.format(season=season),
+        params=params,
+        headers={"x-api-key": api_key},
+        timeout=timeout,
+    )
+    resp.raise_for_status()
+    return parse_api_response(resp.json())
+
+
+def fetch_scrape_rows(session: requests.Session, scoring: str, position: str,
+                      timeout: int = 20,
+                      filters: Optional[str] = None) -> list[ExternalRow]:
+    """Fetch rankings rows by scraping the public rankings page.
+
+    ``filters`` narrows the page's embedded ``ecrData`` to the given
+    colon-separated expert ids, same as the API path.
+    """
+    params = {"filters": filters} if filters else None
+    resp = session.get(
+        SCRAPE_URL.format(slug=_scrape_slug(position, scoring)),
+        params=params,
+        headers={"User-Agent": "Mozilla/5.0 (ff-startsit)"},
+        timeout=timeout,
+    )
+    resp.raise_for_status()
+    return parse_scrape_html(resp.text)
+
+
 class ECRSignal(Signal):
     name = "ecr"
     higher_is_better = False  # a lower ECR rank is better
@@ -142,28 +188,12 @@ class ECRSignal(Signal):
         return rows
 
     def _fetch_api(self, position: str, week: int) -> list[ExternalRow]:
-        resp = self.session.get(
-            API_URL.format(season=self.season),
-            params={
-                "type": "weekly",
-                "scoring": _api_scoring(self.scoring),
-                "position": _api_pos(position),
-                "week": week,
-            },
-            headers={"x-api-key": self.api_key},
-            timeout=self.timeout,
-        )
-        resp.raise_for_status()
-        return parse_api_response(resp.json())
+        return fetch_api_rows(self.session, self.api_key, self.season, self.scoring,
+                              position, week, timeout=self.timeout)
 
     def _fetch_scrape(self, position: str) -> list[ExternalRow]:
-        resp = self.session.get(
-            SCRAPE_URL.format(slug=_scrape_slug(position, self.scoring)),
-            headers={"User-Agent": "Mozilla/5.0 (ff-startsit)"},
-            timeout=self.timeout,
-        )
-        resp.raise_for_status()
-        return parse_scrape_html(resp.text)
+        return fetch_scrape_rows(self.session, self.scoring, position,
+                                 timeout=self.timeout)
 
 
 def _canon_pos(position: str) -> str:

@@ -1,0 +1,6 @@
+{
+  "players": [
+    {"player_name": "Patrick Runner", "player_team_id": "KC", "player_position_id": "RB", "rank_ecr": 4, "tier": 1},
+    {"player_name": "Chicago Back", "player_team_id": "CHI", "player_position_id": "RB", "rank_ecr": 10, "tier": 2}
+  ]
+}

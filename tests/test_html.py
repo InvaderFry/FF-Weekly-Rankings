@@ -49,3 +49,36 @@ def test_build_dashboard_html_escapes_player_names():
                                 generated_on="2026-06-24")
     assert "<script>" not in html
     assert "&lt;script&gt;" in html
+
+
+def _journalist_view():
+    from ff_startsit.sources.journalists import (Expert, JournalistRow,
+                                                 JournalistView)
+    return JournalistView(
+        experts=[Expert("101", "Justin Boone"), Expert("102", "Jamey Eisenberg")],
+        by_position={"RB": [
+            JournalistRow(Player("1", "Alpha", "KC", "RB"), 3.0,
+                          {"101": 2.0, "102": 4.0}),
+            JournalistRow(Player("2", "Bravo", "CHI", "RB"), 8.0,
+                          {"101": 8.0, "102": None}),
+        ]})
+
+
+def test_build_dashboard_html_journalists_section():
+    rb = _rec(_ps("1", "Alpha", "RB", 90.0))
+    html = build_dashboard_html(3, "ppr", [("RB", rb.scores[0])], {"RB": rb},
+                                generated_on="2026-06-24",
+                                journalists=_journalist_view())
+    assert "Preferred journalists" in html
+    assert "Justin Boone" in html and "Jamey Eisenberg" in html
+    assert "Avg rank" in html
+    assert "3.0" in html      # Alpha's average
+    assert "—" in html        # Bravo's missing Eisenberg rank
+    assert html.index("Rankings by position") < html.index("Preferred journalists")
+
+
+def test_build_dashboard_html_no_journalists_no_section():
+    rb = _rec(_ps("1", "Alpha", "RB", 90.0))
+    html = build_dashboard_html(3, "ppr", [("RB", rb.scores[0])], {"RB": rb},
+                                generated_on="2026-06-24")
+    assert "Preferred journalists" not in html

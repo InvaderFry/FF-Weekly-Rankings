@@ -15,6 +15,7 @@ from html import escape
 from typing import Optional, Sequence
 
 from ..models import PlayerScore, Recommendation
+from ..sources.journalists import JournalistView
 
 # Order positions appear on the dashboard (mirrors report.POSITION_ORDER).
 POSITION_ORDER = ["QB", "RB", "WR", "TE", "K", "DEF"]
@@ -27,6 +28,7 @@ body { font-family: -apple-system, system-ui, "Segoe UI", Roboto, sans-serif;
        background: #0f1115; color: #e7e9ee; }
 h1 { font-size: 1.5rem; margin: 0 0 .25rem; }
 h2 { font-size: 1.15rem; margin: 1.75rem 0 .5rem; }
+h3 { font-size: 1rem; margin: 1.25rem 0 .35rem; color: #c6cad3; }
 .meta { color: #9aa0ad; font-size: .85rem; margin-bottom: 1rem; }
 table { width: 100%; border-collapse: collapse; margin: .25rem 0 .5rem;
         font-size: .92rem; }
@@ -104,15 +106,47 @@ def _position_section(pos: str, rec: Recommendation) -> str:
     return "".join(parts)
 
 
+def _journalists_section(view: JournalistView) -> str:
+    names = ", ".join(e.name for e in view.experts)
+    parts = [
+        "<h2>Preferred journalists</h2>",
+        f"<div class='meta'>Average weekly rank across: {escape(names)}. "
+        "Side-by-side view only — not part of the blended score.</div>",
+    ]
+    for pos in POSITION_ORDER:
+        rows_ = view.by_position.get(pos)
+        if not rows_:
+            continue
+        head = ["<th class='num'>#</th>", "<th>Player</th>", "<th>Team</th>",
+                "<th class='num'>Avg rank</th>"]
+        head += [f"<th class='num'>{escape(e.name)}</th>" for e in view.experts]
+        rows = ["<tr>" + "".join(head) + "</tr>"]
+        for i, row in enumerate(rows_, start=1):
+            tds = [f"<td class='num'>{i}</td>",
+                   f"<td>{escape(row.player.name)}</td>",
+                   f"<td>{escape(row.player.team or 'BYE')}</td>",
+                   f"<td class='num'>{row.avg_rank:.1f}</td>"]
+            for e in view.experts:
+                rank = row.ranks.get(e.id)
+                tds.append(f"<td class='num'>{'—' if rank is None else f'{rank:.0f}'}</td>")
+            cls = " class='top'" if i == 1 else ""
+            rows.append(f"<tr{cls}>" + "".join(tds) + "</tr>")
+        parts.append(f"<h3>{escape(pos)}</h3>")
+        parts.append("<table>" + "".join(rows) + "</table>")
+    return "".join(parts)
+
+
 def build_dashboard_html(week: int, scoring: str,
                          lineup: Sequence[tuple[str, Optional[PlayerScore]]],
                          recs: dict[str, Recommendation],
                          generated_on: str,
-                         banner: Optional[str] = None) -> str:
+                         banner: Optional[str] = None,
+                         journalists: Optional[JournalistView] = None) -> str:
     """Render the full dashboard as a self-contained HTML document.
 
     ``banner`` (the preseason sample-data warning) renders as a callout at the
-    top of the page.
+    top of the page. ``journalists`` (the preferred-journalists view) adds its
+    section after the position rankings; ``None`` omits it.
     """
     sections = [
         f"<h1>🏈 Week {escape(str(week))} start/sit — {escape(scoring.upper())}</h1>",
@@ -130,6 +164,9 @@ def build_dashboard_html(week: int, scoring: str,
         if rec is None or not rec.scores:
             continue
         sections.append(_position_section(pos, rec))
+
+    if journalists is not None:
+        sections.append(_journalists_section(journalists))
 
     body = "\n".join(sections)
     return (

@@ -45,3 +45,15 @@ def test_corrupt_learned_file_falls_back_to_defaults(tmp_path, monkeypatch):
     (tmp_path / "learned_weights.json").write_text("{not valid json")
     weights = load_settings().weights
     assert weights == DEFAULT_WEIGHTS
+
+
+def test_preferred_experts_default_empty(tmp_path, monkeypatch):
+    monkeypatch.setenv("FF_DATA_DIR", str(tmp_path))
+    monkeypatch.delenv("FF_PREFERRED_EXPERTS", raising=False)
+    assert load_settings().preferred_experts == ""
+
+
+def test_preferred_experts_env(tmp_path, monkeypatch):
+    monkeypatch.setenv("FF_DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("FF_PREFERRED_EXPERTS", "101:Justin Boone,102:Jamey Eisenberg")
+    assert load_settings().preferred_experts == "101:Justin Boone,102:Jamey Eisenberg"

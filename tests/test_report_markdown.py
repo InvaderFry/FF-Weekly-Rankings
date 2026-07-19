@@ -83,3 +83,35 @@ def test_build_digest_monkeypatched(monkeypatch):
     assert "## Rankings by position" in digest
     assert "### QB" in digest and "### RB" in digest
     assert "Alpha" in digest and "Quincy" in digest
+
+
+def _journalist_view():
+    from ff_startsit.sources.journalists import (Expert, JournalistRow,
+                                                 JournalistView)
+    boone, eisen = Expert("101", "Justin Boone"), Expert("102", "Jamey Eisenberg")
+    alpha = Player("1", "Alpha", "KC", "RB")
+    bravo = Player("2", "Bravo", "CHI", "RB")
+    return JournalistView(
+        experts=[boone, eisen],
+        by_position={"RB": [
+            JournalistRow(alpha, 3.0, {"101": 2.0, "102": 4.0}),
+            JournalistRow(bravo, 8.0, {"101": 8.0, "102": None}),
+        ]})
+
+
+def test_render_digest_with_journalists_section():
+    recs = {"RB": _rec(_ps("1", "Alpha", "RB", 90.0))}
+    digest = report.render_digest(3, "ppr", recs, journalists=_journalist_view())
+    assert "## Preferred journalists" in digest
+    assert "Justin Boone, Jamey Eisenberg" in digest
+    assert "| # | Player | Team | Avg rank | Justin Boone | Jamey Eisenberg |" in digest
+    assert "| 1 | Alpha | KC | 3.0 | 2 | 4 |" in digest
+    assert "| 2 | Bravo | CHI | 8.0 | 8 | — |" in digest  # missing rank -> em dash
+    # Section renders after the position rankings.
+    assert digest.index("## Rankings by position") < digest.index("## Preferred journalists")
+
+
+def test_render_digest_without_journalists_omits_section():
+    recs = {"RB": _rec(_ps("1", "Alpha", "RB", 90.0))}
+    digest = report.render_digest(3, "ppr", recs)
+    assert "Preferred journalists" not in digest
