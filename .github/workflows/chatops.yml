@@ -41,6 +41,9 @@ jobs:
           ESPN_SWID: ${{ secrets.ESPN_SWID }}
           ODDS_API_KEY: ${{ secrets.ODDS_API_KEY }}
           FANTASYPROS_API_KEY: ${{ secrets.FANTASYPROS_API_KEY }}
+          # Repository variable (not secret) — powers /report's Preferred
+          # journalists section; unset just omits it. See docs/SETUP.md.
+          FF_PREFERRED_EXPERTS: ${{ vars.FF_PREFERRED_EXPERTS }}
         run: |
           python - <<'PY'
           import contextlib, io, os
