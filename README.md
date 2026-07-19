@@ -95,6 +95,20 @@ ffstartsit notify --url https://you.github.io/repo/   # push to a Discord webhoo
 ffstartsit publish --report report.md --dashboard site/index.html --discord --url https://you.github.io/repo/
 ```
 
+### Preferred journalists (optional view)
+
+If you trust a few specific rankers — say Justin Boone, Jamey Eisenberg, and
+Dave Richard — you can add a **"Preferred journalists"** section to the report
+and dashboard: each journalist's own weekly rank per player, plus their
+average. It's a side-by-side view only; it never enters the blended score or
+calibration. Set `FF_PREFERRED_EXPERTS` to FantasyPros expert ids
+(see `.env.example` for how to find them), then:
+
+```bash
+ffstartsit journalists               # just this section, on demand
+ffstartsit report                    # digest now ends with the section
+```
+
 Each `rank`/`compare` run appends a row to `.cache/results_log.jsonl` capturing
 the candidates, every signal's raw + normalized value, the weights used, and the
 pick — the data the calibrator learns from.

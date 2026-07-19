@@ -6,6 +6,7 @@ Subcommands:
   compare   head-to-head between two (or more) players, with close-call flag
   lineup    suggest the best starter at each standard position (stretch)
   report    whole-roster markdown digest (lineup + all positions)
+  journalists  your preferred journalists' ranks + average (display-only view)
   dashboard build a static HTML dashboard (for GitHub Pages)
   notify    send the week's summary to a Discord webhook
   publish   one scoring pass -> digest + dashboard + Discord (used by the Action)
@@ -88,6 +89,12 @@ def _build_parser() -> argparse.ArgumentParser:
     p_report.add_argument("--week", type=int, default=None)
     p_report.add_argument("--out", type=Path, default=None, help="write digest to a file too")
     p_report.set_defaults(func=cmd_report)
+
+    p_jour = sub.add_parser("journalists", parents=[roster_parent],
+                            help="preferred journalists' ranks + average "
+                                 "(FF_PREFERRED_EXPERTS; display-only)")
+    p_jour.add_argument("--week", type=int, default=None)
+    p_jour.set_defaults(func=cmd_journalists)
 
     p_dash = sub.add_parser("dashboard", parents=[roster_parent],
                             help="build a static HTML dashboard (for GitHub Pages)")
@@ -228,6 +235,24 @@ def cmd_report(args, settings: Settings) -> int:
     return 0
 
 
+def cmd_journalists(args, settings: Settings) -> int:
+    """Print the preferred-journalists section on its own (quick id sanity check)."""
+    if not settings.preferred_experts:
+        print("FF_PREFERRED_EXPERTS is not set — see .env.example for the "
+              "id:Name format and how to find FantasyPros expert ids.",
+              file=sys.stderr)
+        return 1
+    players = _get_roster(args, settings)
+    week = _resolve_week(args, settings)
+    view = report.build_journalist_view(settings, players, week)
+    if view is None:
+        print("No preferred-journalist rankings available (bad expert ids, "
+              "offline, or no data for this week).", file=sys.stderr)
+        return 1
+    print(report.render_journalists_markdown(view))
+    return 0
+
+
 def cmd_dashboard(args, settings: Settings) -> int:
     from datetime import date
 
@@ -239,7 +264,9 @@ def cmd_dashboard(args, settings: Settings) -> int:
     lineup = report.build_lineup(report.scored(recs))
     html = build_dashboard_html(week, settings.scoring, lineup, recs,
                                 generated_on=date.today().isoformat(),
-                                banner=season.preseason_banner(settings))
+                                banner=season.preseason_banner(settings),
+                                journalists=report.build_journalist_view(
+                                    settings, players, week))
     args.out.parent.mkdir(parents=True, exist_ok=True)
     args.out.write_text(html)
     print(f"Wrote dashboard to {args.out}")
@@ -283,8 +310,11 @@ def cmd_publish(args, settings: Settings) -> int:
     # The single scoring pass shared by every output.
     recs = report.rank_each_position(settings, players, week)
     lineup = report.build_lineup(report.scored(recs))
+    # One journalist pass too, shared by digest and dashboard (display-only).
+    journalists = report.build_journalist_view(settings, players, week)
 
-    digest = report.render_digest(week, settings.scoring, recs, banner=banner)
+    digest = report.render_digest(week, settings.scoring, recs, banner=banner,
+                                  journalists=journalists)
     print(digest)
     if args.report:
         args.report.parent.mkdir(parents=True, exist_ok=True)
@@ -293,7 +323,8 @@ def cmd_publish(args, settings: Settings) -> int:
     if args.dashboard:
         html = build_dashboard_html(week, settings.scoring, lineup, recs,
                                     generated_on=date.today().isoformat(),
-                                    banner=banner)
+                                    banner=banner,
+                                    journalists=journalists)
         args.dashboard.parent.mkdir(parents=True, exist_ok=True)
         args.dashboard.write_text(html)
         print(f"Wrote dashboard to {args.dashboard}")
