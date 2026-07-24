@@ -70,6 +70,31 @@ The roster comes from one of three sources, set by `FF_ROSTER_SOURCE` (default
 > The ESPN read API is unofficial and cookies expire periodically — re-grab them
 > if `sync` starts returning 401/403.
 
+### Multiple leagues
+
+In more than one league? Name them once and switch with `--league-name`. Set
+`FF_LEAGUES` (a single value — one line in `.env`, or one GitHub Secret so it
+stays out of a public repo):
+
+```
+FF_LEAGUES=work=espn:111111:3,dynasty=espn:222222:7:half
+#          name=source:league_id:team_id[:scoring], comma-separated
+```
+
+Then:
+
+```bash
+ffstartsit rank --pos RB --league-name dynasty   # act on one named league
+ffstartsit publish --all-leagues ...             # every league in one digest/dashboard/Discord
+```
+
+`FF_DEFAULT_LEAGUE` picks which league is used when you don't pass
+`--league-name` (otherwise the first). Your ESPN cookies are per-account, so a
+single `ESPN_S2`/`ESPN_SWID` pair covers every ESPN league. Prefer a file for
+local use? Copy `leagues.example.json` to `leagues.json` (gitignored);
+`FF_LEAGUES` wins if both are set. With neither, the flat `ESPN_LEAGUE_ID`/
+`ESPN_TEAM_ID` still drive a single league exactly as before.
+
 ## Use
 
 > **`ffstartsit: command not found`?** The command lives in `.venv/bin/`, so it's
@@ -87,6 +112,7 @@ ffstartsit lineup                            # best starter at each standard slo
 
 # Source overrides (one default league in .env, switch per command):
 ffstartsit rank --pos RB --league 778899 --team 4   # a different ESPN league/team
+ffstartsit rank --pos RB --league-name dynasty      # a configured league by name
 ffstartsit rank --pos WR --source manual            # use your manual CSV
 ```
 
@@ -195,7 +221,8 @@ the GitHub mobile app. Two workflows ship in `.github/workflows/`:
   | `/report` | the full digest on demand |
 
   Inline options work on any command: `week N`, `source espn\|sleeper\|manual`,
-  `league ID`, `team ID` — e.g. `/rank WR week 5`.
+  `league ID`, `team ID`, `league-name NAME` — e.g. `/rank WR week 5` or
+  `/report league-name dynasty`.
 
   > **These commands are GitHub issue comments — they do NOT work in Discord.**
   > The Discord integration is a one-way incoming webhook: the tool *posts* the

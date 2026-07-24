@@ -7,6 +7,7 @@ assembles the full phone-friendly report posted as a GitHub Issue.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from datetime import date
 from typing import Optional, Sequence
 
@@ -22,6 +23,22 @@ LINEUP_SLOTS = ["QB", "RB", "RB", "WR", "WR", "TE", "FLEX", "K", "DEF"]
 FLEX_POSITIONS = {"RB", "WR", "TE"}
 # Order positions appear in the digest.
 POSITION_ORDER = ["QB", "RB", "WR", "TE", "K", "DEF"]
+
+
+@dataclass
+class LeagueBundle:
+    """One league's fully-scored week, ready to render.
+
+    The shared unit passed to every multi-league renderer (digest, dashboard,
+    Discord) so a single scoring pass per league feeds all three outputs.
+    """
+
+    label: str
+    scoring: str
+    recs: dict[str, Recommendation]
+    lineup: list[tuple[str, Optional[PlayerScore]]]
+    banner: Optional[str] = None
+    journalists: Optional[JournalistView] = None
 
 
 def rank_each_position(settings: Settings, players: Sequence[Player], week: int,
@@ -90,31 +107,26 @@ def build_journalist_view(settings: Settings, players: Sequence[Player],
         return None
 
 
-def build_digest(settings: Settings, players: Sequence[Player], week: int) -> str:
+def build_digest(settings: Settings, players: Sequence[Player], week: int,
+                 label: str = "") -> str:
     """Assemble the full whole-roster markdown digest (one scoring pass)."""
     recs = rank_each_position(settings, players, week)
     return render_digest(week, settings.scoring, recs,
                          banner=preseason_banner(settings),
-                         journalists=build_journalist_view(settings, players, week))
+                         journalists=build_journalist_view(settings, players, week),
+                         label=label)
 
 
-def render_digest(week: int, scoring: str, recs: dict[str, Recommendation],
-                  banner: Optional[str] = None,
-                  journalists: Optional[JournalistView] = None) -> str:
-    """Render precomputed per-position recs as the markdown digest.
+def _digest_body(recs: dict[str, Recommendation],
+                 banner: Optional[str] = None,
+                 journalists: Optional[JournalistView] = None) -> list[str]:
+    """The lineup + per-position + journalists markdown, without the H1 heading.
 
-    Split out from ``build_digest`` so callers that already have ``recs`` (e.g.
-    the ``publish`` command) can render without triggering another scoring pass.
-    ``banner`` (e.g. the preseason sample-data warning) renders as a blockquote
-    under the title.
+    Shared by the single-league digest and the multi-league digest so both stay
+    in lockstep.
     """
     by_pos = scored(recs)
-
-    lines: list[str] = [
-        f"# 🏈 Week {week} start/sit — {scoring.upper()}",
-        f"_Generated {date.today().isoformat()}._",
-        "",
-    ]
+    lines: list[str] = []
     if banner:
         lines += [f"> {banner}", ""]
     lines += [
@@ -142,7 +154,41 @@ def render_digest(week: int, scoring: str, recs: dict[str, Recommendation],
     if journalists is not None:
         lines.append("")
         lines.append(render_journalists_markdown(journalists))
+    return lines
 
+
+def render_digest(week: int, scoring: str, recs: dict[str, Recommendation],
+                  banner: Optional[str] = None,
+                  journalists: Optional[JournalistView] = None,
+                  label: str = "") -> str:
+    """Render precomputed per-position recs as the markdown digest.
+
+    Split out from ``build_digest`` so callers that already have ``recs`` (e.g.
+    the ``publish`` command) can render without triggering another scoring pass.
+    ``banner`` (e.g. the preseason sample-data warning) renders as a blockquote
+    under the title. ``label`` (a league name) is appended to the heading when set.
+    """
+    label_suffix = f" · {label}" if label else ""
+    lines: list[str] = [
+        f"# 🏈 Week {week} start/sit — {scoring.upper()}{label_suffix}",
+        f"_Generated {date.today().isoformat()}._",
+        "",
+    ]
+    lines += _digest_body(recs, banner=banner, journalists=journalists)
+    return "\n".join(lines)
+
+
+def render_multi_digest(week: int, bundles: Sequence[LeagueBundle]) -> str:
+    """Render several leagues into one digest, a section per league under one H1."""
+    lines: list[str] = [
+        f"# 🏈 Week {week} start/sit",
+        f"_Generated {date.today().isoformat()} · {len(bundles)} league(s)._",
+        "",
+    ]
+    for b in bundles:
+        lines += [f"## {b.label} — {b.scoring.upper()}", ""]
+        lines += _digest_body(b.recs, banner=b.banner, journalists=b.journalists)
+        lines.append("")
     return "\n".join(lines)
 
 

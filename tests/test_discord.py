@@ -1,5 +1,7 @@
 from ff_startsit.models import Player, PlayerScore, Recommendation
-from ff_startsit.output.discord import build_discord_payload, send_discord
+from ff_startsit.output.discord import (build_discord_payload,
+                                        build_multi_discord_payload, send_discord)
+from ff_startsit.report import LeagueBundle
 
 
 def _ps(key, name, pos, final, team="KC", flags=None):
@@ -44,6 +46,30 @@ def test_build_payload_no_alerts_message():
     payload = build_discord_payload(3, "ppr", [("QB", qb)], {"QB": _rec(qb)})
     alerts = next(f for f in payload["embeds"][0]["fields"] if f["name"] == "⚠️ Alerts")
     assert "All clear" in alerts["value"] or "all clear" in alerts["value"]
+
+
+def test_build_payload_label_in_title():
+    qb = _ps("1", "Quincy", "QB", 88.0)
+    payload = build_discord_payload(3, "ppr", [("QB", qb)], {"QB": _rec(qb)},
+                                    label="dynasty")
+    assert "· dynasty" in payload["embeds"][0]["title"]
+
+
+def test_build_multi_payload_one_embed_per_league():
+    work = _ps("1", "AlphaWork", "RB", 90.0)
+    dyno = _ps("2", "BravoDyno", "RB", 80.0)
+    bundles = [
+        LeagueBundle("work", "ppr", {"RB": _rec(work)}, [("RB", work)]),
+        LeagueBundle("dynasty", "half", {"RB": _rec(dyno)}, [("RB", dyno)]),
+    ]
+    payload = build_multi_discord_payload(3, bundles,
+                                          dashboard_url="https://example.test/site")
+    embeds = payload["embeds"]
+    assert len(embeds) == 2
+    assert "work" in embeds[0]["title"] and "dynasty" in embeds[1]["title"]
+    # The dashboard link rides only the last embed to keep the message scannable.
+    assert "url" not in embeds[0]
+    assert embeds[1]["url"] == "https://example.test/site"
 
 
 def test_send_discord_posts_json_payload():

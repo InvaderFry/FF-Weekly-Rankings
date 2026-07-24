@@ -3,7 +3,8 @@ from pathlib import Path
 import pytest
 
 from ff_startsit import cli
-from ff_startsit.config import Settings
+from ff_startsit.config import LeagueProfile, Settings
+from ff_startsit.roster.base import RosterError
 from ff_startsit.roster.espn import ESPNProvider
 from ff_startsit.roster.manual import ManualProvider
 from ff_startsit.roster.sleeper import SleeperProvider
@@ -53,6 +54,63 @@ def test_espn_team_override():
     assert provider.team_id == "7"
 
 
+# --- multi-league selection -------------------------------------------------
+def _multi_settings(**kw):
+    leagues = [
+        LeagueProfile("work", "espn", "111", "3"),
+        LeagueProfile("dynasty", "espn", "222", "7", scoring="half"),
+    ]
+    return _settings(leagues=leagues, default_league="work", **kw)
+
+
+def test_resolve_league_by_name():
+    p = cli.resolve_league(_multi_settings(), "dynasty")
+    assert p.league_id == "222" and p.scoring == "half"
+
+
+def test_resolve_league_defaults_to_default_league():
+    assert cli.resolve_league(_multi_settings()).name == "work"
+
+
+def test_resolve_league_unknown_raises():
+    with pytest.raises(RosterError):
+        cli.resolve_league(_multi_settings(), "nope")
+
+
+def test_resolve_league_synthesizes_default_when_unconfigured():
+    # Settings built directly (no leagues) still resolves to the flat-env default.
+    p = cli.resolve_league(_settings(espn_league_id="111"))
+    assert p.name == "default" and p.league_id == "111"
+
+
+def test_build_provider_uses_selected_profile():
+    p = cli.resolve_league(_multi_settings(), "dynasty")
+    provider = cli.build_roster_provider(_multi_settings(), profile=p)
+    assert isinstance(provider, ESPNProvider)
+    assert provider.league_id == "222" and provider.team_id == "7"
+    assert provider.cache_tag() == "espn_222"
+
+
+def test_explicit_flags_win_over_profile():
+    p = cli.resolve_league(_multi_settings(), "dynasty")
+    provider = cli.build_roster_provider(_multi_settings(), league="999", team="1", profile=p)
+    assert provider.league_id == "999" and provider.team_id == "1"
+
+
+def test_league_context_applies_per_league_scoring():
+    import argparse
+    args = argparse.Namespace(source=None, league=None, team=None, league_name="dynasty")
+    lsettings, profile = cli._league_context(args, _multi_settings())
+    assert profile.name == "dynasty"
+    assert lsettings.scoring == "half"       # league scoring overrides global
+
+
+def test_default_league_label_is_empty():
+    # The synthesized single-league default renders without a label (legacy look).
+    assert cli._league_label(LeagueProfile("default", "espn", "1", "1")) == ""
+    assert cli._league_label(LeagueProfile("work", "espn", "1", "1")) == "work"
+
+
 def test_publish_does_one_scoring_pass(tmp_path, monkeypatch):
     import argparse
 
@@ -61,7 +119,7 @@ def test_publish_does_one_scoring_pass(tmp_path, monkeypatch):
     from ff_startsit.output import discord as discord_mod
 
     players = [Player("1", "Alpha", "KC", "RB")]
-    monkeypatch.setattr(cli, "_get_roster", lambda args, settings: players)
+    monkeypatch.setattr(cli, "_get_roster", lambda args, settings, profile=None: players)
     monkeypatch.setattr(cli, "_resolve_week", lambda args, settings: 7)
 
     calls = {"n": 0}
@@ -104,7 +162,7 @@ def test_publish_survives_discord_failure(tmp_path, monkeypatch):
     from ff_startsit.output import discord as discord_mod
 
     players = [Player("1", "Alpha", "KC", "RB")]
-    monkeypatch.setattr(cli, "_get_roster", lambda args, settings: players)
+    monkeypatch.setattr(cli, "_get_roster", lambda args, settings, profile=None: players)
     monkeypatch.setattr(cli, "_resolve_week", lambda args, settings: 7)
 
     def fake_rank(settings, plyrs, week, log=False):
@@ -149,7 +207,7 @@ def test_journalists_prints_section(monkeypatch, capsys):
                                                  JournalistView)
 
     players = [Player("1", "Alpha", "KC", "RB")]
-    monkeypatch.setattr(cli, "_get_roster", lambda args, settings: players)
+    monkeypatch.setattr(cli, "_get_roster", lambda args, settings, profile=None: players)
     monkeypatch.setattr(cli, "_resolve_week", lambda args, settings: 7)
     view = JournalistView(
         experts=[Expert("101", "Justin Boone")],
@@ -171,7 +229,7 @@ def test_journalists_no_data_exits_gracefully(monkeypatch, capsys):
     from ff_startsit.models import Player
 
     monkeypatch.setattr(cli, "_get_roster",
-                        lambda args, settings: [Player("1", "Alpha", "KC", "RB")])
+                        lambda args, settings, profile=None: [Player("1", "Alpha", "KC", "RB")])
     monkeypatch.setattr(cli, "_resolve_week", lambda args, settings: 7)
     monkeypatch.setattr(report, "build_journalist_view",
                         lambda settings, plyrs, week: None)
@@ -191,7 +249,7 @@ def test_publish_includes_journalists_in_both_outputs(tmp_path, monkeypatch):
                                                  JournalistView)
 
     players = [Player("1", "Alpha", "KC", "RB")]
-    monkeypatch.setattr(cli, "_get_roster", lambda args, settings: players)
+    monkeypatch.setattr(cli, "_get_roster", lambda args, settings, profile=None: players)
     monkeypatch.setattr(cli, "_resolve_week", lambda args, settings: 7)
 
     def fake_rank(settings, plyrs, week, log=False):
@@ -223,3 +281,87 @@ def test_publish_includes_journalists_in_both_outputs(tmp_path, monkeypatch):
     assert jour_calls["n"] == 1  # one journalist pass feeds both outputs
     assert "## Preferred journalists" in report_path.read_text()
     assert "Preferred journalists" in dash_path.read_text()
+
+
+def test_publish_all_leagues_combines_every_league(tmp_path, monkeypatch):
+    import argparse
+
+    from ff_startsit import report
+    from ff_startsit.models import Player, PlayerScore, Recommendation
+    from ff_startsit.output import discord as discord_mod
+
+    rosters = {"111": [Player("1", "AlphaWork", "KC", "RB")],
+               "222": [Player("2", "BravoDyno", "BUF", "RB")]}
+
+    def fake_get_roster(args, settings, profile=None):
+        return rosters[profile.league_id]
+
+    monkeypatch.setattr(cli, "_get_roster", fake_get_roster)
+    monkeypatch.setattr(cli, "_resolve_week", lambda args, settings: 7)
+
+    def fake_rank(settings, plyrs, week, log=False):
+        ps = PlayerScore(player=plyrs[0])
+        ps.final = 90.0
+        ps.normalized = {"ecr": 90.0}
+        return {"RB": Recommendation(week=week, scoring=settings.scoring,
+                                     weights={"ecr": 1.0}, scores=[ps])}
+
+    monkeypatch.setattr(report, "rank_each_position", fake_rank)
+    monkeypatch.setattr(report, "build_journalist_view",
+                        lambda settings, plyrs, week: None)
+
+    sent = {"payload": None}
+    monkeypatch.setattr(discord_mod, "send_discord",
+                        lambda url, payload, **kw: sent.__setitem__("payload", payload))
+
+    report_path = tmp_path / "r.md"
+    dash_path = tmp_path / "site" / "index.html"
+    args = argparse.Namespace(report=report_path, dashboard=dash_path,
+                              discord=True, url=None, all_leagues=True)
+    settings = _multi_settings(discord_webhook_url="https://discord.test/webhook")
+
+    rc = cli.cmd_publish(args, settings)
+
+    assert rc == 0
+    digest = report_path.read_text()
+    assert "## work — PPR" in digest and "## dynasty — HALF" in digest
+    assert "AlphaWork" in digest and "BravoDyno" in digest
+    html = dash_path.read_text()
+    assert html.count("<details class='league'") == 2
+    # One Discord message, one embed per league.
+    assert len(sent["payload"]["embeds"]) == 2
+
+
+def test_publish_all_leagues_skips_a_failing_league(tmp_path, monkeypatch):
+    import argparse
+
+    from ff_startsit import report
+    from ff_startsit.models import Player, PlayerScore, Recommendation
+
+    def fake_get_roster(args, settings, profile=None):
+        if profile.league_id == "222":
+            raise RosterError("cookies expired")
+        return [Player("1", "AlphaWork", "KC", "RB")]
+
+    monkeypatch.setattr(cli, "_get_roster", fake_get_roster)
+    monkeypatch.setattr(cli, "_resolve_week", lambda args, settings: 7)
+
+    def fake_rank(settings, plyrs, week, log=False):
+        ps = PlayerScore(player=plyrs[0])
+        ps.final = 90.0
+        ps.normalized = {"ecr": 90.0}
+        return {"RB": Recommendation(week=week, scoring=settings.scoring,
+                                     weights={"ecr": 1.0}, scores=[ps])}
+
+    monkeypatch.setattr(report, "rank_each_position", fake_rank)
+    monkeypatch.setattr(report, "build_journalist_view",
+                        lambda settings, plyrs, week: None)
+
+    report_path = tmp_path / "r.md"
+    args = argparse.Namespace(report=report_path, dashboard=None,
+                              discord=False, url=None, all_leagues=True)
+    rc = cli.cmd_publish(args, _multi_settings())
+
+    assert rc == 0                       # the healthy league still publishes
+    digest = report_path.read_text()
+    assert "## work — PPR" in digest and "dynasty" not in digest

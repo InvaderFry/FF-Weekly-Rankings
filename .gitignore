@@ -14,6 +14,10 @@ venv/
 # Personal roster at repo root (keep the .example and test fixtures tracked)
 /manual_roster.csv
 
+# Local multi-league config (keep leagues.example.json tracked). League ids
+# aren't secret, but this is your personal setup — set FF_LEAGUES for CI instead.
+/leagues.json
+
 # App data cache & logs (kept out of VCS)
 .cache/
 data/cache/

@@ -37,6 +37,15 @@ def test_inline_options():
     ]
 
 
+def test_league_name_option():
+    assert parse_command("/report league-name dynasty") == [
+        "report", "--league-name", "dynasty",
+    ]
+    assert parse_command("/rank RB league-name work") == [
+        "rank", "--pos", "RB", "--md", "--league-name", "work",
+    ]
+
+
 def test_non_commands_return_none():
     assert parse_command("just a normal comment") is None
     assert parse_command("") is None

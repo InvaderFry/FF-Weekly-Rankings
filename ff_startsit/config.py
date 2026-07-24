@@ -9,17 +9,42 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Optional
 
 from dotenv import load_dotenv
 
 # Map of user-facing scoring choice -> FantasyPros scoring code.
 SCORING_CODES = {"ppr": "PPR", "half": "HALF", "std": "STD"}
+ROSTER_SOURCES = {"espn", "sleeper", "manual"}
+
+
+@dataclass
+class LeagueProfile:
+    """One named league the user follows.
+
+    A profile only carries what *selects a roster* — source + league/team ids
+    (+ optional per-league scoring). Secrets (ESPN cookies, API keys) stay global
+    on ``Settings`` because they're per-account, not per-league. ``name`` is the
+    handle used by ``--league-name`` and printed as the output label.
+    """
+
+    name: str
+    source: str = "espn"
+    league_id: str = ""
+    team_id: str = ""
+    scoring: Optional[str] = None       # None -> fall back to the global FF_SCORING
 
 
 @dataclass
 class Settings:
     # Roster source: espn (default) | sleeper | manual
     roster_source: str = "espn"
+    # Named leagues (multi-league support). Always non-empty after load_settings:
+    # a single "default" profile is synthesized from the flat ESPN_*/SLEEPER_* vars
+    # below when neither FF_LEAGUES nor a leagues.json file is configured, so
+    # single-league setups keep working unchanged.
+    leagues: list[LeagueProfile] = field(default_factory=list)
+    default_league: str = ""            # name of the profile used when none is asked for
     # ESPN
     espn_league_id: str = ""
     espn_team_id: str = ""
@@ -119,6 +144,94 @@ def _load_learned_weights(path: Path) -> dict[str, float]:
         return {}
 
 
+def parse_leagues(raw: str) -> list[LeagueProfile]:
+    """Parse the ``FF_LEAGUES`` env string into profiles (bad entries skipped).
+
+    Format: comma-separated ``name=source:league_id:team_id[:scoring]``. Whitespace
+    around every part is tolerated. A malformed or unknown-source entry is warned
+    about and dropped rather than crashing load — never silently invalid.
+
+    Example: ``work=espn:111111:3, dynasty=espn:222222:7:half``
+    """
+    profiles: list[LeagueProfile] = []
+    seen: set[str] = set()
+    for chunk in (raw or "").split(","):
+        chunk = chunk.strip()
+        if not chunk:
+            continue
+        if "=" not in chunk:
+            _warn(f"Ignoring malformed FF_LEAGUES entry {chunk!r} "
+                  "(expected name=source:league_id:team_id).")
+            continue
+        name, spec = chunk.split("=", 1)
+        name = name.strip()
+        parts = [p.strip() for p in spec.split(":")]
+        source = parts[0].lower() if parts else ""
+        league_id = parts[1] if len(parts) >= 2 else ""
+        team_id = parts[2] if len(parts) >= 3 else ""
+        scoring = parts[3].lower() if len(parts) >= 4 and parts[3] else None
+        if not name or source not in ROSTER_SOURCES:
+            _warn(f"Ignoring malformed FF_LEAGUES entry {chunk!r} "
+                  f"(source must be one of {sorted(ROSTER_SOURCES)}).")
+            continue
+        if source != "manual" and not league_id:
+            _warn(f"Ignoring FF_LEAGUES entry {name!r}: {source} needs a league id.")
+            continue
+        if scoring is not None and scoring not in SCORING_CODES:
+            _warn(f"League {name!r}: unknown scoring {scoring!r}; using the global default.")
+            scoring = None
+        key = name.lower()
+        if key in seen:
+            _warn(f"Duplicate league name {name!r} in FF_LEAGUES; keeping the first.")
+            continue
+        seen.add(key)
+        profiles.append(LeagueProfile(name=name, source=source, league_id=league_id,
+                                      team_id=team_id, scoring=scoring))
+    return profiles
+
+
+def _load_leagues_file(path: Path) -> list[LeagueProfile]:
+    """Read leagues from a local (gitignored) JSON file, or [] if absent/bad.
+
+    Shape: ``{"leagues": [{"name": ..., "source": ..., "id": ..., "team": ...,
+    "scoring": ...}, ...]}``. A corrupt file is ignored with a warning.
+    """
+    if not path.exists():
+        return []
+    try:
+        import json
+        data = json.loads(path.read_text())
+        rows = data.get("leagues", []) if isinstance(data, dict) else []
+    except Exception:
+        _warn(f"Could not read leagues file at {path}; ignoring.")
+        return []
+    # Re-use the string parser's validation by re-encoding each row.
+    specs = []
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        name = str(row.get("name", "")).strip()
+        source = str(row.get("source", "espn")).strip()
+        league_id = str(row.get("id", "")).strip()
+        team_id = str(row.get("team", "")).strip()
+        scoring = str(row.get("scoring", "")).strip()
+        spec = f"{name}={source}:{league_id}:{team_id}"
+        if scoring:
+            spec += f":{scoring}"
+        specs.append(spec)
+    return parse_leagues(",".join(specs))
+
+
+def _synthesized_default(roster_source: str, espn_league_id: str, espn_team_id: str,
+                         sleeper_league_id: str) -> LeagueProfile:
+    """Build the single fallback profile from the flat env vars (legacy setups)."""
+    if roster_source == "sleeper":
+        return LeagueProfile("default", "sleeper", sleeper_league_id, "")
+    if roster_source == "manual":
+        return LeagueProfile("default", "manual", "", "")
+    return LeagueProfile("default", "espn", espn_league_id, espn_team_id)
+
+
 def _warn(message: str) -> None:
     try:
         from rich import print as rprint
@@ -161,15 +274,32 @@ def load_settings(env_file: str | os.PathLike | None = None) -> Settings:
         _warn("FF_CLOSE_CALL_THRESHOLD is negative; using 5.0 instead.")
         threshold = 5.0
 
+    espn_league_id = os.getenv("ESPN_LEAGUE_ID", "").strip()
+    espn_team_id = os.getenv("ESPN_TEAM_ID", "").strip()
+    sleeper_league_id = os.getenv("SLEEPER_LEAGUE_ID", "").strip()
+
+    # League list precedence: FF_LEAGUES env > gitignored leagues.json file >
+    # a single "default" profile synthesized from the flat env vars above (so
+    # existing single-league setups keep working with no config change).
+    leagues = parse_leagues(os.getenv("FF_LEAGUES", "").strip())
+    if not leagues:
+        leagues = _load_leagues_file(Path(os.getenv("FF_LEAGUES_FILE", "leagues.json")))
+    if not leagues:
+        leagues = [_synthesized_default(roster_source, espn_league_id, espn_team_id,
+                                        sleeper_league_id)]
+    default_league = os.getenv("FF_DEFAULT_LEAGUE", "").strip() or leagues[0].name
+
     return Settings(
         roster_source=roster_source,
-        espn_league_id=os.getenv("ESPN_LEAGUE_ID", "").strip(),
-        espn_team_id=os.getenv("ESPN_TEAM_ID", "").strip(),
+        leagues=leagues,
+        default_league=default_league,
+        espn_league_id=espn_league_id,
+        espn_team_id=espn_team_id,
         espn_s2=os.getenv("ESPN_S2", "").strip(),
         espn_swid=os.getenv("ESPN_SWID", "").strip(),
         manual_roster_file=Path(os.getenv("FF_MANUAL_ROSTER", "manual_roster.csv")),
         sleeper_username=os.getenv("SLEEPER_USERNAME", "").strip(),
-        sleeper_league_id=os.getenv("SLEEPER_LEAGUE_ID", "").strip(),
+        sleeper_league_id=sleeper_league_id,
         odds_api_key=os.getenv("ODDS_API_KEY", "").strip(),
         fantasypros_api_key=os.getenv("FANTASYPROS_API_KEY", "").strip(),
         scoring=scoring,

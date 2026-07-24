@@ -1,5 +1,6 @@
 from ff_startsit.models import Player, PlayerScore, Recommendation
-from ff_startsit.output.html import build_dashboard_html
+from ff_startsit.output.html import build_dashboard_html, build_multi_dashboard_html
+from ff_startsit.report import LeagueBundle
 
 
 def _ps(key, name, pos, final, team="KC", flags=None):
@@ -82,3 +83,35 @@ def test_build_dashboard_html_no_journalists_no_section():
     html = build_dashboard_html(3, "ppr", [("RB", rb.scores[0])], {"RB": rb},
                                 generated_on="2026-06-24")
     assert "Preferred journalists" not in html
+
+
+def test_build_dashboard_html_label_in_heading_and_title():
+    rb = _rec(_ps("1", "Alpha", "RB", 90.0))
+    html = build_dashboard_html(3, "ppr", [("RB", rb.scores[0])], {"RB": rb},
+                                generated_on="2026-06-24", label="dynasty")
+    assert "· dynasty" in html
+    assert "<title>Week 3 start/sit · dynasty</title>" in html
+
+
+def test_build_dashboard_html_no_label_unchanged():
+    rb = _rec(_ps("1", "Alpha", "RB", 90.0))
+    html = build_dashboard_html(3, "ppr", [("RB", rb.scores[0])], {"RB": rb},
+                                generated_on="2026-06-24")
+    assert "<title>Week 3 start/sit</title>" in html
+    assert "·" not in html
+
+
+def test_build_multi_dashboard_html_one_section_per_league():
+    work = _rec(_ps("1", "AlphaWork", "RB", 90.0))
+    dyno = _rec(_ps("2", "BravoDyno", "RB", 80.0))
+    bundles = [
+        LeagueBundle("work", "ppr", {"RB": work}, [("RB", work.scores[0])]),
+        LeagueBundle("dynasty", "half", {"RB": dyno}, [("RB", dyno.scores[0])]),
+    ]
+    html = build_multi_dashboard_html(3, bundles, generated_on="2026-06-24")
+
+    assert html.startswith("<!doctype html>")
+    assert html.count("<details class='league'") == 2
+    assert "work — PPR" in html and "dynasty — HALF" in html
+    assert "AlphaWork" in html and "BravoDyno" in html
+    assert "2 league(s)" in html

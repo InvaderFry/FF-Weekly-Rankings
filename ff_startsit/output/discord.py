@@ -57,23 +57,19 @@ def _clip(text: str, limit: int) -> str:
     return text if len(text) <= limit else text[: limit - 1] + "…"
 
 
-def build_discord_payload(week: int, scoring: str,
-                          lineup: Sequence[tuple[str, Optional[PlayerScore]]],
-                          recs: dict[str, Recommendation],
-                          dashboard_url: Optional[str] = None,
-                          banner: Optional[str] = None,
-                          commands_url: Optional[str] = None) -> dict:
-    """Return a Discord webhook JSON body for the week's summary.
-
-    ``banner`` (the preseason sample-data warning) leads the description and
-    flips the embed amber; ``commands_url`` adds a field pointing readers at
-    the GitHub issue where the ``/`` commands actually work.
-    """
+def _build_embed(week: int, scoring: str,
+                 lineup: Sequence[tuple[str, Optional[PlayerScore]]],
+                 recs: dict[str, Recommendation],
+                 dashboard_url: Optional[str] = None,
+                 banner: Optional[str] = None,
+                 label: str = "") -> dict:
+    """Build one league's embed (title, lineup description, alerts field)."""
+    label_suffix = f" · {label}" if label else ""
     description = _lineup_lines(lineup)
     if banner:
         description = f"**{banner}**\n\n{description}"
     embed: dict = {
-        "title": f"🏈 Week {week} start/sit — {scoring.upper()}",
+        "title": f"🏈 Week {week} start/sit — {scoring.upper()}{label_suffix}",
         "description": _clip(description, 4096),
         "color": _BANNER_COLOR if banner else _EMBED_COLOR,
         "fields": [],
@@ -92,7 +88,11 @@ def build_discord_payload(week: int, scoring: str,
         embed["fields"].append(
             {"name": "Full dashboard", "value": dashboard_url, "inline": False}
         )
+    return embed
 
+
+def _commands_field(embed: dict, commands_url: Optional[str]) -> None:
+    """Attach the '/commands live on GitHub' hint to an embed (field or footer)."""
     if commands_url:
         embed["fields"].append(
             {"name": "💬 Commands",
@@ -102,7 +102,46 @@ def build_discord_payload(week: int, scoring: str,
     else:
         embed["footer"] = {"text": _COMMANDS_NOTE.replace("`", "")}
 
+
+def build_discord_payload(week: int, scoring: str,
+                          lineup: Sequence[tuple[str, Optional[PlayerScore]]],
+                          recs: dict[str, Recommendation],
+                          dashboard_url: Optional[str] = None,
+                          banner: Optional[str] = None,
+                          commands_url: Optional[str] = None,
+                          label: str = "") -> dict:
+    """Return a Discord webhook JSON body for the week's summary.
+
+    ``banner`` (the preseason sample-data warning) leads the description and
+    flips the embed amber; ``commands_url`` adds a field pointing readers at
+    the GitHub issue where the ``/`` commands actually work. ``label`` (a league
+    name) is appended to the embed title when set.
+    """
+    embed = _build_embed(week, scoring, lineup, recs, dashboard_url=dashboard_url,
+                         banner=banner, label=label)
+    _commands_field(embed, commands_url)
     return {"embeds": [embed]}
+
+
+def build_multi_discord_payload(week: int, bundles: Sequence["LeagueBundle"],
+                                dashboard_url: Optional[str] = None,
+                                commands_url: Optional[str] = None) -> dict:
+    """One message, one embed per league (Discord allows up to 10 embeds).
+
+    ``bundles`` are ``report.LeagueBundle`` objects (duck-typed to avoid an import
+    cycle). The dashboard link + commands hint ride the last embed so the message
+    stays scannable.
+    """
+    embeds: list[dict] = []
+    for i, b in enumerate(bundles):
+        last = i == len(bundles) - 1
+        embed = _build_embed(week, b.scoring, b.lineup, b.recs,
+                             dashboard_url=dashboard_url if last else None,
+                             banner=b.banner, label=b.label)
+        if last:
+            _commands_field(embed, commands_url)
+        embeds.append(embed)
+    return {"embeds": embeds}
 
 
 def send_discord(webhook_url: str, payload: dict,
