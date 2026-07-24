@@ -1,0 +1,7 @@
+{
+  "_comment": "Copy to leagues.json (gitignored) for local multi-league use, or set the FF_LEAGUES env var / GitHub Secret instead. Each league needs a unique name plus source + id (+ team for ESPN). scoring is optional and falls back to FF_SCORING. ESPN cookies (ESPN_S2/ESPN_SWID) are per-account and stay in .env — they cover every ESPN league.",
+  "leagues": [
+    { "name": "work", "source": "espn", "id": "111111", "team": "3" },
+    { "name": "dynasty", "source": "espn", "id": "222222", "team": "7", "scoring": "half" }
+  ]
+}

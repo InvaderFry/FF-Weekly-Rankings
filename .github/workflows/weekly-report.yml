@@ -29,6 +29,12 @@ jobs:
       url: ${{ steps.deployment.outputs.page_url }}
     env:
       FF_ROSTER_SOURCE: espn
+      # Multi-league: a single secret lists every league, kept out of the public
+      # repo. Format: "name=espn:LEAGUE_ID:TEAM_ID[:scoring]" comma-separated, e.g.
+      # "work=espn:111111:3,dynasty=espn:222222:7:half". If unset, the flat
+      # ESPN_LEAGUE_ID/ESPN_TEAM_ID below drive a single "default" league. The
+      # ESPN cookies are per-account, so one pair covers all your ESPN leagues.
+      FF_LEAGUES: ${{ secrets.FF_LEAGUES }}
       ESPN_LEAGUE_ID: ${{ secrets.ESPN_LEAGUE_ID }}
       ESPN_TEAM_ID: ${{ secrets.ESPN_TEAM_ID }}
       ESPN_S2: ${{ secrets.ESPN_S2 }}
@@ -59,7 +65,7 @@ jobs:
           # though the notification fires before the deploy step below completes.
           OWNER="${GITHUB_REPOSITORY%%/*}"; REPO="${GITHUB_REPOSITORY##*/}"
           DASH_URL="https://${OWNER,,}.github.io/${REPO}/"
-          python -m ff_startsit publish $WEEK_ARG \
+          python -m ff_startsit publish $WEEK_ARG --all-leagues \
             --report report.md --dashboard ./site/index.html \
             --discord --url "$DASH_URL"
           # Mirror the digest to the run summary (viewable in the GitHub mobile app).

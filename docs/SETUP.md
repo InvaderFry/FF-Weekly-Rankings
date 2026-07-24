@@ -20,6 +20,7 @@ set it in both places.
 | `ESPN_LEAGUE_ID` | ESPN roster (required) | Your league URL ([steps](#2-espn-league-info)) |
 | `ESPN_TEAM_ID` | ESPN **public** league | Your team page URL |
 | `ESPN_S2`, `ESPN_SWID` | ESPN **private** league | Browser cookies ([steps](#private-league-cookies)) |
+| `FF_LEAGUES` | Multiple leagues (optional) | `name=source:id:team[:scoring]`, comma-separated ([steps](#multiple-leagues-ff_leagues)) |
 | `FF_PREFERRED_EXPERTS` | Preferred journalists view (optional) | FantasyPros expert ids ([steps](#3-preferred-journalists-ff_preferred_experts)) |
 | `ODDS_API_KEY` | Vegas signal (optional) | Free key from [the-odds-api.com](https://the-odds-api.com/) |
 | `FANTASYPROS_API_KEY` | ECR via API (optional) | FantasyPros; without it the app scrapes the public page |
@@ -82,6 +83,38 @@ the app auto-detects your team — you can skip `ESPN_TEAM_ID`.
 > 401/403 "cookies have likely expired" message, repeat these steps and update
 > the values (in `.env` locally, and in the GitHub secrets if you use the
 > Actions — see below).
+
+## Multiple leagues (`FF_LEAGUES`)
+
+Follow more than one league from a single setup. `FF_LEAGUES` is one value listing
+every league:
+
+```
+FF_LEAGUES=work=espn:111111:3,dynasty=espn:222222:7:half
+#          name=source:league_id:team_id[:scoring], comma-separated
+```
+
+- **`name`** is your handle for the league — pick anything (`work`, `dynasty`).
+  Use it with `--league-name <name>` on any command, or `/report league-name work`
+  as an issue comment.
+- **`scoring`** (optional, `ppr|half|std`) overrides `FF_SCORING` for just that
+  league.
+- ESPN cookies are per-account, so your one `ESPN_S2`/`ESPN_SWID` pair covers
+  every ESPN league listed — no per-league secrets.
+
+`ffstartsit publish --all-leagues` renders all of them into one digest, one
+dashboard (a collapsible section per league), and one Discord message (an embed
+per league) — this is what the weekly Action runs. `FF_DEFAULT_LEAGUE=<name>`
+sets which league commands use when you omit `--league-name`.
+
+Prefer a file locally? Copy `leagues.example.json` to `leagues.json` (gitignored)
+instead. `FF_LEAGUES` wins if both are present. With neither set, the flat
+`ESPN_LEAGUE_ID`/`ESPN_TEAM_ID` drive a single league exactly as before — nothing
+to change if you only have one.
+
+> **Public repo?** Put `FF_LEAGUES` in a **GitHub Secret**, not `leagues.json`.
+> League ids aren't credentials, but a committed file would expose your league
+> list. See the CI secrets table below.
 
 ## 3. Preferred journalists (`FF_PREFERRED_EXPERTS`)
 
@@ -154,15 +187,19 @@ They read their configuration from your repository's Actions settings:
 
    | Secret name | When |
    |---|---|
-   | `ESPN_LEAGUE_ID` | always |
+   | `ESPN_LEAGUE_ID` | single league (skip if you set `FF_LEAGUES`) |
+   | `FF_LEAGUES` | multiple leagues — `name=espn:id:team[:scoring],…` |
    | `ESPN_S2` | private league |
    | `ESPN_SWID` | private league |
-   | `ESPN_TEAM_ID` | public league |
+   | `ESPN_TEAM_ID` | public, single league |
    | `ODDS_API_KEY` | if you use the Vegas signal |
    | `FANTASYPROS_API_KEY` | if you have one |
    | `DISCORD_WEBHOOK_URL` | if you want Discord pings |
 
-   Secrets you skip just disable that feature — nothing breaks.
+   Secrets you skip just disable that feature — nothing breaks. Set **either**
+   `FF_LEAGUES` (multiple leagues, and the weekly Action publishes all of them)
+   **or** the flat `ESPN_LEAGUE_ID`/`ESPN_TEAM_ID` (one league). Keeping
+   `FF_LEAGUES` as a secret is why your league list never lands in a public repo.
 
 ### Variables (non-sensitive values)
 
@@ -194,6 +231,7 @@ They read their configuration from your repository's Actions settings:
 | Variable | Local `.env` | GitHub **secret** | GitHub **variable** |
 |---|:---:|:---:|:---:|
 | `ESPN_LEAGUE_ID`, `ESPN_TEAM_ID`, `ESPN_S2`, `ESPN_SWID` | ✅ | ✅ | |
+| `FF_LEAGUES` (multiple leagues) | ✅ | ✅ | |
 | `ODDS_API_KEY`, `FANTASYPROS_API_KEY`, `DISCORD_WEBHOOK_URL` | ✅ | ✅ | |
 | `FF_PREFERRED_EXPERTS` | ✅ | | ✅ |
 | Tuning (`FF_SCORING`, `FF_WEIGHT_*`, …) | ✅ | | *not wired to Actions — defaults apply there* |

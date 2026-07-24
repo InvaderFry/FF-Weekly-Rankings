@@ -25,7 +25,7 @@ from pathlib import Path
 from typing import Optional, Sequence
 
 from . import report, season
-from .config import Settings, load_settings
+from .config import LeagueProfile, Settings, load_settings
 from .data.matching import normalize_name
 from .models import Player
 from .output import render
@@ -61,6 +61,8 @@ def _build_parser() -> argparse.ArgumentParser:
                                default=None, help="roster source (default: FF_ROSTER_SOURCE)")
     roster_parent.add_argument("--league", default=None, help="override league id")
     roster_parent.add_argument("--team", default=None, help="override ESPN team id")
+    roster_parent.add_argument("--league-name", dest="league_name", default=None,
+                               help="select a configured league by name (see FF_LEAGUES)")
 
     p_sync = sub.add_parser("sync", parents=[roster_parent], help="pull and cache your roster")
     p_sync.set_defaults(func=cmd_sync)
@@ -101,6 +103,8 @@ def _build_parser() -> argparse.ArgumentParser:
     p_dash.add_argument("--week", type=int, default=None)
     p_dash.add_argument("--out", type=Path, default=Path("site/index.html"),
                         help="output path (default: site/index.html)")
+    p_dash.add_argument("--all-leagues", action="store_true", dest="all_leagues",
+                        help="render every configured league into one dashboard")
     p_dash.set_defaults(func=cmd_dashboard)
 
     p_notify = sub.add_parser("notify", parents=[roster_parent],
@@ -116,6 +120,8 @@ def _build_parser() -> argparse.ArgumentParser:
     p_pub.add_argument("--dashboard", type=Path, default=None, help="write the HTML dashboard here")
     p_pub.add_argument("--discord", action="store_true", help="also send the Discord notification")
     p_pub.add_argument("--url", default=None, help="dashboard URL to link (or FF_DASHBOARD_URL)")
+    p_pub.add_argument("--all-leagues", action="store_true", dest="all_leagues",
+                       help="one pass per configured league -> combined digest/dashboard/Discord")
     p_pub.set_defaults(func=cmd_publish)
 
     p_cal = sub.add_parser("calibrate",
@@ -142,7 +148,9 @@ def _build_parser() -> argparse.ArgumentParser:
 
 # --- commands -------------------------------------------------------------
 def cmd_sync(args, settings: Settings) -> int:
-    provider = build_roster_provider(settings, args.source, args.league, args.team)
+    profile = resolve_league(settings, getattr(args, "league_name", None))
+    provider = build_roster_provider(settings, args.source, args.league, args.team,
+                                     profile=profile)
     players = provider.get_roster_players()
     path = _save_roster(settings, provider, players)
     print(f"Synced {len(players)} players ({provider.name}) to {path}")
@@ -152,7 +160,8 @@ def cmd_sync(args, settings: Settings) -> int:
 
 
 def cmd_rank(args, settings: Settings) -> int:
-    players = _get_roster(args, settings)
+    settings, profile = _league_context(args, settings)
+    players = _get_roster(args, settings, profile)
     pos = args.pos.upper()
     pos = "DEF" if pos == "DST" else pos
     candidates = [p for p in players if p.position == pos]
@@ -163,7 +172,7 @@ def cmd_rank(args, settings: Settings) -> int:
     week = _resolve_week(args, settings)
     _print_preseason_banner(settings, md=args.md)
     rec = recommend(settings, candidates, week, command=f"rank --pos {pos}")
-    title = f"Week {week} {pos} • {settings.scoring.upper()}"
+    title = _titled(f"Week {week} {pos} • {settings.scoring.upper()}", profile)
     if args.md:
         print(render.render_markdown(rec, title=title))
     else:
@@ -178,7 +187,8 @@ def cmd_rank(args, settings: Settings) -> int:
 
 
 def cmd_compare(args, settings: Settings) -> int:
-    players = _get_roster(args, settings)
+    settings, profile = _league_context(args, settings)
+    players = _get_roster(args, settings, profile)
     candidates = _resolve_named(players, args.players)
     if len(candidates) < 2:
         print("Need at least two matching players to compare.", file=sys.stderr)
@@ -187,7 +197,7 @@ def cmd_compare(args, settings: Settings) -> int:
     week = _resolve_week(args, settings)
     _print_preseason_banner(settings, md=args.md)
     rec = recommend(settings, candidates, week, command="compare")
-    title = f"Week {week} compare • {settings.scoring.upper()}"
+    title = _titled(f"Week {week} compare • {settings.scoring.upper()}", profile)
     if args.md:
         print(render.render_markdown(rec, title=title))
     else:
@@ -196,15 +206,18 @@ def cmd_compare(args, settings: Settings) -> int:
 
 
 def cmd_lineup(args, settings: Settings) -> int:
-    players = _get_roster(args, settings)
+    settings, profile = _league_context(args, settings)
+    players = _get_roster(args, settings, profile)
     week = _resolve_week(args, settings)
     _print_preseason_banner(settings, md=args.md)
 
     recs = report.rank_each_position(settings, players, week)
     lineup = report.build_lineup(report.scored(recs))
 
+    label = _league_label(profile)
+    suffix = f" · {label}" if label else ""
     if args.md:
-        lines = [f"### Suggested Week {week} lineup ({settings.scoring.upper()})",
+        lines = [f"### Suggested Week {week} lineup ({settings.scoring.upper()}){suffix}",
                  "", "| Slot | Player | Team | Score |", "|---|---|---|---|"]
         for slot, pick in lineup:
             if pick is None:
@@ -215,7 +228,7 @@ def cmd_lineup(args, settings: Settings) -> int:
         print("\n".join(lines))
         return 0
 
-    print(f"Suggested Week {week} lineup ({settings.scoring.upper()}):")
+    print(f"Suggested Week {week} lineup ({settings.scoring.upper()}){suffix}:")
     for slot, pick in lineup:
         if pick is None:
             print(f"  {slot:5} (no option)")
@@ -225,9 +238,10 @@ def cmd_lineup(args, settings: Settings) -> int:
 
 
 def cmd_report(args, settings: Settings) -> int:
-    players = _get_roster(args, settings)
+    settings, profile = _league_context(args, settings)
+    players = _get_roster(args, settings, profile)
     week = _resolve_week(args, settings)
-    digest = report.build_digest(settings, players, week)
+    digest = report.build_digest(settings, players, week, label=_league_label(profile))
     print(digest)
     if args.out:
         args.out.parent.mkdir(parents=True, exist_ok=True)
@@ -242,7 +256,8 @@ def cmd_journalists(args, settings: Settings) -> int:
               "id:Name format and how to find FantasyPros expert ids.",
               file=sys.stderr)
         return 1
-    players = _get_roster(args, settings)
+    settings, profile = _league_context(args, settings)
+    players = _get_roster(args, settings, profile)
     week = _resolve_week(args, settings)
     view = report.build_journalist_view(settings, players, week)
     if view is None:
@@ -256,9 +271,23 @@ def cmd_journalists(args, settings: Settings) -> int:
 def cmd_dashboard(args, settings: Settings) -> int:
     from datetime import date
 
-    from .output.html import build_dashboard_html
+    from .output.html import build_dashboard_html, build_multi_dashboard_html
 
-    players = _get_roster(args, settings)
+    if getattr(args, "all_leagues", False):
+        week = _resolve_week(args, settings)
+        bundles = _league_bundles(args, settings, week)
+        if not bundles:
+            print("No configured league could be scored.", file=sys.stderr)
+            return 1
+        html = build_multi_dashboard_html(week, bundles,
+                                          generated_on=date.today().isoformat())
+        args.out.parent.mkdir(parents=True, exist_ok=True)
+        args.out.write_text(html)
+        print(f"Wrote dashboard ({len(bundles)} leagues) to {args.out}")
+        return 0
+
+    settings, profile = _league_context(args, settings)
+    players = _get_roster(args, settings, profile)
     week = _resolve_week(args, settings)
     recs = report.rank_each_position(settings, players, week)
     lineup = report.build_lineup(report.scored(recs))
@@ -266,7 +295,8 @@ def cmd_dashboard(args, settings: Settings) -> int:
                                 generated_on=date.today().isoformat(),
                                 banner=season.preseason_banner(settings),
                                 journalists=report.build_journalist_view(
-                                    settings, players, week))
+                                    settings, players, week),
+                                label=_league_label(profile))
     args.out.parent.mkdir(parents=True, exist_ok=True)
     args.out.write_text(html)
     print(f"Wrote dashboard to {args.out}")
@@ -280,14 +310,16 @@ def cmd_notify(args, settings: Settings) -> int:
         print("DISCORD_WEBHOOK_URL is not set — nothing to send.", file=sys.stderr)
         return 1
 
-    players = _get_roster(args, settings)
+    settings, profile = _league_context(args, settings)
+    players = _get_roster(args, settings, profile)
     week = _resolve_week(args, settings)
     recs = report.rank_each_position(settings, players, week)
     lineup = report.build_lineup(report.scored(recs))
     dashboard_url = args.url or settings.dashboard_url or None
     payload = build_discord_payload(week, settings.scoring, lineup, recs, dashboard_url,
                                     banner=season.preseason_banner(settings),
-                                    commands_url=_commands_url(settings))
+                                    commands_url=_commands_url(settings),
+                                    label=_league_label(profile))
     send_discord(settings.discord_webhook_url, payload)
     print("Sent Discord notification.")
     return 0
@@ -295,12 +327,17 @@ def cmd_notify(args, settings: Settings) -> int:
 
 def cmd_publish(args, settings: Settings) -> int:
     """One scoring pass -> markdown digest + HTML dashboard + Discord, as requested."""
+    if getattr(args, "all_leagues", False):
+        return _cmd_publish_all(args, settings)
+
     from datetime import date
 
     from .output.discord import build_discord_payload, send_discord
     from .output.html import build_dashboard_html
 
-    players = _get_roster(args, settings)
+    settings, profile = _league_context(args, settings)
+    label = _league_label(profile)
+    players = _get_roster(args, settings, profile)
     week = _resolve_week(args, settings)
     banner = season.preseason_banner(settings)
     if banner:
@@ -314,7 +351,7 @@ def cmd_publish(args, settings: Settings) -> int:
     journalists = report.build_journalist_view(settings, players, week)
 
     digest = report.render_digest(week, settings.scoring, recs, banner=banner,
-                                  journalists=journalists)
+                                  journalists=journalists, label=label)
     print(digest)
     if args.report:
         args.report.parent.mkdir(parents=True, exist_ok=True)
@@ -324,7 +361,7 @@ def cmd_publish(args, settings: Settings) -> int:
         html = build_dashboard_html(week, settings.scoring, lineup, recs,
                                     generated_on=date.today().isoformat(),
                                     banner=banner,
-                                    journalists=journalists)
+                                    journalists=journalists, label=label)
         args.dashboard.parent.mkdir(parents=True, exist_ok=True)
         args.dashboard.write_text(html)
         print(f"Wrote dashboard to {args.dashboard}")
@@ -336,13 +373,85 @@ def cmd_publish(args, settings: Settings) -> int:
             dashboard_url = args.url or settings.dashboard_url or None
             payload = build_discord_payload(week, settings.scoring, lineup, recs, dashboard_url,
                                             banner=banner,
-                                            commands_url=_commands_url(settings))
+                                            commands_url=_commands_url(settings), label=label)
             try:
                 send_discord(settings.discord_webhook_url, payload)
                 print("Sent Discord notification.")
             except Exception as exc:
                 # A Discord hiccup must not sink the digest/dashboard the rest of
                 # the workflow depends on — warn and carry on.
+                print(f"warning: Discord notification failed: {exc}", file=sys.stderr)
+    return 0
+
+
+def _league_bundles(args, settings: Settings, week: int) -> list:
+    """Score every configured league for the week, one bundle each.
+
+    A league that fails (bad auth, unreachable) is skipped with a warning so the
+    others still publish — graceful degradation, never a crash. Each league's
+    own scoring is honored via a per-league Settings copy.
+    """
+    from dataclasses import replace
+
+    from .report import LeagueBundle
+
+    bundles: list = []
+    for profile in settings.leagues:
+        lsettings = settings
+        if profile.scoring and profile.scoring != settings.scoring:
+            lsettings = replace(settings, scoring=profile.scoring)
+        try:
+            players = _get_roster(args, lsettings, profile)
+            recs = report.rank_each_position(lsettings, players, week)
+            lineup = report.build_lineup(report.scored(recs))
+            journalists = report.build_journalist_view(lsettings, players, week)
+        except (RosterError, SleeperError) as exc:
+            print(f"warning: skipping league {profile.name!r}: {exc}", file=sys.stderr)
+            continue
+        bundles.append(LeagueBundle(
+            label=profile.name, scoring=lsettings.scoring, recs=recs, lineup=lineup,
+            banner=season.preseason_banner(lsettings), journalists=journalists))
+    return bundles
+
+
+def _cmd_publish_all(args, settings: Settings) -> int:
+    """Publish every configured league into one combined digest/dashboard/Discord."""
+    from datetime import date
+
+    from .output.discord import build_multi_discord_payload, send_discord
+    from .output.html import build_multi_dashboard_html
+
+    week = _resolve_week(args, settings)
+    bundles = _league_bundles(args, settings, week)
+    if not bundles:
+        print("No configured league could be scored.", file=sys.stderr)
+        return 1
+
+    digest = report.render_multi_digest(week, bundles)
+    print(digest)
+    if args.report:
+        args.report.parent.mkdir(parents=True, exist_ok=True)
+        args.report.write_text(digest)
+
+    if args.dashboard:
+        html = build_multi_dashboard_html(week, bundles,
+                                          generated_on=date.today().isoformat())
+        args.dashboard.parent.mkdir(parents=True, exist_ok=True)
+        args.dashboard.write_text(html)
+        print(f"Wrote dashboard ({len(bundles)} leagues) to {args.dashboard}")
+
+    if args.discord:
+        if not settings.discord_webhook_url:
+            print("DISCORD_WEBHOOK_URL is not set — skipping Discord.", file=sys.stderr)
+        else:
+            dashboard_url = args.url or settings.dashboard_url or None
+            payload = build_multi_discord_payload(
+                week, bundles, dashboard_url=dashboard_url,
+                commands_url=_commands_url(settings))
+            try:
+                send_discord(settings.discord_webhook_url, payload)
+                print("Sent Discord notification.")
+            except Exception as exc:
                 print(f"warning: Discord notification failed: {exc}", file=sys.stderr)
     return 0
 
@@ -518,8 +627,18 @@ def _resolve_named(players: Sequence[Player], names: Sequence[str]) -> list[Play
 # --- roster providers -----------------------------------------------------
 def build_roster_provider(settings: Settings, source: Optional[str] = None,
                           league: Optional[str] = None,
-                          team: Optional[str] = None) -> RosterProvider:
-    """Pick a roster provider: explicit --source > FF_ROSTER_SOURCE > espn."""
+                          team: Optional[str] = None,
+                          profile: Optional[LeagueProfile] = None) -> RosterProvider:
+    """Pick a roster provider.
+
+    Precedence: explicit ``--source``/``--league``/``--team`` flags win, then the
+    selected league ``profile`` (from ``--league-name``/config), then the flat
+    ``FF_ROSTER_SOURCE``/``ESPN_*`` settings.
+    """
+    if profile is not None:
+        source = source or profile.source
+        league = league or profile.league_id or None
+        team = team or profile.team_id or None
     source = (source or settings.roster_source or "espn").lower()
     if source == "espn":
         return ESPNProvider(
@@ -540,9 +659,69 @@ def build_roster_provider(settings: Settings, source: Optional[str] = None,
     raise RosterError(f"unknown roster source: {source!r}")
 
 
-def _get_roster(args, settings: Settings) -> list[Player]:
+def resolve_league(settings: Settings, name: Optional[str] = None) -> LeagueProfile:
+    """Resolve the league profile to act on.
+
+    With ``name`` -> that configured league (error if unknown). Without a name ->
+    ``settings.default_league`` if it exists, else the first configured league.
+    ``settings.leagues`` is always non-empty (a synthesized "default" backs the
+    flat-env single-league setup), so this never returns None.
+    """
+    from .config import _synthesized_default
+
+    leagues = settings.leagues
+    if not leagues:
+        # Settings built directly (not via load_settings) — synthesize the same
+        # single "default" profile load_settings would have from the flat env.
+        leagues = [_synthesized_default(settings.roster_source, settings.espn_league_id,
+                                        settings.espn_team_id, settings.sleeper_league_id)]
+    if name:
+        for p in leagues:
+            if p.name.lower() == name.lower():
+                return p
+        known = ", ".join(p.name for p in leagues) or "(none)"
+        raise RosterError(f"No configured league named {name!r}. Known leagues: {known}.")
+    if settings.default_league:
+        for p in leagues:
+            if p.name.lower() == settings.default_league.lower():
+                return p
+    return leagues[0]
+
+
+def _league_label(profile: LeagueProfile) -> str:
+    """Output label for a league — empty for the synthesized single-league default
+    so legacy setups render exactly as before."""
+    return "" if profile.name == "default" else profile.name
+
+
+def _titled(base: str, profile: LeagueProfile) -> str:
+    """Append the league label to a table/section title when there is one."""
+    label = _league_label(profile)
+    return f"{base} · {label}" if label else base
+
+
+def _league_context(args, settings: Settings) -> tuple[Settings, LeagueProfile]:
+    """Resolve the selected league and apply its per-league scoring (if any).
+
+    Returns a (possibly scoring-adjusted) Settings plus the profile, so the whole
+    downstream pipeline — which reads ``settings.scoring`` — honors a league's
+    scoring without threading it through every call site.
+    """
+    from dataclasses import replace
+
+    profile = resolve_league(settings, getattr(args, "league_name", None))
+    if profile.scoring and profile.scoring != settings.scoring:
+        settings = replace(settings, scoring=profile.scoring)
+    return settings, profile
+
+
+def _get_roster(args, settings: Settings,
+                profile: Optional[LeagueProfile] = None) -> list[Player]:
     """Load the roster from cache, fetching (and caching) on a miss."""
-    provider = build_roster_provider(settings, args.source, args.league, args.team)
+    if profile is None:
+        profile = resolve_league(settings, getattr(args, "league_name", None))
+    provider = build_roster_provider(settings, args.source, args.league, args.team,
+                                     profile=profile)
     path = _roster_path(settings, provider)
     if path.exists():
         data = json.loads(path.read_text())

@@ -115,3 +115,23 @@ def test_render_digest_without_journalists_omits_section():
     recs = {"RB": _rec(_ps("1", "Alpha", "RB", 90.0))}
     digest = report.render_digest(3, "ppr", recs)
     assert "Preferred journalists" not in digest
+
+
+def test_render_digest_label_in_heading():
+    recs = {"RB": _rec(_ps("1", "Alpha", "RB", 90.0))}
+    digest = report.render_digest(3, "ppr", recs, label="dynasty")
+    assert "# 🏈 Week 3 start/sit — PPR · dynasty" in digest
+
+
+def test_render_multi_digest_section_per_league():
+    work = {"RB": _rec(_ps("1", "AlphaWork", "RB", 90.0))}
+    dyno = {"RB": _rec(_ps("2", "BravoDyno", "RB", 80.0))}
+    bundles = [
+        report.LeagueBundle("work", "ppr", work, report.build_lineup(report.scored(work))),
+        report.LeagueBundle("dynasty", "half", dyno, report.build_lineup(report.scored(dyno))),
+    ]
+    digest = report.render_multi_digest(3, bundles)
+    assert "# 🏈 Week 3 start/sit" in digest
+    assert "2 league(s)" in digest
+    assert "## work — PPR" in digest and "## dynasty — HALF" in digest
+    assert "AlphaWork" in digest and "BravoDyno" in digest

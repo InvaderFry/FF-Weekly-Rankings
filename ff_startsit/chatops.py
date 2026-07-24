@@ -11,6 +11,7 @@ Examples:
     /rank RB week 5                  -> ["rank", "--pos", "RB", "--md", "--week", "5"]
     /compare Josh Allen | Jalen Hurts-> ["compare", "Josh Allen", "Jalen Hurts", "--md"]
     /lineup source manual            -> ["lineup", "--md", "--source", "manual"]
+    /report league-name dynasty      -> ["report", "--league-name", "dynasty"]
 """
 
 from __future__ import annotations
@@ -19,8 +20,9 @@ from typing import Optional
 
 POSITIONS = {"QB", "RB", "WR", "TE", "K", "DEF", "DST"}
 SOURCES = {"espn", "sleeper", "manual"}
-# Inline option keywords usable on any command: `week N`, `source X`, `league ID`, `team ID`.
-_OPTION_KEYS = {"week", "source", "league", "team"}
+# Inline option keywords usable on any command: `week N`, `source X`, `league ID`,
+# `team ID`, `league-name NAME` (select a configured league by name).
+_OPTION_KEYS = {"week", "source", "league", "team", "league-name"}
 
 
 def _first_line(body: str) -> str:
