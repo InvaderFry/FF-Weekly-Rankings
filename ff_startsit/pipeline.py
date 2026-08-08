@@ -43,6 +43,29 @@ def build_signals(settings: Settings, season: Optional[int] = None,
     ]
 
 
+def flex_signals(signals: Sequence[Signal]) -> Optional[list[Signal]]:
+    """Swap the ECR signal for its pooled sibling, keeping the rest by reference.
+
+    Vegas, injury and weather are position-agnostic — they key off team or the
+    Sleeper id — so they work unchanged on a mixed RB/WR/TE candidate set, and
+    reusing the same instances means their caches (and the Odds API quota) carry
+    over: the pooled pass costs one extra HTTP call in total.
+
+    Returns ``None`` when there is no live ECR signal to pool, which is the case
+    for preseason sample runs.
+    """
+    out: list[Signal] = []
+    found = False
+    for sig in signals:
+        pooled = getattr(sig, "pooled", None)
+        if callable(pooled) and not getattr(sig, "is_sample", False):
+            out.append(pooled())
+            found = True
+        else:
+            out.append(sig)
+    return out if found else None
+
+
 def recommend(
     settings: Settings,
     players: Sequence[Player],

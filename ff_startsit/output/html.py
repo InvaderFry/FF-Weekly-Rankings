@@ -43,6 +43,7 @@ tr.top td { background: rgba(46, 160, 67, .14); }
 tr.flagged td { background: rgba(210, 153, 34, .14); }
 .callout { background: rgba(210, 153, 34, .16); border-left: 3px solid #d29922;
            padding: .5rem .75rem; border-radius: 4px; margin: .35rem 0 .75rem; }
+.note { color: #9aa0ad; font-size: .85rem; margin: .35rem 0 1rem; }
 .start { color: #3fb950; font-weight: 600; }
 .flag { color: #d29922; }
 footer { color: #6e7481; font-size: .8rem; margin-top: 2rem; }
@@ -152,8 +153,13 @@ def _dashboard_body(lineup: Sequence[tuple[str, Optional[PlayerScore]]],
     sections += [
         "<h2>Suggested lineup</h2>",
         _lineup_table(lineup),
-        "<h2>Rankings by position</h2>",
     ]
+    # How the FLEX slot was decided — a pooled cross-position ranking, or the
+    # positional fallback whose scores aren't comparable across positions.
+    caveat = getattr(lineup, "caveat", None)
+    if caveat:
+        sections.append(f"<p class='note'>⚠️ {escape(caveat)}</p>")
+    sections.append("<h2>Rankings by position</h2>")
     for pos in POSITION_ORDER:
         rec = recs.get(pos)
         if rec is None or not rec.scores:

@@ -217,8 +217,9 @@ def cmd_lineup(args, settings: Settings) -> int:
     week = _resolve_week(args, settings)
     _print_preseason_banner(settings, md=args.md)
 
-    recs = report.rank_each_position(settings, players, week)
-    lineup = report.build_lineup(report.scored(recs))
+    ws = report.score_week(settings, players, week)
+    recs = ws.recs
+    lineup = report.lineup_from(ws)
 
     label = _league_label(profile)
     suffix = f" · {label}" if label else ""
@@ -231,6 +232,8 @@ def cmd_lineup(args, settings: Settings) -> int:
             else:
                 lines.append(f"| {slot} | {pick.player.name} | {pick.player.team or 'BYE'} "
                              f"| {pick.final:.1f} |")
+        if lineup.caveat:
+            lines += ["", f"> ⚠️ {lineup.caveat}"]
         print("\n".join(lines))
         return 0
 
@@ -240,6 +243,8 @@ def cmd_lineup(args, settings: Settings) -> int:
             print(f"  {slot:5} (no option)")
         else:
             print(f"  {slot:5} {pick.player.name:24} {pick.player.team or 'BYE':4} {pick.final:.1f}")
+    if lineup.caveat:
+        print(f"\n  ⚠️ {lineup.caveat}")
     return 0
 
 
@@ -295,8 +300,9 @@ def cmd_dashboard(args, settings: Settings) -> int:
     settings, profile = _league_context(args, settings)
     players = _get_roster(args, settings, profile)
     week = _resolve_week(args, settings)
-    recs = report.rank_each_position(settings, players, week)
-    lineup = report.build_lineup(report.scored(recs))
+    ws = report.score_week(settings, players, week)
+    recs = ws.recs
+    lineup = report.lineup_from(ws)
     html = build_dashboard_html(week, settings.scoring, lineup, recs,
                                 generated_on=date.today().isoformat(),
                                 banner=season.preseason_banner(settings),
@@ -319,8 +325,9 @@ def cmd_notify(args, settings: Settings) -> int:
     settings, profile = _league_context(args, settings)
     players = _get_roster(args, settings, profile)
     week = _resolve_week(args, settings)
-    recs = report.rank_each_position(settings, players, week)
-    lineup = report.build_lineup(report.scored(recs))
+    ws = report.score_week(settings, players, week)
+    recs = ws.recs
+    lineup = report.lineup_from(ws)
     dashboard_url = args.url or settings.dashboard_url or None
     payload = build_discord_payload(week, settings.scoring, lineup, recs, dashboard_url,
                                     banner=season.preseason_banner(settings),
@@ -351,8 +358,9 @@ def cmd_publish(args, settings: Settings) -> int:
         print(f"warning: {banner}", file=sys.stderr)
 
     # The single scoring pass shared by every output.
-    recs = report.rank_each_position(settings, players, week)
-    lineup = report.build_lineup(report.scored(recs))
+    ws = report.score_week(settings, players, week)
+    recs = ws.recs
+    lineup = report.lineup_from(ws)
     # One journalist pass too, shared by digest and dashboard (display-only).
     journalists = report.build_journalist_view(settings, players, week)
 
@@ -408,8 +416,9 @@ def _league_bundles(args, settings: Settings, week: int) -> list:
             lsettings = replace(settings, scoring=profile.scoring)
         try:
             players = _get_roster(args, lsettings, profile)
-            recs = report.rank_each_position(lsettings, players, week)
-            lineup = report.build_lineup(report.scored(recs))
+            ws = report.score_week(lsettings, players, week)
+            recs = ws.recs
+            lineup = report.lineup_from(ws)
             journalists = report.build_journalist_view(lsettings, players, week)
         except (RosterError, SleeperError) as exc:
             print(f"warning: skipping league {profile.name!r}: {exc}", file=sys.stderr)

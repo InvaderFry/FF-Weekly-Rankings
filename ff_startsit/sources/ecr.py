@@ -30,12 +30,22 @@ SCRAPE_URL = "https://www.fantasypros.com/nfl/rankings/{slug}.php"
 _SCORING_AGNOSTIC = {"QB", "K", "DST", "DEF"}
 _ECR_DATA_RE = re.compile(r"var\s+ecrData\s*=\s*(\{.*?\})\s*;", re.DOTALL)
 
+#: Pseudo-position for the pooled cross-position FLEX ranking. FantasyPros ranks
+#: RB/WR/TE against each other on one list, which is the only ECR value that is
+#: meaningful across positions — a per-position rank of 1 means "RB1" and "WR1"
+#: indistinguishably. Used as a cache key alongside the real positions, so the
+#: two paths cannot shadow each other.
+FLEX_POOL = "FLX"
+_FLEX_ALIASES = {"FLX", "FLEX"}
+
 
 def _scrape_slug(position: str, scoring: str) -> str:
     pos = position.lower()
     if position.upper() in {"DST", "DEF"}:
         return "dst"
-    if position.upper() in _SCORING_AGNOSTIC:
+    if position.upper() in _FLEX_ALIASES:
+        pos = "flex"  # -> flex / ppr-flex / half-point-ppr-flex
+    elif position.upper() in _SCORING_AGNOSTIC:
         return pos
     if scoring == "ppr":
         return f"ppr-{pos}"
@@ -128,25 +138,48 @@ class ECRSignal(Signal):
 
     def __init__(self, api_key: str = "", scoring: str = "ppr",
                  season: Optional[int] = None, session: Optional[requests.Session] = None,
-                 timeout: int = 20):
+                 timeout: int = 20, pool_position: Optional[str] = None):
         self.api_key = api_key
         self.scoring = scoring
         self.season = season or _current_season()
         self.session = session or requests.Session()
         self.timeout = timeout
+        #: When set (e.g. ``FLEX_POOL``), fetch one pooled cross-position ranking
+        #: instead of one list per position.
+        self.pool_position = pool_position
         self.last_source: str = ""  # "api" or "scrape", for diagnostics
         self._rows_cache: dict[tuple[str, int], list[ExternalRow]] = {}
+
+    def pooled(self, pool_position: str = FLEX_POOL) -> "ECRSignal":
+        """A sibling instance that fetches one pooled cross-position ranking.
+
+        A separate instance rather than a mode flag: this one is reused across
+        every position in a run, so a mutable flag would make ``fetch``
+        non-idempotent and the ``(position, week)`` cache ambiguous. The sibling
+        shares the session and the row cache, and the pseudo-position keeps its
+        cache keys disjoint from the per-position path.
+        """
+        sib = ECRSignal(api_key=self.api_key, scoring=self.scoring, season=self.season,
+                        session=self.session, timeout=self.timeout,
+                        pool_position=pool_position)
+        sib._rows_cache = self._rows_cache
+        return sib
 
     def is_available(self) -> bool:
         return True  # scrape fallback means ECR is always attemptable
 
     def fetch(self, week: int, players: Iterable[Player]) -> dict[str, SignalValue]:
         players = list(players)
-        positions = sorted({_canon_pos(p.position) for p in players})
 
         rows: list[ExternalRow] = []
-        for pos in positions:
-            rows.extend(self._rows_for_position(pos, week))
+        if self.pool_position:
+            # One pooled list; its rows still carry each player's real position,
+            # so the (name, position) join is unchanged — only the rank value is
+            # now cross-position.
+            rows.extend(self._rows_for_position(self.pool_position, week))
+        else:
+            for pos in sorted({_canon_pos(p.position) for p in players}):
+                rows.extend(self._rows_for_position(pos, week))
 
         result = match_rows(players, rows)
         out: dict[str, SignalValue] = {}

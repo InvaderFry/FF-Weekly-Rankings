@@ -99,6 +99,24 @@ joins the pick to the same Sleeper outcomes, and reports top-pick hit-rate plus 
 flagging. It reuses `weighted_final`, the `OutcomeProvider` seam, and `load_decisions`;
 it never writes weights.
 
+### The lineup builder and the FLEX slot
+
+`report.score_week` does one scoring pass per roster: `rank_each_position` ranks
+each position group, and `rank_flex_pool` ranks all RB/WR/TE candidates **in one
+candidate set** using FantasyPros' cross-position FLEX list (`ECRSignal.pooled()`,
+pseudo-position `FLX`). That pooled pass is what makes the FLEX pick valid —
+`normalize.to_0_100` is min-max *within* the candidate set, so per-position scores
+put every position's leader at 100 and are not comparable across positions.
+
+Three rules hold here. The pooled rec is **never** folded into `recs` (the Discord
+renderer emits an alert per `recs` entry and would duplicate them). It is **never**
+logged (the calibrator scores pairwise concordance within one decision, so it would
+double-weight those players). And it is **refused** below `MIN_FLEX_ECR_COVERAGE`
+— without ECR the pooled blend runs on Vegas/injury/weather alone, which is a worse
+pick than the fallback and an invisible one. On refusal `build_lineup` degrades to
+comparing per-position scores and says so via `Lineup.caveat`, which every renderer
+surfaces.
+
 ### Output & delivery
 
 `output/` renders the same `Recommendation` to a rich table, markdown, CSV/JSON
