@@ -41,7 +41,7 @@ def build_signals(settings: Settings, season: Optional[int] = None,
     return [
         ECRSignal(api_key=settings.fantasypros_api_key, scoring=settings.scoring,
                   season=season),
-        VegasSignal(api_key=settings.odds_api_key),
+        VegasSignal(api_key=settings.odds_api_key, schedule=schedule),
         InjurySignal(data_dir=settings.data_dir, enabled=settings.injury_enabled),
         WeatherSignal(enabled=settings.weather_enabled, schedule=schedule),
     ]

@@ -165,5 +165,5 @@ def test_kickoff_window_spans_the_week():
     (None, None),
 ])
 def test_kickoff_parsing_is_lenient(raw, expected):
-    from ff_startsit.sources.schedule import _parse_kickoff
-    assert _parse_kickoff(raw) == expected
+    from ff_startsit.sources.schedule import parse_kickoff
+    assert parse_kickoff(raw) == expected

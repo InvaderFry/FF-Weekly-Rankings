@@ -35,6 +35,7 @@ class Game:
     away_team: str
     total: float             # over/under
     home_spread: float       # negative => home favored
+    kickoff: Optional[datetime] = None   # from the book's commence_time, if given
 
     def implied_total(self, team: str) -> Optional[float]:
         """Implied points for ``team``: total/2 - team_spread/2."""

@@ -1,4 +1,5 @@
 import json
+from datetime import datetime, timezone
 from pathlib import Path
 
 from ff_startsit.models import Game, Player
@@ -75,3 +76,88 @@ def test_signal_unavailable_without_key():
     players = [Player(key="1", name="A", team="KC", position="RB")]
     out = sig.fetch(3, players)
     assert not out["1"].available
+
+
+# --- week filtering ------------------------------------------------------
+
+def _multiweek():
+    return json.loads((FIXTURES / "odds_api_multiweek.json").read_text())
+
+
+def _week5_index():
+    """The two games actually scheduled this week, as the schedule reports them."""
+    from ff_startsit.models import GameContext
+    from ff_startsit.sources.schedule import by_team
+    return by_team([
+        GameContext(home_team="KC", away_team="BUF",
+                    kickoff=datetime(2025, 10, 5, 17, 0, tzinfo=timezone.utc)),
+        GameContext(home_team="CHI", away_team="GB",
+                    kickoff=datetime(2025, 10, 5, 20, 5, tzinfo=timezone.utc)),
+    ])
+
+
+def test_parse_odds_reads_commence_time():
+    games = parse_odds_response(_multiweek())
+    kc = next(g for g in games if g.away_team == "BUF")
+    assert kc.kickoff == datetime(2025, 10, 5, 17, 0, tzinfo=timezone.utc)
+
+
+def test_games_for_week_drops_a_later_weeks_line():
+    """KC appears twice; only this week's matchup survives."""
+    from ff_startsit.sources.vegas import games_for_week
+
+    games = parse_odds_response(_multiweek())
+    assert len(games) == 3                        # both KC games parsed
+    kept = games_for_week(games, _week5_index())
+    assert len(kept) == 2
+    assert {(g.home_team, g.away_team) for g in kept} == {("KC", "BUF"), ("CHI", "GB")}
+
+    totals = implied_totals_by_team(kept)
+    assert totals["KC"] == 25.5                   # this week's line, not 35.0
+    assert "DEN" not in totals                    # next week's opponent absent
+
+
+def test_games_for_week_falls_back_to_the_kickoff_window():
+    """With no schedule, the week's time window still excludes a later game."""
+    from ff_startsit.sources.vegas import games_for_week
+
+    games = parse_odds_response(_multiweek())
+    window = (datetime(2025, 10, 2, tzinfo=timezone.utc),
+              datetime(2025, 10, 7, tzinfo=timezone.utc))
+    kept = games_for_week(games, {}, window)
+    assert len(kept) == 2
+    assert all(g.away_team != "DEN" for g in kept)
+
+
+def test_games_for_week_without_context_keeps_everything():
+    """No schedule and no window -> the setdefault ordering guard is all we have."""
+    from ff_startsit.sources.vegas import games_for_week
+
+    games = parse_odds_response(_multiweek())
+    assert len(games_for_week(games, {}, None)) == 3
+    # First-occurrence-wins still keeps the sooner KC game.
+    assert implied_totals_by_team(games)["KC"] == 25.5
+
+
+def test_signal_filters_to_the_requested_week():
+    class _Resp:
+        def __init__(self, p): self._p = p
+        def raise_for_status(self): pass
+        def json(self): return self._p
+
+    class _Sess:
+        def __init__(self, p): self._p = p
+        def get(self, *a, **kw): return _Resp(self._p)
+
+    class _Sched:
+        def for_week(self, week): return _week5_index()
+        def kickoff_window(self, week): return None
+
+    sig = VegasSignal(api_key="k", session=_Sess(_multiweek()), schedule=_Sched())
+    players = [
+        Player(key="1", name="Chief", team="KC", position="RB"),
+        Player(key="2", name="Bronco", team="DEN", position="RB"),   # next week only
+    ]
+    out = sig.fetch(5, players)
+    assert out["1"].available and out["1"].raw == 25.5
+    assert not out["2"].available          # not playing this week

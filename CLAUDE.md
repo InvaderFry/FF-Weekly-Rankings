@@ -116,6 +116,14 @@ no kickoff, an unknown venue, or a forecast that doesn't reach the game, it is
 unavailable. There is deliberately **no** fallback to "the windiest day in the
 horizon" — that invented risk from weather unrelated to the game.
 
+`VegasSignal` uses the same provider to filter events: the odds endpoint takes no
+week parameter and returns every upcoming game, so once next week's lines post a
+team appears twice. `games_for_week` matches on the (home, away) pair, falling
+back to the kickoff window and then to `implied_totals_by_team`'s
+first-occurrence-wins, which given the API's kickoff ordering keeps the sooner
+game. Unlike weather, Vegas still works without a schedule — it just filters less
+precisely.
+
 ### The lineup builder and the FLEX slot
 
 `report.score_week` does one scoring pass per roster: `rank_each_position` ranks

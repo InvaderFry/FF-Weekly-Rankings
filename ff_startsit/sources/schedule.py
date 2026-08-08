@@ -44,7 +44,7 @@ SEASON_TYPE_REGULAR = 2
 SCHEDULE_CACHE_TTL = 6 * 3600
 
 
-def _parse_kickoff(raw: Optional[str]) -> Optional[datetime]:
+def parse_kickoff(raw: Optional[str]) -> Optional[datetime]:
     """ESPN's Zulu timestamp -> aware UTC datetime, or None if unusable.
 
     ``fromisoformat`` only learned to accept a trailing "Z" in 3.11 and this
@@ -96,7 +96,7 @@ def parse_scoreboard(blob: dict) -> list[GameContext]:
         out.append(GameContext(
             home_team=home,
             away_team=away,
-            kickoff=_parse_kickoff(comp.get("date") or event.get("date")),
+            kickoff=parse_kickoff(comp.get("date") or event.get("date")),
             venue_id=str(venue.get("id") or ""),
             venue_name=str(venue.get("fullName") or ""),
             indoor=bool(venue.get("indoor")),
