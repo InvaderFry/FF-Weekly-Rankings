@@ -59,13 +59,19 @@ def parse_odds_response(events: list[dict]) -> list[Game]:
 
 
 def implied_totals_by_team(games: Iterable[Game]) -> dict[str, float]:
-    """Flatten games into ``{team: implied_total}``."""
+    """Flatten games into ``{team: implied_total}``.
+
+    First occurrence wins. The odds endpoint returns every upcoming game, so a
+    team can appear twice once next week's line is posted alongside this week's;
+    since the API orders events by kickoff, keeping the first means keeping the
+    sooner game rather than silently overwriting it with a later one.
+    """
     out: dict[str, float] = {}
     for g in games:
         for team in (g.home_team, g.away_team):
             it = g.implied_total(team)
             if it is not None:
-                out[team] = it
+                out.setdefault(team, it)
     return out
 
 

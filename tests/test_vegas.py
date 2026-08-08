@@ -40,6 +40,22 @@ def test_implied_totals_by_team():
     assert totals["GB"] == 22.0
 
 
+def test_implied_totals_keeps_the_sooner_game():
+    """A team appearing twice (next week's line already posted) keeps the first.
+
+    The odds endpoint orders events by kickoff, so first-wins is soonest-wins.
+    """
+    games = [
+        Game(home_team="KC", away_team="BUF", total=48.0, home_spread=-3.0),
+        # Same team, a later week, very different line.
+        Game(home_team="KC", away_team="SF", total=60.0, home_spread=-10.0),
+    ]
+    totals = implied_totals_by_team(games)
+    assert totals["KC"] == 25.5   # from the first game, not 35.0 from the second
+    assert totals["BUF"] == 22.5
+    assert totals["SF"] == 25.0
+
+
 def test_assign_marks_bye_and_missing():
     players = [
         Player(key="1", name="A", team="KC", position="RB"),
