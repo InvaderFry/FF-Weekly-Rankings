@@ -6,6 +6,7 @@ rewrite them programmatically without touching the engine.
 
 from __future__ import annotations
 
+import math
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -95,13 +96,24 @@ class Settings:
 
 
 def _f(name: str, default: float) -> float:
+    """Read a float env var, falling back to ``default`` on anything unusable.
+
+    ``float()`` happily accepts "nan" and "inf", which then defeat every
+    downstream comparison guard (``nan < 0`` and ``nan > 0`` are both False), so
+    non-finite values are rejected here rather than being allowed to reach the
+    blend.
+    """
     val = os.getenv(name)
     if val is None or val.strip() == "":
         return default
     try:
-        return float(val)
+        parsed = float(val)
     except ValueError:
         return default
+    if not math.isfinite(parsed):
+        _warn(f"{name} is not a finite number; using {default} instead.")
+        return default
+    return parsed
 
 
 def _b(name: str, default: bool) -> bool:
@@ -117,7 +129,15 @@ def _validate_weights(weights: dict[str, float],
 
     A silently-invalid weight set (e.g. every weight 0) makes the blend score
     every player ``None`` — fail loud-but-graceful instead.
+
+    Non-finite weights are checked first: NaN compares False against everything,
+    so it would slip past both the sign and the sum guard below and then make
+    ``weighted_final``'s ``wsum > 0`` test False for every player — exactly the
+    all-``None`` blend this function exists to prevent.
     """
+    if not all(math.isfinite(w) for w in weights.values()):
+        _warn("Non-finite blend weight(s) configured; using defaults instead.")
+        return dict(defaults)
     if any(w < 0 for w in weights.values()):
         _warn("Negative blend weight(s) configured; using defaults instead.")
         return dict(defaults)
@@ -131,17 +151,22 @@ def _load_learned_weights(path: Path) -> dict[str, float]:
     """Read calibrated weights written by ``calibrate --write`` (empty if absent).
 
     A corrupt or non-numeric file is ignored with a warning rather than crashing
-    load — the defaults then stand.
+    load — the defaults then stand. ``json.loads`` accepts bare ``NaN``/
+    ``Infinity``, so non-finite entries are dropped here too.
     """
     if not path.exists():
         return {}
     try:
         import json
         data = json.loads(path.read_text())
-        return {str(k): float(v) for k, v in data.items()}
+        parsed = {str(k): float(v) for k, v in data.items()}
     except Exception:
         _warn(f"Could not read learned weights at {path}; ignoring.")
         return {}
+    finite = {k: v for k, v in parsed.items() if math.isfinite(v)}
+    if len(finite) != len(parsed):
+        _warn(f"Ignoring non-finite learned weight(s) in {path}.")
+    return finite
 
 
 def parse_leagues(raw: str) -> list[LeagueProfile]:
