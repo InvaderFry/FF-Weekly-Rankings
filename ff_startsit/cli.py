@@ -70,7 +70,7 @@ def _build_parser() -> argparse.ArgumentParser:
     roster_parent.add_argument("--refresh", action="store_true",
                                help="ignore the cached roster and re-fetch it")
     roster_parent.add_argument("--offline", action="store_true",
-                               help="never fetch; fail if no fresh cached roster exists")
+                               help="never fetch; use the cached roster at any age")
 
     p_sync = sub.add_parser("sync", parents=[roster_parent], help="pull and cache your roster")
     p_sync.set_defaults(func=cmd_sync)
@@ -733,22 +733,30 @@ def _league_context(args, settings: Settings) -> tuple[Settings, LeagueProfile]:
     return settings, profile
 
 
-def _read_roster_cache(path: Path, ttl: float) -> Optional[list[Player]]:
-    """Cached roster if present and fresh, else None (a miss, never an error).
+def _read_roster_cache(path: Path) -> Optional[list[Player]]:
+    """The cached roster whatever its age, or None (a miss, never an error).
 
-    Rosters change every week on waivers and trades, so unlike the other caches
-    this one has to expire. A malformed file is treated as a miss rather than
-    crashing every command until the user finds and deletes it.
+    Age is ``_cache_is_fresh``'s job: the caller needs the contents even when
+    stale, to fall back on if a fetch fails. A malformed file is treated as a
+    miss rather than crashing every command until the user finds and deletes it.
     """
     if not path.exists():
-        return None
-    if ttl > 0 and (time.time() - path.stat().st_mtime) >= ttl:
         return None
     try:
         return [Player(**row) for row in json.loads(path.read_text())]
     except (ValueError, TypeError):
         print(f"warning: ignoring unreadable roster cache at {path}.", file=sys.stderr)
         return None
+
+
+def _cache_is_fresh(path: Path, ttl: float) -> bool:
+    """Whether the cache file is within its TTL. ``ttl <= 0`` disables expiry."""
+    if ttl <= 0:
+        return True
+    try:
+        return (time.time() - path.stat().st_mtime) < ttl
+    except OSError:
+        return False
 
 
 def _get_roster(args, settings: Settings,
@@ -771,17 +779,16 @@ def _get_roster(args, settings: Settings,
     if refresh and offline:
         raise RosterError("--refresh and --offline cannot be used together.")
 
-    stale = _read_roster_cache(path, ttl=0)   # whatever is on disk, at any age
+    cached = _read_roster_cache(path)   # whatever is on disk, at any age
     if not refresh:
-        fresh = _read_roster_cache(path, settings.roster_ttl)
-        if fresh is not None:
-            return fresh
+        if cached is not None and _cache_is_fresh(path, settings.roster_ttl):
+            return cached
         if offline:
             # --offline means "don't go to the network", not "insist on fresh".
-            if stale is not None:
+            if cached is not None:
                 print(f"warning: using a stale cached roster from {path} "
                       "(--offline).", file=sys.stderr)
-                return stale
+                return cached
             raise RosterError(
                 f"No cached roster at {path} and --offline was given. "
                 "Run `ffstartsit sync` (online) to populate it."
@@ -790,11 +797,11 @@ def _get_roster(args, settings: Settings,
     try:
         players = provider.get_roster_players()
     except (RosterError, SleeperError, requests.RequestException) as exc:
-        if stale is None:
+        if cached is None:
             raise
         print(f"warning: roster fetch failed ({exc}); falling back to the "
               f"cached roster at {path}.", file=sys.stderr)
-        return stale
+        return cached
     _save_roster(settings, provider, players)
     return players
 
