@@ -99,6 +99,23 @@ joins the pick to the same Sleeper outcomes, and reports top-pick hit-rate plus 
 flagging. It reuses `weighted_final`, the `OutcomeProvider` seam, and `load_decisions`;
 it never writes weights.
 
+### Game context (schedule)
+
+`sources/schedule.py:ScheduleProvider` resolves the week's fixtures once (keyless
+ESPN scoreboard) and is **shared** by every signal needing game context — it is
+not a `Signal`, has no blend weight, and is exempt from the "four places" rule.
+`venue_for` decides where a game is played: the feed's per-game `indoor` flag
+wins, then a known neutral-site venue by name, then the home team's stadium, then
+`None`. It returns `None` rather than guessing, because a wrong forecast presented
+as fact is worse than a missing signal — a missing one just re-weights the rest.
+
+`WeatherSignal` therefore scores *games*, not teams: both sides of a matchup share
+one forecast and one lookup, read at the actual kickoff hour (`timezone=UTC` end
+to end, so there is no local-time or DST arithmetic anywhere). With no schedule,
+no kickoff, an unknown venue, or a forecast that doesn't reach the game, it is
+unavailable. There is deliberately **no** fallback to "the windiest day in the
+horizon" — that invented risk from weather unrelated to the game.
+
 ### The lineup builder and the FLEX slot
 
 `report.score_week` does one scoring pass per roster: `rank_each_position` ranks

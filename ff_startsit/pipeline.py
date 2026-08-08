@@ -16,6 +16,7 @@ from .season import is_preseason
 from .sources.base import Signal
 from .sources.ecr import ECRSignal
 from .sources.injury import InjurySignal
+from .sources.schedule import ScheduleProvider
 from .sources.vegas import VegasSignal
 from .sources.weather import WeatherSignal
 
@@ -34,12 +35,15 @@ def build_signals(settings: Settings, season: Optional[int] = None,
     if preseason and settings.preseason_fill:
         from .sources.sample import build_sample_signals
         return build_sample_signals()
+    # One provider shared by every signal that needs game context, so the week's
+    # schedule is fetched once and both signals agree on who plays whom, where.
+    schedule = ScheduleProvider(season=season, cache_dir=settings.data_dir)
     return [
         ECRSignal(api_key=settings.fantasypros_api_key, scoring=settings.scoring,
                   season=season),
         VegasSignal(api_key=settings.odds_api_key),
         InjurySignal(data_dir=settings.data_dir, enabled=settings.injury_enabled),
-        WeatherSignal(enabled=settings.weather_enabled),
+        WeatherSignal(enabled=settings.weather_enabled, schedule=schedule),
     ]
 
 

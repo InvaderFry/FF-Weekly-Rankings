@@ -166,16 +166,18 @@ class ScheduleProvider:
             return self._weeks[week]
         try:
             blob = self._load(week)
-            games = parse_scoreboard(blob)
         except Exception as exc:  # network, JSON, anything — never fatal
             _warn(f"NFL schedule unavailable ({exc}); "
                   "signals that need it will be skipped this run.")
             games = []
-        if not games:
-            # Reaching the endpoint and parsing nothing is its own failure: it
-            # would silently disable weather for the whole run.
-            _warn(f"NFL schedule for week {week} returned no games; "
-                  "the endpoint may have changed shape.")
+        else:
+            games = parse_scoreboard(blob)
+            if not games:
+                # Reaching the endpoint and parsing nothing is a *different*
+                # failure from not reaching it, and a quieter one: it would
+                # silently disable weather with nothing in the output to say so.
+                _warn(f"NFL schedule for week {week} returned no games; "
+                      "the endpoint may have changed shape.")
         index = by_team(games)
         self._weeks[week] = index
         return index
