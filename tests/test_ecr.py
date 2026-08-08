@@ -137,3 +137,56 @@ def test_pooled_scrape_path_parses_flex_page():
     rows = parse_scrape_html(html)
     assert [r.position for r in rows][:3] == ["WR", "RB", "TE"]
     assert [r.value for r in rows][:3] == [1.0, 2.0, 3.0]
+
+
+def test_scrape_warns_when_the_requested_week_cannot_be_served(capsys, monkeypatch):
+    """The public page has no week selector, so a --week N scrape isn't week N.
+
+    Silently filing current-week rankings under a historical week is what makes
+    backtests dishonest -- they'd score today's consensus against past outcomes.
+    """
+    import ff_startsit.season as season_mod
+    monkeypatch.setattr(season_mod, "date_week", lambda *a, **k: 9)
+
+    html = (FIXTURES / "ecr_scrape_rb.html").read_text()
+
+    class _HtmlResp:
+        status_code = 200
+        text = html
+        def raise_for_status(self): pass
+
+    class _HtmlSession:
+        def get(self, url, **kw): return _HtmlResp()
+
+    sig = ECRSignal(api_key="", scoring="ppr", season=2025, session=_HtmlSession())
+    sig.fetch(3, [Player(key="1", name="Patrick Runner", team="KC", position="RB")])
+    err = capsys.readouterr().err
+    assert "not week-3 rankings" in err
+
+    # Current week scrapes are fine and stay quiet.
+    sig2 = ECRSignal(api_key="", scoring="ppr", season=2025, session=_HtmlSession())
+    sig2.fetch(9, [Player(key="1", name="Patrick Runner", team="KC", position="RB")])
+    assert "not week-9 rankings" not in capsys.readouterr().err
+
+
+def test_week_mismatch_warns_once_not_once_per_position(capsys, monkeypatch):
+    import ff_startsit.season as season_mod
+    monkeypatch.setattr(season_mod, "date_week", lambda *a, **k: 9)
+
+    html = (FIXTURES / "ecr_scrape_rb.html").read_text()
+
+    class _HtmlResp:
+        status_code = 200
+        text = html
+        def raise_for_status(self): pass
+
+    class _HtmlSession:
+        def get(self, url, **kw): return _HtmlResp()
+
+    sig = ECRSignal(api_key="", scoring="ppr", season=2025, session=_HtmlSession())
+    sig.fetch(3, [
+        Player(key="1", name="Patrick Runner", team="KC", position="RB"),
+        Player(key="2", name="Someone", team="KC", position="WR"),
+        Player(key="3", name="Another", team="KC", position="TE"),
+    ])
+    assert capsys.readouterr().err.count("not week-3 rankings") == 1

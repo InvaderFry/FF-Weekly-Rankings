@@ -149,6 +149,7 @@ class ECRSignal(Signal):
         self.pool_position = pool_position
         self.last_source: str = ""  # "api" or "scrape", for diagnostics
         self._rows_cache: dict[tuple[str, int], list[ExternalRow]] = {}
+        self._week_warned: set[int] = set()  # warn once per week, not per position
 
     def pooled(self, pool_position: str = FLEX_POOL) -> "ECRSignal":
         """A sibling instance that fetches one pooled cross-position ranking.
@@ -213,12 +214,41 @@ class ECRSignal(Signal):
         except requests.RequestException:
             return []  # offline / page unreachable -> signal simply has no data
         self.last_source = "scrape"
+        self._warn_if_week_mismatch(week)
         if not rows:
             # Reached the page but parsed nothing: the embedded ecrData blob is
             # gone or changed shape. Warn so a silently-broken scrape is visible.
             print(f"warning: FantasyPros scrape for {position} returned no "
                   "rankings — the page format may have changed.", file=sys.stderr)
         return rows
+
+    def _warn_if_week_mismatch(self, week: int) -> None:
+        """Say so when scraped rankings can't be the week that was asked for.
+
+        The public rankings page has no week selector — it always shows the
+        current week — while the API path does take a week. So without an API
+        key a ``--week 5`` request silently returns whatever week the page shows
+        now, filed in the cache under week 5 as though it were that week's data.
+        Backtests and calibration runs over historical weeks are the ones this
+        really misleads, since they would be scoring present-day consensus
+        against past outcomes.
+
+        Warned rather than refused: week detection can be off by one around the
+        Tuesday rollover, and failing the common path outright would be a worse
+        trade than a visible caveat. Set FANTASYPROS_API_KEY for genuinely
+        week-aware rankings.
+        """
+        from ..season import date_week
+
+        if week in self._week_warned:
+            return
+        self._week_warned.add(week)
+        current = date_week()
+        if week != current:
+            print(f"warning: FantasyPros rankings were scraped (no API key), and "
+                  f"the public page only shows the current week (~{current}). "
+                  f"Values reported for week {week} are not week-{week} rankings.",
+                  file=sys.stderr)
 
     def _fetch_api(self, position: str, week: int) -> list[ExternalRow]:
         return fetch_api_rows(self.session, self.api_key, self.season, self.scoring,
