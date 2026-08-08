@@ -84,6 +84,7 @@ def recommend(
         higher_is_better=higher_is_better,
         weights=settings.weights,
         close_call_threshold=settings.close_call_threshold,
+        min_disagree_weight=settings.min_disagree_weight,
     )
 
     if log:

@@ -20,7 +20,9 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
+import time
 from pathlib import Path
 from typing import Optional, Sequence
 
@@ -63,6 +65,10 @@ def _build_parser() -> argparse.ArgumentParser:
     roster_parent.add_argument("--team", default=None, help="override ESPN team id")
     roster_parent.add_argument("--league-name", dest="league_name", default=None,
                                help="select a configured league by name (see FF_LEAGUES)")
+    roster_parent.add_argument("--refresh", action="store_true",
+                               help="ignore the cached roster and re-fetch it")
+    roster_parent.add_argument("--offline", action="store_true",
+                               help="never fetch; fail if no fresh cached roster exists")
 
     p_sync = sub.add_parser("sync", parents=[roster_parent], help="pull and cache your roster")
     p_sync.set_defaults(func=cmd_sync)
@@ -715,17 +721,45 @@ def _league_context(args, settings: Settings) -> tuple[Settings, LeagueProfile]:
     return settings, profile
 
 
+def _read_roster_cache(path: Path, ttl: float) -> Optional[list[Player]]:
+    """Cached roster if present and fresh, else None (a miss, never an error).
+
+    Rosters change every week on waivers and trades, so unlike the other caches
+    this one has to expire. A malformed file is treated as a miss rather than
+    crashing every command until the user finds and deletes it.
+    """
+    if not path.exists():
+        return None
+    if ttl > 0 and (time.time() - path.stat().st_mtime) >= ttl:
+        return None
+    try:
+        return [Player(**row) for row in json.loads(path.read_text())]
+    except (ValueError, TypeError):
+        print(f"warning: ignoring unreadable roster cache at {path}.", file=sys.stderr)
+        return None
+
+
 def _get_roster(args, settings: Settings,
                 profile: Optional[LeagueProfile] = None) -> list[Player]:
-    """Load the roster from cache, fetching (and caching) on a miss."""
+    """Load the roster from cache, fetching (and caching) on a miss or expiry."""
     if profile is None:
         profile = resolve_league(settings, getattr(args, "league_name", None))
     provider = build_roster_provider(settings, args.source, args.league, args.team,
                                      profile=profile)
     path = _roster_path(settings, provider)
-    if path.exists():
-        data = json.loads(path.read_text())
-        return [Player(**row) for row in data]
+
+    if not getattr(args, "refresh", False):
+        cached = _read_roster_cache(path, settings.roster_ttl)
+        if cached is not None:
+            return cached
+        if getattr(args, "offline", False):
+            raise RosterError(
+                f"No fresh cached roster at {path} and --offline was given. "
+                "Run `ffstartsit sync` (online) to populate it."
+            )
+    elif getattr(args, "offline", False):
+        raise RosterError("--refresh and --offline cannot be used together.")
+
     players = provider.get_roster_players()
     _save_roster(settings, provider, players)
     return players
@@ -737,9 +771,12 @@ def _roster_path(settings: Settings, provider: RosterProvider) -> Path:
 
 def _save_roster(settings: Settings, provider: RosterProvider,
                  players: Sequence[Player]) -> Path:
+    """Write the roster cache atomically, so an interrupted run can't corrupt it."""
     path = _roster_path(settings, provider)
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps([p.__dict__ for p in players], indent=2))
+    tmp = path.with_name(path.name + ".tmp")
+    tmp.write_text(json.dumps([p.__dict__ for p in players], indent=2))
+    os.replace(tmp, path)
     return path
 
 

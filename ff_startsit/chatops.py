@@ -49,6 +49,12 @@ def _split_options(tokens: list[str]) -> tuple[list[str], list[str]]:
                 if value.lower() not in SOURCES:
                     return tokens, []  # invalid -> ignore options, let caller decide
                 value = value.lower()
+            elif tok == "week":
+                # argparse has --week as type=int and exits with SystemExit on a
+                # bad value, which is awkward to surface from the workflow — so
+                # reject it here, the same way `source` is validated.
+                if not value.isdigit():
+                    return tokens, []
             flags += [f"--{tok}", value]
             i += 2
         else:

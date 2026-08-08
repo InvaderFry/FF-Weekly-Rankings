@@ -20,9 +20,15 @@ from .sources.journalists import JournalistFetcher, JournalistView, parse_expert
 
 # A common 1QB/PPR-ish starting set used for the suggested lineup.
 LINEUP_SLOTS = ["QB", "RB", "RB", "WR", "WR", "TE", "FLEX", "K", "DEF"]
-FLEX_POSITIONS = {"RB", "WR", "TE"}
+# A tuple, not a set: this order is the FLEX tie-break, and set iteration order
+# for strings varies per process under hash randomization — which made the FLEX
+# pick differ between runs on identical data.
+FLEX_POSITIONS: tuple[str, ...] = ("RB", "WR", "TE")
 # Order positions appear in the digest.
 POSITION_ORDER = ["QB", "RB", "WR", "TE", "K", "DEF"]
+# Position precedence for FLEX tie-breaks. Arbitrary but fixed, and derived from
+# POSITION_ORDER so the file keeps one ordering convention rather than two.
+_FLEX_ORDER = {pos: i for i, pos in enumerate(FLEX_POSITIONS)}
 
 
 @dataclass
@@ -64,18 +70,34 @@ def scored(recs: dict[str, Recommendation]) -> dict[str, list[PlayerScore]]:
     return {pos: [s for s in rec.scores if s.final is not None] for pos, rec in recs.items()}
 
 
+def _slot_sort_key(s: PlayerScore) -> tuple:
+    """Total order over slot candidates, best first — stable across processes.
+
+    Ties on ``final`` are common (per-position normalization puts every
+    position's leader at 100), so the fallbacks matter: position order first,
+    then name and key to make it a strict total order even for identical scores.
+
+    Deliberately does *not* consult the ECR raw value. Ranks here are ranks
+    *within a position*, so "RB1" and "WR1" are both 1.0 — comparing them would
+    look principled while being meaningless.
+    """
+    return (-(s.final if s.final is not None else -1.0),
+            _FLEX_ORDER.get(s.player.position, len(FLEX_POSITIONS)),
+            s.player.name,
+            s.player.key)
+
+
 def _best_for_slot(slot: str, by_pos: dict[str, list[PlayerScore]],
                    used: set[str]) -> Optional[PlayerScore]:
-    positions = FLEX_POSITIONS if slot == "FLEX" else {slot}
-    best = None
+    positions = FLEX_POSITIONS if slot == "FLEX" else (slot,)
+    candidates = []
     for pos in positions:
         for s in by_pos.get(pos, []):
             if s.player.key in used:
                 continue
-            if best is None or (s.final or 0) > (best.final or 0):
-                best = s
+            candidates.append(s)
             break  # by_pos[pos] is sorted; first unused is best at that position
-    return best
+    return min(candidates, key=_slot_sort_key) if candidates else None
 
 
 def build_lineup(by_pos: dict[str, list[PlayerScore]]) -> list[tuple[str, Optional[PlayerScore]]]:

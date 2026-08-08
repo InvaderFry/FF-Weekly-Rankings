@@ -133,7 +133,9 @@ class SleeperProvider(RosterProvider):
         self.client = client or SleeperClient(data_dir)
 
     def cache_tag(self) -> str:
-        return f"sleeper_{self.league_id}" if self.league_id else "sleeper"
+        # Username is part of the identity: one league holds many teams, and the
+        # username is what selects which of them this roster is.
+        return "_".join(p for p in ("sleeper", self.league_id, self.username) if p)
 
     def get_roster_players(self) -> list[Player]:
         return self.client.get_roster_players(self.username, self.league_id)

@@ -31,7 +31,9 @@ def _settings(**kw):
 def test_factory_defaults_to_espn():
     provider = cli.build_roster_provider(_settings())
     assert isinstance(provider, ESPNProvider)
-    assert provider.cache_tag() == "espn_111"
+    # Season and team are part of the cache identity, so a stale-season cache
+    # and two teams in one league can no longer collide on one file.
+    assert provider.cache_tag() == "espn_2025_111_auto"
 
 
 def test_flag_source_overrides_env():
@@ -46,7 +48,7 @@ def test_sleeper_source_and_league_override():
     )
     assert isinstance(provider, SleeperProvider)
     assert provider.league_id == "555"          # --league wins over env
-    assert provider.cache_tag() == "sleeper_555"
+    assert provider.cache_tag() == "sleeper_555_me"
 
 
 def test_espn_team_override():
@@ -88,7 +90,7 @@ def test_build_provider_uses_selected_profile():
     provider = cli.build_roster_provider(_multi_settings(), profile=p)
     assert isinstance(provider, ESPNProvider)
     assert provider.league_id == "222" and provider.team_id == "7"
-    assert provider.cache_tag() == "espn_222"
+    assert provider.cache_tag() == "espn_2025_222_7"
 
 
 def test_explicit_flags_win_over_profile():

@@ -135,3 +135,30 @@ def test_render_multi_digest_section_per_league():
     assert "2 league(s)" in digest
     assert "## work — PPR" in digest and "## dynasty — HALF" in digest
     assert "AlphaWork" in digest and "BravoDyno" in digest
+
+
+def test_flex_tie_break_is_deterministic():
+    """FLEX_POSITIONS used to be a set, so ties broke differently per process.
+
+    Ties are the norm here, not the exception: per-position normalization puts
+    every position's leader at 100.
+    """
+    from ff_startsit.models import Player, PlayerScore
+    from ff_startsit.report import build_lineup
+
+    def _score(key, name, pos):
+        s = PlayerScore(player=Player(key=key, name=name, team="KC", position=pos))
+        s.final = 100.0                      # deliberate three-way tie
+        return s
+
+    # Enough depth that every flex-eligible position still has a leftover once
+    # RB/RB/WR/WR/TE are filled -- otherwise there is no tie to break.
+    by_pos = {
+        "RB": [_score(f"r{i}", f"Rb {i}", "RB") for i in range(1, 4)],
+        "WR": [_score(f"w{i}", f"Wr {i}", "WR") for i in range(1, 4)],
+        "TE": [_score(f"t{i}", f"Te {i}", "TE") for i in range(1, 3)],
+    }
+    picks = dict(build_lineup(by_pos))
+    # Leftovers are r3, w3 and t2, all tied at 100.0; the fixed RB -> WR -> TE
+    # precedence resolves it the same way on every run.
+    assert picks["FLEX"].player.key == "r3"

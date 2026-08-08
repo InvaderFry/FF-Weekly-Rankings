@@ -72,8 +72,14 @@ without touching the pure engine.
   hardcoded defaults < `learned_weights.json` (written by `calibrate --write`) <
   explicit `FF_WEIGHT_*` env. Don't read weights from anywhere else.
 - **Close-call flagging is the product**, not decoration. `blend._flag_close_call`
-  flags when the top two finals are within `close_call_threshold` OR when any
-  signal ranks the runner-up above the leader. Preserve both conditions.
+  flags when the top two finals are within `close_call_threshold` OR when a
+  signal ranks the runner-up above the leader. Preserve both conditions. The
+  disagreement condition is deliberately *qualified*, not unconditional: the
+  signal must carry at least `min_disagree_weight` (`FF_MIN_DISAGREE_WEIGHT`,
+  default 0.15) of total blend weight, and the normalized gap must be at least
+  `close_call_threshold`. Without those floors a 0.10-weight — or 0-weight —
+  signal flips the flag as readily as ECR, and a flag that fires on everything
+  is not a warning.
 
 ### The self-calibration loop (#7)
 

@@ -64,8 +64,16 @@ class Settings:
         default_factory=lambda: {"ecr": 0.60, "vegas": 0.18, "injury": 0.12,
                                  "weather": 0.10})
     close_call_threshold: float = 5.0
+    # Minimum share of total blend weight a signal must carry before its
+    # disagreement can flag a close call. Keeps the flag meaningful: a 10%-weight
+    # signal flipping the top two is not evidence the pick is a coin-flip.
+    min_disagree_weight: float = 0.15
     injury_enabled: bool = True
     weather_enabled: bool = True
+    # Seconds a cached roster stays usable before it is re-fetched. Rosters turn
+    # over weekly on waivers and trades, so this cache — unlike the others — has
+    # to expire. 0 disables expiry.
+    roster_ttl: float = 12 * 3600
     # Preferred journalists (display-only view): "id:Name,id:Name" FantasyPros
     # expert ids. Empty/0/off disables the section. Never part of the blend
     # weights — this is a side-by-side view, not a signal.
@@ -299,6 +307,16 @@ def load_settings(env_file: str | os.PathLike | None = None) -> Settings:
         _warn("FF_CLOSE_CALL_THRESHOLD is negative; using 5.0 instead.")
         threshold = 5.0
 
+    min_disagree = _f("FF_MIN_DISAGREE_WEIGHT", 0.15)
+    if not 0.0 <= min_disagree <= 1.0:
+        _warn("FF_MIN_DISAGREE_WEIGHT must be a weight share in [0, 1]; using 0.15.")
+        min_disagree = 0.15
+
+    roster_ttl = _f("FF_ROSTER_TTL", 12 * 3600)
+    if roster_ttl < 0:
+        _warn("FF_ROSTER_TTL is negative; using 43200 (12h) instead.")
+        roster_ttl = 12 * 3600
+
     espn_league_id = os.getenv("ESPN_LEAGUE_ID", "").strip()
     espn_team_id = os.getenv("ESPN_TEAM_ID", "").strip()
     sleeper_league_id = os.getenv("SLEEPER_LEAGUE_ID", "").strip()
@@ -330,9 +348,11 @@ def load_settings(env_file: str | os.PathLike | None = None) -> Settings:
         scoring=scoring,
         weights=weights,
         close_call_threshold=threshold,
+        min_disagree_weight=min_disagree,
         preferred_experts=os.getenv("FF_PREFERRED_EXPERTS", "").strip(),
         injury_enabled=_b("FF_INJURY", True),
         weather_enabled=_b("FF_WEATHER", True),
+        roster_ttl=roster_ttl,
         preseason_fill=_b("FF_PRESEASON_FILL", True),
         discord_webhook_url=os.getenv("DISCORD_WEBHOOK_URL", "").strip(),
         dashboard_url=os.getenv("FF_DASHBOARD_URL", "").strip(),
