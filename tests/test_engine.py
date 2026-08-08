@@ -142,3 +142,23 @@ def test_heavyweight_disagreement_still_flags():
     )
     assert rec.close_call is True
     assert any("disagree" in n.lower() for n in rec.notes)
+
+
+def test_exact_tie_is_not_a_disagreement_at_zero_threshold():
+    """A signal that scores the top two identically does not favor either.
+
+    With FF_CLOSE_CALL_THRESHOLD=0 a bare `b - a < threshold` guard lets ties
+    through, reporting "signals disagree" about a signal that is indifferent.
+    """
+    players = _players()
+    signal_values = {
+        "ecr": {"1": SignalValue(1.0), "2": SignalValue(8.0)},        # Alpha ahead
+        "vegas": {"1": SignalValue(20.0), "2": SignalValue(20.0)},    # dead level
+    }
+    rec = blend(
+        week=3, scoring="ppr", players=players, signal_values=signal_values,
+        higher_is_better={"ecr": False, "vegas": True},
+        weights={"ecr": 0.5, "vegas": 0.5},
+        close_call_threshold=0.0, min_disagree_weight=0.0,
+    )
+    assert not any("disagree" in n.lower() for n in rec.notes)

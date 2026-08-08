@@ -249,3 +249,26 @@ def test_lineup_is_sequence_shaped_for_existing_renderers():
     assert len(lineup) == len(report.LINEUP_SLOTS)
     assert lineup[0][0] == "QB"
     assert [slot for slot, _ in lineup] == report.LINEUP_SLOTS
+
+
+def test_digest_and_lineup_agree_on_flex(monkeypatch):
+    """One run must not report two different FLEX picks.
+
+    render_digest rebuilds a positional lineup when it isn't handed one, so a
+    caller that computed a pooled lineup and forgot to pass it emitted the
+    pooled pick to the dashboard and a different, positionally-chosen pick to
+    the markdown digest -- with a "FLEX ranking was unavailable" caveat that was
+    not true of that run.
+    """
+    recs = {
+        "RB": _rec(_fp("rb1", 100.0), _fp("rb2", 50.0), _fp("rb3", 0.0)),
+        "WR": _rec(_fp("wr1", 100.0), _fp("wr2", 50.0), _fp("wr3", 0.0)),
+    }
+    pool = _pool(["wr1", "rb1", "wr2", "rb2", "wr3", "rb3"])   # leftover WR wins
+    ws = report.WeekScores(recs=recs, flex=_rec(*pool), flex_note=None)
+    lineup = report.lineup_from(ws)
+    assert dict(lineup)["FLEX"].player.key == "wr3"
+
+    digest = report.render_digest(3, "ppr", ws.recs, lineup=lineup)
+    assert "Third Wideout" in digest              # the pooled pick
+    assert "standard-template" not in digest      # and no false caveat

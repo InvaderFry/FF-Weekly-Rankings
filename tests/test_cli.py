@@ -1,9 +1,11 @@
+import os
 from pathlib import Path
 
 import pytest
 
 from ff_startsit import cli
 from ff_startsit.config import LeagueProfile, Settings
+from ff_startsit.models import Player
 from ff_startsit.roster.base import RosterError
 from ff_startsit.roster.espn import ESPNProvider
 from ff_startsit.roster.manual import ManualProvider
@@ -367,3 +369,93 @@ def test_publish_all_leagues_skips_a_failing_league(tmp_path, monkeypatch):
     assert rc == 0                       # the healthy league still publishes
     digest = report_path.read_text()
     assert "## work — PPR" in digest and "dynasty" not in digest
+
+
+# --- roster cache freshness ---------------------------------------------
+
+class _StubProvider:
+    """A roster provider that can be made to fail on demand."""
+
+    name = "manual"
+
+    def __init__(self, players, fail=False):
+        self._players = players
+        self.fail = fail
+        self.fetches = 0
+
+    def cache_tag(self):
+        return "stub"
+
+    def get_roster_players(self):
+        self.fetches += 1
+        if self.fail:
+            raise RosterError("ESPN cookies expired")
+        return self._players
+
+
+def _stub_args(**kw):
+    import argparse
+    base = dict(source=None, league=None, team=None, league_name=None,
+                refresh=False, offline=False)
+    base.update(kw)
+    return argparse.Namespace(**base)
+
+
+def _with_stub(monkeypatch, provider):
+    monkeypatch.setattr(cli, "build_roster_provider",
+                        lambda *a, **kw: provider)
+
+
+def test_stale_roster_is_used_when_the_fetch_fails(tmp_path, monkeypatch, capsys):
+    """A stale cache beats no lineup at all.
+
+    The TTL decides when to prefer a fetch, not when to fail -- expired cookies
+    shouldn't turn every command into an error when last night's roster is
+    sitting on disk.
+    """
+    players = [Player(key="1", name="Alpha", team="KC", position="RB")]
+    settings = _settings(data_dir=tmp_path, roster_ttl=3600)
+
+    ok = _StubProvider(players)
+    _with_stub(monkeypatch, ok)
+    cli._get_roster(_stub_args(), settings)          # populate the cache
+    path = cli._roster_path(settings, ok)
+    os.utime(path, (0, 0))                            # make it ancient
+
+    broken = _StubProvider(players, fail=True)
+    _with_stub(monkeypatch, broken)
+    got = cli._get_roster(_stub_args(), settings)
+    assert [p.key for p in got] == ["1"]
+    assert broken.fetches == 1                        # it did try
+    assert "falling back to the cached roster" in capsys.readouterr().err
+
+
+def test_fetch_failure_without_any_cache_still_raises(tmp_path, monkeypatch):
+    settings = _settings(data_dir=tmp_path, roster_ttl=3600)
+    _with_stub(monkeypatch, _StubProvider([], fail=True))
+    with pytest.raises(RosterError):
+        cli._get_roster(_stub_args(), settings)
+
+
+def test_offline_accepts_a_stale_cache(tmp_path, monkeypatch, capsys):
+    """--offline means 'do not go to the network', not 'insist on fresh'."""
+    players = [Player(key="1", name="Alpha", team="KC", position="RB")]
+    settings = _settings(data_dir=tmp_path, roster_ttl=3600)
+
+    provider = _StubProvider(players)
+    _with_stub(monkeypatch, provider)
+    cli._get_roster(_stub_args(), settings)
+    os.utime(cli._roster_path(settings, provider), (0, 0))
+
+    before = provider.fetches
+    got = cli._get_roster(_stub_args(offline=True), settings)
+    assert [p.key for p in got] == ["1"]
+    assert provider.fetches == before                 # never went to the network
+    assert "stale cached roster" in capsys.readouterr().err
+
+
+def test_refresh_and_offline_together_is_an_error(tmp_path, monkeypatch):
+    settings = _settings(data_dir=tmp_path)
+    _with_stub(monkeypatch, _StubProvider([]))
+    with pytest.raises(RosterError):
+        cli._get_roster(_stub_args(refresh=True, offline=True), settings)

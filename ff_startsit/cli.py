@@ -26,6 +26,8 @@ import time
 from pathlib import Path
 from typing import Optional, Sequence
 
+import requests
+
 from . import report, season
 from .config import LeagueProfile, Settings, load_settings
 from .data.matching import normalize_name
@@ -365,7 +367,8 @@ def cmd_publish(args, settings: Settings) -> int:
     journalists = report.build_journalist_view(settings, players, week)
 
     digest = report.render_digest(week, settings.scoring, recs, banner=banner,
-                                  journalists=journalists, label=label)
+                                  journalists=journalists, label=label,
+                                  lineup=lineup)
     print(digest)
     if args.report:
         args.report.parent.mkdir(parents=True, exist_ok=True)
@@ -750,26 +753,48 @@ def _read_roster_cache(path: Path, ttl: float) -> Optional[list[Player]]:
 
 def _get_roster(args, settings: Settings,
                 profile: Optional[LeagueProfile] = None) -> list[Player]:
-    """Load the roster from cache, fetching (and caching) on a miss or expiry."""
+    """Load the roster from cache, fetching (and caching) on a miss or expiry.
+
+    The TTL decides when to *prefer* a fetch, never when to fail. A stale cache
+    still beats no lineup at all, so an expired entry is kept as a fallback and
+    used (with a warning) if the fetch fails — expired ESPN cookies or a flaky
+    connection shouldn't turn every command into an error when last night's
+    roster is sitting on disk.
+    """
     if profile is None:
         profile = resolve_league(settings, getattr(args, "league_name", None))
     provider = build_roster_provider(settings, args.source, args.league, args.team,
                                      profile=profile)
     path = _roster_path(settings, provider)
-
-    if not getattr(args, "refresh", False):
-        cached = _read_roster_cache(path, settings.roster_ttl)
-        if cached is not None:
-            return cached
-        if getattr(args, "offline", False):
-            raise RosterError(
-                f"No fresh cached roster at {path} and --offline was given. "
-                "Run `ffstartsit sync` (online) to populate it."
-            )
-    elif getattr(args, "offline", False):
+    refresh = getattr(args, "refresh", False)
+    offline = getattr(args, "offline", False)
+    if refresh and offline:
         raise RosterError("--refresh and --offline cannot be used together.")
 
-    players = provider.get_roster_players()
+    stale = _read_roster_cache(path, ttl=0)   # whatever is on disk, at any age
+    if not refresh:
+        fresh = _read_roster_cache(path, settings.roster_ttl)
+        if fresh is not None:
+            return fresh
+        if offline:
+            # --offline means "don't go to the network", not "insist on fresh".
+            if stale is not None:
+                print(f"warning: using a stale cached roster from {path} "
+                      "(--offline).", file=sys.stderr)
+                return stale
+            raise RosterError(
+                f"No cached roster at {path} and --offline was given. "
+                "Run `ffstartsit sync` (online) to populate it."
+            )
+
+    try:
+        players = provider.get_roster_players()
+    except (RosterError, SleeperError, requests.RequestException) as exc:
+        if stale is None:
+            raise
+        print(f"warning: roster fetch failed ({exc}); falling back to the "
+              f"cached roster at {path}.", file=sys.stderr)
+        return stale
     _save_roster(settings, provider, players)
     return players
 

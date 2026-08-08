@@ -8,9 +8,8 @@ so the blender falls back to ECR alone for them.
 The endpoint takes no week parameter — it returns every upcoming game — so once
 next week's lines are posted a team appears twice and the wrong week's number can
 win. Games are therefore filtered against the schedule layer before the implied
-totals are flattened. Without a schedule it falls back to the kickoff window, and
-failing that to first-occurrence-wins, which given the API's kickoff ordering
-still means the sooner game.
+totals are flattened. Without a schedule it falls back to first-occurrence-wins,
+which given the API's kickoff ordering still means the sooner game.
 
 Parsing is separated from HTTP so it can be tested against a saved API fixture.
 """
@@ -68,8 +67,8 @@ def parse_odds_response(events: list[dict]) -> list[Game]:
     return games
 
 
-def games_for_week(games: Iterable[Game], week_games: Mapping[str, GameContext],
-                   window: Optional[tuple[datetime, datetime]] = None) -> list[Game]:
+def games_for_week(games: Iterable[Game],
+                   week_games: Mapping[str, GameContext]) -> list[Game]:
     """Keep only the games belonging to the requested week (pure).
 
     The odds endpoint returns every upcoming game with no week parameter, so
@@ -77,18 +76,17 @@ def games_for_week(games: Iterable[Game], week_games: Mapping[str, GameContext],
     (home, away) pair against the week's schedule is exact and doesn't depend on
     the book having supplied a ``commence_time``.
 
-    ``window`` is the fallback when there is no schedule: keep games whose
-    kickoff falls inside the week. Games with no kickoff at all are kept, since
-    dropping them would lose data we have no evidence against.
+    With no schedule the games are returned unfiltered, and
+    ``implied_totals_by_team``'s first-occurrence-wins is what keeps the sooner
+    game. There is deliberately no kickoff-window fallback in between: the only
+    source of a window is the same schedule lookup, so it is empty in exactly
+    the case it would be needed.
     """
-    if week_games:
-        return [g for g in games
-                if (ctx := week_games.get(g.home_team)) is not None
-                and ctx.home_team == g.home_team and ctx.away_team == g.away_team]
-    if window is not None:
-        start, end = window
-        return [g for g in games if g.kickoff is None or start <= g.kickoff <= end]
-    return list(games)
+    if not week_games:
+        return list(games)
+    return [g for g in games
+            if (ctx := week_games.get(g.home_team)) is not None
+            and ctx.home_team == g.home_team and ctx.away_team == g.away_team]
 
 
 def implied_totals_by_team(games: Iterable[Game]) -> dict[str, float]:
@@ -134,7 +132,6 @@ class VegasSignal(Signal):
         games = games_for_week(
             self._fetch_games(),
             self.schedule.for_week(week) if self.schedule else {},
-            self.schedule.kickoff_window(week) if self.schedule else None,
         )
         totals = implied_totals_by_team(games)
         return self.assign(players, totals)

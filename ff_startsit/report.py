@@ -280,11 +280,12 @@ def build_journalist_view(settings: Settings, players: Sequence[Player],
 def build_digest(settings: Settings, players: Sequence[Player], week: int,
                  label: str = "") -> str:
     """Assemble the full whole-roster markdown digest (one scoring pass)."""
-    recs = rank_each_position(settings, players, week)
-    return render_digest(week, settings.scoring, recs,
+    ws = score_week(settings, players, week)
+    return render_digest(week, settings.scoring, ws.recs,
                          banner=preseason_banner(settings),
                          journalists=build_journalist_view(settings, players, week),
-                         label=label)
+                         label=label,
+                         lineup=lineup_from(ws))
 
 
 def _digest_body(recs: dict[str, Recommendation],

@@ -167,3 +167,39 @@ def test_kickoff_window_spans_the_week():
 def test_kickoff_parsing_is_lenient(raw, expected):
     from ff_startsit.sources.schedule import parse_kickoff
     assert parse_kickoff(raw) == expected
+
+
+def test_domestic_country_field_does_not_mean_neutral_site():
+    """A venue record stamped "USA" must stay an ordinary home game.
+
+    Treating any populated country as neutral would send every outdoor game
+    down the unknown-venue path and switch weather off league-wide.
+    """
+    from ff_startsit.data.stadiums import STADIUMS
+
+    blob = {"events": [{"date": "2025-10-05T17:00Z", "competitions": [{
+        "date": "2025-10-05T17:00Z",
+        "venue": {"id": "3839", "fullName": "Highmark Stadium",
+                  "address": {"city": "Orchard Park", "state": "NY",
+                              "country": "USA"},
+                  "indoor": False},
+        "competitors": [
+            {"homeAway": "home", "team": {"abbreviation": "BUF"}},
+            {"homeAway": "away", "team": {"abbreviation": "NE"}}]}]}]}
+    game = parse_scoreboard(blob)[0]
+    assert game.neutral_site is False
+    assert venue_for(game) == STADIUMS["BUF"]
+
+
+def test_foreign_country_still_marks_neutral_site():
+    blob = {"events": [{"date": "2025-10-05T13:30Z", "competitions": [{
+        "date": "2025-10-05T13:30Z",
+        "venue": {"fullName": "Tottenham Hotspur Stadium",
+                  "address": {"city": "London", "country": "England"},
+                  "indoor": False},
+        "competitors": [
+            {"homeAway": "home", "team": {"abbreviation": "JAC"}},
+            {"homeAway": "away", "team": {"abbreviation": "MIN"}}]}]}]}
+    game = parse_scoreboard(blob)[0]
+    assert game.neutral_site is True
+    assert venue_for(game).lat > 51.0

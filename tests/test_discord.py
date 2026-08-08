@@ -91,3 +91,22 @@ def test_send_discord_posts_json_payload():
     assert sent["url"] == "https://discord.test/webhook"
     assert sent["json"] == payload
     assert sent["raised"] is True
+
+
+def test_embed_surfaces_the_lineup_caveat():
+    """How the FLEX pick was decided has to reach Discord readers too.
+
+    Otherwise they see an incomparable FLEX score, or a template fallback, with
+    nothing saying so -- while every other renderer shows the caveat.
+    """
+    from ff_startsit.report import build_lineup
+
+    by_pos = {
+        "RB": [_ps("rb1", "RB One", "RB", 90), _ps("rb2", "RB Two", "RB", 40)],
+        "WR": [_ps("wr1", "WR One", "WR", 80), _ps("wr2", "WR Two", "WR", 30)],
+        "TE": [_ps("te1", "TE One", "TE", 70), _ps("te2", "TE Two", "TE", 20)],
+    }
+    lineup = build_lineup(by_pos)                       # positional fallback
+    assert lineup.caveat
+    payload = build_discord_payload(3, "ppr", lineup, {}, None)
+    assert "standard-template" in payload["embeds"][0]["description"]

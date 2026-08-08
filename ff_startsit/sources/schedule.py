@@ -43,6 +43,10 @@ SEASON_TYPE_REGULAR = 2
 #: short enough to notice a change and long enough to stay off the wire.
 SCHEDULE_CACHE_TTL = 6 * 3600
 
+#: Country values that mean "an ordinary home game", including absent. Anything
+#: else is played abroad and needs a neutral-site venue lookup.
+_DOMESTIC = {"", "USA", "US", "UNITED STATES", "UNITED STATES OF AMERICA"}
+
 
 def parse_kickoff(raw: Optional[str]) -> Optional[datetime]:
     """ESPN's Zulu timestamp -> aware UTC datetime, or None if unusable.
@@ -91,7 +95,12 @@ def parse_scoreboard(blob: dict) -> list[GameContext]:
         venue = comp.get("venue") or {}
         address = venue.get("address") or {}
         # A game outside the US is neutral-site even when ESPN doesn't say so.
-        neutral = bool(comp.get("neutralSite")) or bool(address.get("country"))
+        # Tested against a domestic allow-list rather than "has a country field
+        # at all": if the feed started stamping "USA" on every venue, treating
+        # that as neutral would send every outdoor game down the unknown-venue
+        # path and silently switch weather off league-wide.
+        country = str(address.get("country") or "").strip().upper()
+        neutral = bool(comp.get("neutralSite")) or country not in _DOMESTIC
 
         out.append(GameContext(
             home_team=home,

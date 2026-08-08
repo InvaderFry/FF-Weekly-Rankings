@@ -245,8 +245,11 @@ class ECRSignal(Signal):
         self._week_warned.add(week)
         current = date_week()
         if week != current:
-            print(f"warning: FantasyPros rankings were scraped (no API key), and "
-                  f"the public page only shows the current week (~{current}). "
+            # The scrape path is also reached when a key is set but the API call
+            # fails, so don't assert a cause the caller may not have.
+            why = "no API key" if not self.api_key else "API unavailable"
+            print(f"warning: FantasyPros rankings were scraped ({why}), and the "
+                  f"public page only shows the current week (~{current}). "
                   f"Values reported for week {week} are not week-{week} rankings.",
                   file=sys.stderr)
 

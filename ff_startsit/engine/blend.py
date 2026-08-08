@@ -116,8 +116,12 @@ def _flag_close_call(rec: Recommendation, normalized: Mapping[str, Mapping[str, 
         b = norms.get(second.player.key)
         if a is None or b is None:
             continue
-        if b - a < threshold:
-            continue  # runner-up isn't ahead, or not by enough to mean anything
+        # The runner-up must be strictly ahead *and* ahead by enough to mean
+        # something. Both halves matter: `b - a < threshold` alone lets an exact
+        # tie through when the threshold is 0, reporting a signal that scored the
+        # two identically as "favoring" the runner-up.
+        if b <= a or b - a < threshold:
+            continue
         share = (rec.weights.get(sig_name, 0.0) / total_weight) if total_weight > 0 else 0.0
         if share < min_disagree_weight:
             continue  # too lightly weighted to have plausibly changed the pick

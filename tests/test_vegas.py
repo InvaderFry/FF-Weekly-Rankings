@@ -117,24 +117,17 @@ def test_games_for_week_drops_a_later_weeks_line():
     assert "DEN" not in totals                    # next week's opponent absent
 
 
-def test_games_for_week_falls_back_to_the_kickoff_window():
-    """With no schedule, the week's time window still excludes a later game."""
+def test_games_for_week_without_a_schedule_keeps_everything():
+    """No schedule -> no filtering; the ordering guard is all that is left.
+
+    There is deliberately no kickoff-window middle tier: the only source of a
+    window is the same schedule lookup, so it would be empty in exactly the
+    case it was meant to cover.
+    """
     from ff_startsit.sources.vegas import games_for_week
 
     games = parse_odds_response(_multiweek())
-    window = (datetime(2025, 10, 2, tzinfo=timezone.utc),
-              datetime(2025, 10, 7, tzinfo=timezone.utc))
-    kept = games_for_week(games, {}, window)
-    assert len(kept) == 2
-    assert all(g.away_team != "DEN" for g in kept)
-
-
-def test_games_for_week_without_context_keeps_everything():
-    """No schedule and no window -> the setdefault ordering guard is all we have."""
-    from ff_startsit.sources.vegas import games_for_week
-
-    games = parse_odds_response(_multiweek())
-    assert len(games_for_week(games, {}, None)) == 3
+    assert len(games_for_week(games, {})) == 3
     # First-occurrence-wins still keeps the sooner KC game.
     assert implied_totals_by_team(games)["KC"] == 25.5
 
