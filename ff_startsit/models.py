@@ -8,6 +8,7 @@ future #7 optimizer to consume.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from datetime import datetime
 from typing import Optional
 
 
@@ -44,6 +45,37 @@ class Game:
         else:
             return None
         return self.total / 2.0 - spread / 2.0
+
+
+@dataclass(frozen=True)
+class GameContext:
+    """One scheduled game: who, where, when, and under what roof.
+
+    The shared answer to "what is this player's game?", so weather forecasts the
+    venue the game is actually played at rather than the player's own home
+    stadium, and Vegas can tell one week's line from another.
+    """
+
+    home_team: str           # standardized abbreviation
+    away_team: str
+    kickoff: Optional[datetime] = None   # timezone-aware UTC
+    venue_id: str = ""
+    venue_name: str = ""
+    indoor: bool = False                 # the feed's per-game roof flag
+    neutral_site: bool = False
+
+    def opponent(self, team: str) -> Optional[str]:
+        if team == self.home_team:
+            return self.away_team
+        if team == self.away_team:
+            return self.home_team
+        return None
+
+    def is_home(self, team: str) -> bool:
+        return team == self.home_team
+
+    def has(self, team: str) -> bool:
+        return team in (self.home_team, self.away_team)
 
 
 @dataclass(frozen=True)

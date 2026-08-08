@@ -13,6 +13,7 @@ forecast. Home team is the lookup; a player's game is at their team's stadium.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Optional
 
 
 @dataclass(frozen=True)
@@ -58,3 +59,31 @@ STADIUMS: dict[str, Stadium] = {
     "TEN": Stadium(36.1665, -86.7713, dome=False),
     "WAS": Stadium(38.9077, -76.8645, dome=False),   # Northwest Stadium (Landover)
 }
+
+
+def _venue_key(name: str) -> str:
+    """Normalize a venue name for lookup: lowercase alphanumerics only."""
+    return "".join(ch for ch in (name or "").lower() if ch.isalnum())
+
+
+# Neutral-site venues, keyed by normalized name. The league plays a handful of
+# games a year away from both teams' stadiums — and they are precisely the games
+# where the home team's coordinates are most wrong (a London kickoff forecast in
+# Jacksonville). Anything not listed resolves to None so the weather signal marks
+# itself unavailable instead of inventing conditions.
+NEUTRAL_VENUES: dict[str, Stadium] = {
+    _venue_key("Tottenham Hotspur Stadium"): Stadium(51.6043, -0.0665, dome=False),
+    _venue_key("Wembley Stadium"): Stadium(51.5560, -0.2795, dome=False),
+    _venue_key("Allianz Arena"): Stadium(48.2188, 11.6247, dome=False),
+    _venue_key("Deutsche Bank Park"): Stadium(50.0686, 8.6455, dome=False),
+    _venue_key("Estadio Azteca"): Stadium(19.3029, -99.1505, dome=False),
+    _venue_key("Croke Park"): Stadium(53.3607, -6.2512, dome=False),
+    _venue_key("Arena Corinthians"): Stadium(-23.5453, -46.4742, dome=False),
+    _venue_key("Neo Quimica Arena"): Stadium(-23.5453, -46.4742, dome=False),
+    _venue_key("Santiago Bernabeu Stadium"): Stadium(40.4531, -3.6883, dome=False),
+}
+
+
+def neutral_venue(name: str) -> Optional[Stadium]:
+    """Coordinates for a known neutral-site venue, or None if we don't know it."""
+    return NEUTRAL_VENUES.get(_venue_key(name))
