@@ -21,6 +21,13 @@ permissions:
   pages: write          # publish the dashboard to GitHub Pages
   id-token: write       # required by actions/deploy-pages
 
+# A manual run overlapping a scheduled one would race the Pages deployment and
+# could file duplicate issues. GitHub's Pages guidance calls for this group; not
+# cancelling in progress so a half-finished deploy is never left published.
+concurrency:
+  group: weekly-report-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
   report:
     runs-on: ubuntu-latest

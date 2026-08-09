@@ -20,9 +20,13 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
+import time
 from pathlib import Path
 from typing import Optional, Sequence
+
+import requests
 
 from . import report, season
 from .config import LeagueProfile, Settings, load_settings
@@ -63,6 +67,10 @@ def _build_parser() -> argparse.ArgumentParser:
     roster_parent.add_argument("--team", default=None, help="override ESPN team id")
     roster_parent.add_argument("--league-name", dest="league_name", default=None,
                                help="select a configured league by name (see FF_LEAGUES)")
+    roster_parent.add_argument("--refresh", action="store_true",
+                               help="ignore the cached roster and re-fetch it")
+    roster_parent.add_argument("--offline", action="store_true",
+                               help="never fetch; use the cached roster at any age")
 
     p_sync = sub.add_parser("sync", parents=[roster_parent], help="pull and cache your roster")
     p_sync.set_defaults(func=cmd_sync)
@@ -211,8 +219,9 @@ def cmd_lineup(args, settings: Settings) -> int:
     week = _resolve_week(args, settings)
     _print_preseason_banner(settings, md=args.md)
 
-    recs = report.rank_each_position(settings, players, week)
-    lineup = report.build_lineup(report.scored(recs))
+    ws = report.score_week(settings, players, week)
+    recs = ws.recs
+    lineup = report.lineup_from(ws)
 
     label = _league_label(profile)
     suffix = f" · {label}" if label else ""
@@ -225,6 +234,8 @@ def cmd_lineup(args, settings: Settings) -> int:
             else:
                 lines.append(f"| {slot} | {pick.player.name} | {pick.player.team or 'BYE'} "
                              f"| {pick.final:.1f} |")
+        if lineup.caveat:
+            lines += ["", f"> ⚠️ {lineup.caveat}"]
         print("\n".join(lines))
         return 0
 
@@ -234,6 +245,8 @@ def cmd_lineup(args, settings: Settings) -> int:
             print(f"  {slot:5} (no option)")
         else:
             print(f"  {slot:5} {pick.player.name:24} {pick.player.team or 'BYE':4} {pick.final:.1f}")
+    if lineup.caveat:
+        print(f"\n  ⚠️ {lineup.caveat}")
     return 0
 
 
@@ -289,8 +302,9 @@ def cmd_dashboard(args, settings: Settings) -> int:
     settings, profile = _league_context(args, settings)
     players = _get_roster(args, settings, profile)
     week = _resolve_week(args, settings)
-    recs = report.rank_each_position(settings, players, week)
-    lineup = report.build_lineup(report.scored(recs))
+    ws = report.score_week(settings, players, week)
+    recs = ws.recs
+    lineup = report.lineup_from(ws)
     html = build_dashboard_html(week, settings.scoring, lineup, recs,
                                 generated_on=date.today().isoformat(),
                                 banner=season.preseason_banner(settings),
@@ -313,8 +327,9 @@ def cmd_notify(args, settings: Settings) -> int:
     settings, profile = _league_context(args, settings)
     players = _get_roster(args, settings, profile)
     week = _resolve_week(args, settings)
-    recs = report.rank_each_position(settings, players, week)
-    lineup = report.build_lineup(report.scored(recs))
+    ws = report.score_week(settings, players, week)
+    recs = ws.recs
+    lineup = report.lineup_from(ws)
     dashboard_url = args.url or settings.dashboard_url or None
     payload = build_discord_payload(week, settings.scoring, lineup, recs, dashboard_url,
                                     banner=season.preseason_banner(settings),
@@ -345,13 +360,15 @@ def cmd_publish(args, settings: Settings) -> int:
         print(f"warning: {banner}", file=sys.stderr)
 
     # The single scoring pass shared by every output.
-    recs = report.rank_each_position(settings, players, week)
-    lineup = report.build_lineup(report.scored(recs))
+    ws = report.score_week(settings, players, week)
+    recs = ws.recs
+    lineup = report.lineup_from(ws)
     # One journalist pass too, shared by digest and dashboard (display-only).
     journalists = report.build_journalist_view(settings, players, week)
 
     digest = report.render_digest(week, settings.scoring, recs, banner=banner,
-                                  journalists=journalists, label=label)
+                                  journalists=journalists, label=label,
+                                  lineup=lineup)
     print(digest)
     if args.report:
         args.report.parent.mkdir(parents=True, exist_ok=True)
@@ -402,8 +419,9 @@ def _league_bundles(args, settings: Settings, week: int) -> list:
             lsettings = replace(settings, scoring=profile.scoring)
         try:
             players = _get_roster(args, lsettings, profile)
-            recs = report.rank_each_position(lsettings, players, week)
-            lineup = report.build_lineup(report.scored(recs))
+            ws = report.score_week(lsettings, players, week)
+            recs = ws.recs
+            lineup = report.lineup_from(ws)
             journalists = report.build_journalist_view(lsettings, players, week)
         except (RosterError, SleeperError) as exc:
             print(f"warning: skipping league {profile.name!r}: {exc}", file=sys.stderr)
@@ -715,18 +733,75 @@ def _league_context(args, settings: Settings) -> tuple[Settings, LeagueProfile]:
     return settings, profile
 
 
+def _read_roster_cache(path: Path) -> Optional[list[Player]]:
+    """The cached roster whatever its age, or None (a miss, never an error).
+
+    Age is ``_cache_is_fresh``'s job: the caller needs the contents even when
+    stale, to fall back on if a fetch fails. A malformed file is treated as a
+    miss rather than crashing every command until the user finds and deletes it.
+    """
+    if not path.exists():
+        return None
+    try:
+        return [Player(**row) for row in json.loads(path.read_text())]
+    except (ValueError, TypeError):
+        print(f"warning: ignoring unreadable roster cache at {path}.", file=sys.stderr)
+        return None
+
+
+def _cache_is_fresh(path: Path, ttl: float) -> bool:
+    """Whether the cache file is within its TTL. ``ttl <= 0`` disables expiry."""
+    if ttl <= 0:
+        return True
+    try:
+        return (time.time() - path.stat().st_mtime) < ttl
+    except OSError:
+        return False
+
+
 def _get_roster(args, settings: Settings,
                 profile: Optional[LeagueProfile] = None) -> list[Player]:
-    """Load the roster from cache, fetching (and caching) on a miss."""
+    """Load the roster from cache, fetching (and caching) on a miss or expiry.
+
+    The TTL decides when to *prefer* a fetch, never when to fail. A stale cache
+    still beats no lineup at all, so an expired entry is kept as a fallback and
+    used (with a warning) if the fetch fails — expired ESPN cookies or a flaky
+    connection shouldn't turn every command into an error when last night's
+    roster is sitting on disk.
+    """
     if profile is None:
         profile = resolve_league(settings, getattr(args, "league_name", None))
     provider = build_roster_provider(settings, args.source, args.league, args.team,
                                      profile=profile)
     path = _roster_path(settings, provider)
-    if path.exists():
-        data = json.loads(path.read_text())
-        return [Player(**row) for row in data]
-    players = provider.get_roster_players()
+    refresh = getattr(args, "refresh", False)
+    offline = getattr(args, "offline", False)
+    if refresh and offline:
+        raise RosterError("--refresh and --offline cannot be used together.")
+
+    cached = _read_roster_cache(path)   # whatever is on disk, at any age
+    if not refresh:
+        if cached is not None and _cache_is_fresh(path, settings.roster_ttl):
+            return cached
+        if offline:
+            # --offline means "don't go to the network", not "insist on fresh".
+            if cached is not None:
+                print(f"warning: using a stale cached roster from {path} "
+                      "(--offline).", file=sys.stderr)
+                return cached
+            raise RosterError(
+                f"No cached roster at {path} and --offline was given. "
+                "Run `ffstartsit sync` (online) to populate it."
+            )
+
+    try:
+        players = provider.get_roster_players()
+    except (RosterError, SleeperError, requests.RequestException) as exc:
+        if cached is None:
+            raise
+        print(f"warning: roster fetch failed ({exc}); falling back to the "
+              f"cached roster at {path}.", file=sys.stderr)
+        return cached
     _save_roster(settings, provider, players)
     return players
 
@@ -737,9 +812,12 @@ def _roster_path(settings: Settings, provider: RosterProvider) -> Path:
 
 def _save_roster(settings: Settings, provider: RosterProvider,
                  players: Sequence[Player]) -> Path:
+    """Write the roster cache atomically, so an interrupted run can't corrupt it."""
     path = _roster_path(settings, provider)
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps([p.__dict__ for p in players], indent=2))
+    tmp = path.with_name(path.name + ".tmp")
+    tmp.write_text(json.dumps([p.__dict__ for p in players], indent=2))
+    os.replace(tmp, path)
     return path
 
 

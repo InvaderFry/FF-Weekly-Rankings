@@ -82,7 +82,7 @@ def test_provider_fetches_and_sends_cookies():
     players = provider.get_roster_players()
     assert any(p.name == "Patrick Mahomes" for p in players)        # auto-detected my team
     assert session.last_kwargs["cookies"] == {"espn_s2": "s2val", "SWID": MY_SWID}
-    assert provider.cache_tag() == "espn_111"
+    assert provider.cache_tag() == "espn_2025_111_auto"
 
 
 def test_provider_raises_on_auth_denied():

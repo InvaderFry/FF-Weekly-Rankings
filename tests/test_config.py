@@ -47,6 +47,42 @@ def test_corrupt_learned_file_falls_back_to_defaults(tmp_path, monkeypatch):
     assert weights == DEFAULT_WEIGHTS
 
 
+def test_nan_weight_env_falls_back_to_defaults(tmp_path, monkeypatch):
+    """NaN slips past both sign and sum guards, so it needs its own rejection.
+
+    Left alone it reaches ``weighted_final``, whose ``wsum > 0`` test is False
+    against a NaN sum -- scoring every player ``None``.
+    """
+    _clear_weight_env(monkeypatch)
+    monkeypatch.setenv("FF_DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("FF_WEIGHT_ECR", "nan")
+    assert load_settings().weights == DEFAULT_WEIGHTS
+
+
+def test_inf_weight_env_falls_back_to_defaults(tmp_path, monkeypatch):
+    _clear_weight_env(monkeypatch)
+    monkeypatch.setenv("FF_DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("FF_WEIGHT_VEGAS", "inf")
+    assert load_settings().weights == DEFAULT_WEIGHTS
+
+
+def test_non_finite_learned_weights_are_ignored(tmp_path, monkeypatch):
+    """json.loads accepts bare NaN/Infinity, so the learned file is a third door."""
+    _clear_weight_env(monkeypatch)
+    monkeypatch.setenv("FF_DATA_DIR", str(tmp_path))
+    (tmp_path / "learned_weights.json").write_text(
+        '{"ecr": NaN, "vegas": 0.4}')
+    weights = load_settings().weights
+    assert weights["ecr"] == DEFAULT_WEIGHTS["ecr"]   # dropped, default stands
+    assert weights["vegas"] == 0.4                    # the finite entry survives
+
+
+def test_nan_threshold_falls_back(tmp_path, monkeypatch):
+    monkeypatch.setenv("FF_DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("FF_CLOSE_CALL_THRESHOLD", "nan")
+    assert load_settings().close_call_threshold == 5.0
+
+
 def test_preferred_experts_default_empty(tmp_path, monkeypatch):
     monkeypatch.setenv("FF_DATA_DIR", str(tmp_path))
     monkeypatch.delenv("FF_PREFERRED_EXPERTS", raising=False)

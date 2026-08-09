@@ -13,6 +13,12 @@ permissions:
   contents: read
   issues: write
 
+# Slash commands fired in quick succession would otherwise run concurrently and
+# race each other on the shared .cache directory.
+concurrency:
+  group: chatops-${{ github.event.issue.number }}
+  cancel-in-progress: false
+
 jobs:
   run:
     runs-on: ubuntu-latest
@@ -35,10 +41,18 @@ jobs:
           # Pass the comment via env (never interpolated into the shell) to avoid injection.
           COMMENT_BODY: ${{ github.event.comment.body }}
           FF_ROSTER_SOURCE: espn
+          # Must match weekly-report.yml: without FF_LEAGUES the documented
+          # `/report league-name dynasty` form can only ever error, because
+          # resolve_league sees nothing but the synthesized "default" profile.
+          FF_LEAGUES: ${{ secrets.FF_LEAGUES }}
           ESPN_LEAGUE_ID: ${{ secrets.ESPN_LEAGUE_ID }}
           ESPN_TEAM_ID: ${{ secrets.ESPN_TEAM_ID }}
           ESPN_S2: ${{ secrets.ESPN_S2 }}
           ESPN_SWID: ${{ secrets.ESPN_SWID }}
+          # `/lineup source sleeper` is an advertised option, so its config has
+          # to be present too.
+          SLEEPER_USERNAME: ${{ secrets.SLEEPER_USERNAME }}
+          SLEEPER_LEAGUE_ID: ${{ secrets.SLEEPER_LEAGUE_ID }}
           ODDS_API_KEY: ${{ secrets.ODDS_API_KEY }}
           FANTASYPROS_API_KEY: ${{ secrets.FANTASYPROS_API_KEY }}
           # Repository variable (not secret) — powers /report's Preferred
@@ -55,13 +69,32 @@ jobs:
               raise SystemExit(0)  # not a recognized command -> stay silent
 
           buf = io.StringIO()
+          code = 0
+          err = None
           try:
               with contextlib.redirect_stdout(buf), contextlib.redirect_stderr(buf):
-                  main(argv)
-              out = buf.getvalue().strip() or "_(no output)_"
+                  code = main(argv) or 0
+          except SystemExit as exc:
+              # argparse raises SystemExit (a BaseException) on a usage error, so
+              # `except Exception` missed it entirely: reply.md was never written
+              # and the reply step's hashFiles guard then suppressed any comment.
+              # The user got silence plus a red run.
+              code = exc.code if isinstance(exc.code, int) else 2
           except Exception as exc:  # noqa: BLE001 - surface any failure to the comment
-              out = f"⚠️ Error running `{' '.join(argv)}`:\n\n```\n{exc}\n```"
+              err = str(exc)
 
+          text = buf.getvalue().strip()
+          if err is not None:
+              out = f"⚠️ Error running `{' '.join(argv)}`:\n\n```\n{err}\n```"
+          elif code != 0:
+              # A nonzero exit with only stderr output used to post "_(no output)_".
+              detail = text or f"exited with status {code}"
+              out = f"⚠️ `{' '.join(argv)}` failed:\n\n```\n{detail}\n```"
+          else:
+              out = text or "_(no output)_"
+
+          # Always write the reply, so the `hashFiles` guard below can never
+          # swallow a failure.
           with open("reply.md", "w", encoding="utf-8") as fh:
               fh.write(f"> `{' '.join(argv)}`\n\n{out}\n")
           PY

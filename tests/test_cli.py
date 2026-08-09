@@ -1,9 +1,11 @@
+import os
 from pathlib import Path
 
 import pytest
 
 from ff_startsit import cli
 from ff_startsit.config import LeagueProfile, Settings
+from ff_startsit.models import Player
 from ff_startsit.roster.base import RosterError
 from ff_startsit.roster.espn import ESPNProvider
 from ff_startsit.roster.manual import ManualProvider
@@ -31,7 +33,9 @@ def _settings(**kw):
 def test_factory_defaults_to_espn():
     provider = cli.build_roster_provider(_settings())
     assert isinstance(provider, ESPNProvider)
-    assert provider.cache_tag() == "espn_111"
+    # Season and team are part of the cache identity, so a stale-season cache
+    # and two teams in one league can no longer collide on one file.
+    assert provider.cache_tag() == "espn_2025_111_auto"
 
 
 def test_flag_source_overrides_env():
@@ -46,7 +50,7 @@ def test_sleeper_source_and_league_override():
     )
     assert isinstance(provider, SleeperProvider)
     assert provider.league_id == "555"          # --league wins over env
-    assert provider.cache_tag() == "sleeper_555"
+    assert provider.cache_tag() == "sleeper_555_me"
 
 
 def test_espn_team_override():
@@ -88,7 +92,7 @@ def test_build_provider_uses_selected_profile():
     provider = cli.build_roster_provider(_multi_settings(), profile=p)
     assert isinstance(provider, ESPNProvider)
     assert provider.league_id == "222" and provider.team_id == "7"
-    assert provider.cache_tag() == "espn_222"
+    assert provider.cache_tag() == "espn_2025_222_7"
 
 
 def test_explicit_flags_win_over_profile():
@@ -124,7 +128,7 @@ def test_publish_does_one_scoring_pass(tmp_path, monkeypatch):
 
     calls = {"n": 0}
 
-    def fake_rank(settings, plyrs, week, log=False):
+    def fake_rank(settings, plyrs, week, log=False, signals=None):
         calls["n"] += 1
         ps = PlayerScore(player=players[0])
         ps.final = 90.0
@@ -165,7 +169,7 @@ def test_publish_survives_discord_failure(tmp_path, monkeypatch):
     monkeypatch.setattr(cli, "_get_roster", lambda args, settings, profile=None: players)
     monkeypatch.setattr(cli, "_resolve_week", lambda args, settings: 7)
 
-    def fake_rank(settings, plyrs, week, log=False):
+    def fake_rank(settings, plyrs, week, log=False, signals=None):
         ps = PlayerScore(player=players[0])
         ps.final = 90.0
         ps.normalized = {"ecr": 90.0}
@@ -252,7 +256,7 @@ def test_publish_includes_journalists_in_both_outputs(tmp_path, monkeypatch):
     monkeypatch.setattr(cli, "_get_roster", lambda args, settings, profile=None: players)
     monkeypatch.setattr(cli, "_resolve_week", lambda args, settings: 7)
 
-    def fake_rank(settings, plyrs, week, log=False):
+    def fake_rank(settings, plyrs, week, log=False, signals=None):
         ps = PlayerScore(player=players[0])
         ps.final = 90.0
         ps.normalized = {"ecr": 90.0}
@@ -299,7 +303,7 @@ def test_publish_all_leagues_combines_every_league(tmp_path, monkeypatch):
     monkeypatch.setattr(cli, "_get_roster", fake_get_roster)
     monkeypatch.setattr(cli, "_resolve_week", lambda args, settings: 7)
 
-    def fake_rank(settings, plyrs, week, log=False):
+    def fake_rank(settings, plyrs, week, log=False, signals=None):
         ps = PlayerScore(player=plyrs[0])
         ps.final = 90.0
         ps.normalized = {"ecr": 90.0}
@@ -346,7 +350,7 @@ def test_publish_all_leagues_skips_a_failing_league(tmp_path, monkeypatch):
     monkeypatch.setattr(cli, "_get_roster", fake_get_roster)
     monkeypatch.setattr(cli, "_resolve_week", lambda args, settings: 7)
 
-    def fake_rank(settings, plyrs, week, log=False):
+    def fake_rank(settings, plyrs, week, log=False, signals=None):
         ps = PlayerScore(player=plyrs[0])
         ps.final = 90.0
         ps.normalized = {"ecr": 90.0}
@@ -365,3 +369,93 @@ def test_publish_all_leagues_skips_a_failing_league(tmp_path, monkeypatch):
     assert rc == 0                       # the healthy league still publishes
     digest = report_path.read_text()
     assert "## work — PPR" in digest and "dynasty" not in digest
+
+
+# --- roster cache freshness ---------------------------------------------
+
+class _StubProvider:
+    """A roster provider that can be made to fail on demand."""
+
+    name = "manual"
+
+    def __init__(self, players, fail=False):
+        self._players = players
+        self.fail = fail
+        self.fetches = 0
+
+    def cache_tag(self):
+        return "stub"
+
+    def get_roster_players(self):
+        self.fetches += 1
+        if self.fail:
+            raise RosterError("ESPN cookies expired")
+        return self._players
+
+
+def _stub_args(**kw):
+    import argparse
+    base = dict(source=None, league=None, team=None, league_name=None,
+                refresh=False, offline=False)
+    base.update(kw)
+    return argparse.Namespace(**base)
+
+
+def _with_stub(monkeypatch, provider):
+    monkeypatch.setattr(cli, "build_roster_provider",
+                        lambda *a, **kw: provider)
+
+
+def test_stale_roster_is_used_when_the_fetch_fails(tmp_path, monkeypatch, capsys):
+    """A stale cache beats no lineup at all.
+
+    The TTL decides when to prefer a fetch, not when to fail -- expired cookies
+    shouldn't turn every command into an error when last night's roster is
+    sitting on disk.
+    """
+    players = [Player(key="1", name="Alpha", team="KC", position="RB")]
+    settings = _settings(data_dir=tmp_path, roster_ttl=3600)
+
+    ok = _StubProvider(players)
+    _with_stub(monkeypatch, ok)
+    cli._get_roster(_stub_args(), settings)          # populate the cache
+    path = cli._roster_path(settings, ok)
+    os.utime(path, (0, 0))                            # make it ancient
+
+    broken = _StubProvider(players, fail=True)
+    _with_stub(monkeypatch, broken)
+    got = cli._get_roster(_stub_args(), settings)
+    assert [p.key for p in got] == ["1"]
+    assert broken.fetches == 1                        # it did try
+    assert "falling back to the cached roster" in capsys.readouterr().err
+
+
+def test_fetch_failure_without_any_cache_still_raises(tmp_path, monkeypatch):
+    settings = _settings(data_dir=tmp_path, roster_ttl=3600)
+    _with_stub(monkeypatch, _StubProvider([], fail=True))
+    with pytest.raises(RosterError):
+        cli._get_roster(_stub_args(), settings)
+
+
+def test_offline_accepts_a_stale_cache(tmp_path, monkeypatch, capsys):
+    """--offline means 'do not go to the network', not 'insist on fresh'."""
+    players = [Player(key="1", name="Alpha", team="KC", position="RB")]
+    settings = _settings(data_dir=tmp_path, roster_ttl=3600)
+
+    provider = _StubProvider(players)
+    _with_stub(monkeypatch, provider)
+    cli._get_roster(_stub_args(), settings)
+    os.utime(cli._roster_path(settings, provider), (0, 0))
+
+    before = provider.fetches
+    got = cli._get_roster(_stub_args(offline=True), settings)
+    assert [p.key for p in got] == ["1"]
+    assert provider.fetches == before                 # never went to the network
+    assert "stale cached roster" in capsys.readouterr().err
+
+
+def test_refresh_and_offline_together_is_an_error(tmp_path, monkeypatch):
+    settings = _settings(data_dir=tmp_path)
+    _with_stub(monkeypatch, _StubProvider([]))
+    with pytest.raises(RosterError):
+        cli._get_roster(_stub_args(refresh=True, offline=True), settings)

@@ -1,0 +1,10 @@
+{
+  "players": [
+    {"player_name": "Elite Wideout", "player_team_id": "CIN", "player_position_id": "WR", "rank_ecr": 1, "tier": 1},
+    {"player_name": "Patrick Runner", "player_team_id": "KC", "player_position_id": "RB", "rank_ecr": 2, "tier": 1},
+    {"player_name": "Star Tight End", "player_team_id": "SF", "player_position_id": "TE", "rank_ecr": 3, "tier": 1},
+    {"player_name": "Solid Wideout", "player_team_id": "MIA", "player_position_id": "WR", "rank_ecr": 12, "tier": 3},
+    {"player_name": "Chicago Back", "player_team_id": "CHI", "player_position_id": "RB", "rank_ecr": 30, "tier": 5},
+    {"player_name": "Backup Tight End", "player_team_id": "NYG", "player_position_id": "TE", "rank_ecr": 44, "tier": 7}
+  ]
+}

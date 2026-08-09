@@ -1,0 +1,105 @@
+{
+  "season": {"year": 2025, "type": 2},
+  "week": {"number": 5},
+  "events": [
+    {
+      "id": "401001",
+      "date": "2025-10-05T17:00Z",
+      "name": "New England Patriots at Buffalo Bills",
+      "competitions": [
+        {
+          "id": "401001",
+          "date": "2025-10-05T17:00Z",
+          "neutralSite": false,
+          "venue": {
+            "id": "3839",
+            "fullName": "Highmark Stadium",
+            "address": {"city": "Orchard Park", "state": "NY"},
+            "indoor": false
+          },
+          "competitors": [
+            {"homeAway": "home", "team": {"abbreviation": "BUF", "displayName": "Buffalo Bills"}},
+            {"homeAway": "away", "team": {"abbreviation": "NE", "displayName": "New England Patriots"}}
+          ]
+        }
+      ]
+    },
+    {
+      "id": "401002",
+      "date": "2025-10-05T17:00Z",
+      "name": "Chicago Bears at Detroit Lions",
+      "competitions": [
+        {
+          "id": "401002",
+          "date": "2025-10-05T17:00Z",
+          "neutralSite": false,
+          "venue": {
+            "id": "3511",
+            "fullName": "Ford Field",
+            "address": {"city": "Detroit", "state": "MI"},
+            "indoor": true
+          },
+          "competitors": [
+            {"homeAway": "home", "team": {"abbreviation": "DET", "displayName": "Detroit Lions"}},
+            {"homeAway": "away", "team": {"abbreviation": "CHI", "displayName": "Chicago Bears"}}
+          ]
+        }
+      ]
+    },
+    {
+      "id": "401003",
+      "date": "2025-10-05T13:30Z",
+      "name": "Minnesota Vikings at Jacksonville Jaguars",
+      "competitions": [
+        {
+          "id": "401003",
+          "date": "2025-10-05T13:30Z",
+          "neutralSite": true,
+          "venue": {
+            "id": "6349",
+            "fullName": "Tottenham Hotspur Stadium",
+            "address": {"city": "London", "country": "England"},
+            "indoor": false
+          },
+          "competitors": [
+            {"homeAway": "home", "team": {"abbreviation": "JAC", "displayName": "Jacksonville Jaguars"}},
+            {"homeAway": "away", "team": {"abbreviation": "MIN", "displayName": "Minnesota Vikings"}}
+          ]
+        }
+      ]
+    },
+    {
+      "id": "401004",
+      "date": "2025-10-03T00:15Z",
+      "name": "San Francisco 49ers at Washington Commanders",
+      "competitions": [
+        {
+          "id": "401004",
+          "date": "2025-10-03T00:15Z",
+          "venue": {
+            "id": "3711",
+            "fullName": "Northwest Stadium",
+            "address": {"city": "Landover", "state": "MD"},
+            "indoor": false
+          },
+          "competitors": [
+            {"homeAway": "home", "team": {"abbreviation": "WSH", "displayName": "Washington Commanders"}},
+            {"homeAway": "away", "team": {"abbreviation": "SF", "displayName": "San Francisco 49ers"}}
+          ]
+        }
+      ]
+    },
+    {
+      "id": "401005",
+      "date": "2025-10-05T20:05Z",
+      "name": "Malformed event with no competitors",
+      "competitions": [
+        {
+          "id": "401005",
+          "venue": {"id": "9999", "fullName": "Nowhere Field"},
+          "competitors": []
+        }
+      ]
+    }
+  ]
+}

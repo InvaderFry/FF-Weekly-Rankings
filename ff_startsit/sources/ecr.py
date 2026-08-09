@@ -30,12 +30,22 @@ SCRAPE_URL = "https://www.fantasypros.com/nfl/rankings/{slug}.php"
 _SCORING_AGNOSTIC = {"QB", "K", "DST", "DEF"}
 _ECR_DATA_RE = re.compile(r"var\s+ecrData\s*=\s*(\{.*?\})\s*;", re.DOTALL)
 
+#: Pseudo-position for the pooled cross-position FLEX ranking. FantasyPros ranks
+#: RB/WR/TE against each other on one list, which is the only ECR value that is
+#: meaningful across positions — a per-position rank of 1 means "RB1" and "WR1"
+#: indistinguishably. Used as a cache key alongside the real positions, so the
+#: two paths cannot shadow each other.
+FLEX_POOL = "FLX"
+_FLEX_ALIASES = {"FLX", "FLEX"}
+
 
 def _scrape_slug(position: str, scoring: str) -> str:
     pos = position.lower()
     if position.upper() in {"DST", "DEF"}:
         return "dst"
-    if position.upper() in _SCORING_AGNOSTIC:
+    if position.upper() in _FLEX_ALIASES:
+        pos = "flex"  # -> flex / ppr-flex / half-point-ppr-flex
+    elif position.upper() in _SCORING_AGNOSTIC:
         return pos
     if scoring == "ppr":
         return f"ppr-{pos}"
@@ -128,25 +138,49 @@ class ECRSignal(Signal):
 
     def __init__(self, api_key: str = "", scoring: str = "ppr",
                  season: Optional[int] = None, session: Optional[requests.Session] = None,
-                 timeout: int = 20):
+                 timeout: int = 20, pool_position: Optional[str] = None):
         self.api_key = api_key
         self.scoring = scoring
         self.season = season or _current_season()
         self.session = session or requests.Session()
         self.timeout = timeout
+        #: When set (e.g. ``FLEX_POOL``), fetch one pooled cross-position ranking
+        #: instead of one list per position.
+        self.pool_position = pool_position
         self.last_source: str = ""  # "api" or "scrape", for diagnostics
         self._rows_cache: dict[tuple[str, int], list[ExternalRow]] = {}
+        self._week_warned: set[int] = set()  # warn once per week, not per position
+
+    def pooled(self, pool_position: str = FLEX_POOL) -> "ECRSignal":
+        """A sibling instance that fetches one pooled cross-position ranking.
+
+        A separate instance rather than a mode flag: this one is reused across
+        every position in a run, so a mutable flag would make ``fetch``
+        non-idempotent and the ``(position, week)`` cache ambiguous. The sibling
+        shares the session and the row cache, and the pseudo-position keeps its
+        cache keys disjoint from the per-position path.
+        """
+        sib = ECRSignal(api_key=self.api_key, scoring=self.scoring, season=self.season,
+                        session=self.session, timeout=self.timeout,
+                        pool_position=pool_position)
+        sib._rows_cache = self._rows_cache
+        return sib
 
     def is_available(self) -> bool:
         return True  # scrape fallback means ECR is always attemptable
 
     def fetch(self, week: int, players: Iterable[Player]) -> dict[str, SignalValue]:
         players = list(players)
-        positions = sorted({_canon_pos(p.position) for p in players})
 
         rows: list[ExternalRow] = []
-        for pos in positions:
-            rows.extend(self._rows_for_position(pos, week))
+        if self.pool_position:
+            # One pooled list; its rows still carry each player's real position,
+            # so the (name, position) join is unchanged — only the rank value is
+            # now cross-position.
+            rows.extend(self._rows_for_position(self.pool_position, week))
+        else:
+            for pos in sorted({_canon_pos(p.position) for p in players}):
+                rows.extend(self._rows_for_position(pos, week))
 
         result = match_rows(players, rows)
         out: dict[str, SignalValue] = {}
@@ -180,12 +214,44 @@ class ECRSignal(Signal):
         except requests.RequestException:
             return []  # offline / page unreachable -> signal simply has no data
         self.last_source = "scrape"
+        self._warn_if_week_mismatch(week)
         if not rows:
             # Reached the page but parsed nothing: the embedded ecrData blob is
             # gone or changed shape. Warn so a silently-broken scrape is visible.
             print(f"warning: FantasyPros scrape for {position} returned no "
                   "rankings — the page format may have changed.", file=sys.stderr)
         return rows
+
+    def _warn_if_week_mismatch(self, week: int) -> None:
+        """Say so when scraped rankings can't be the week that was asked for.
+
+        The public rankings page has no week selector — it always shows the
+        current week — while the API path does take a week. So without an API
+        key a ``--week 5`` request silently returns whatever week the page shows
+        now, filed in the cache under week 5 as though it were that week's data.
+        Backtests and calibration runs over historical weeks are the ones this
+        really misleads, since they would be scoring present-day consensus
+        against past outcomes.
+
+        Warned rather than refused: week detection can be off by one around the
+        Tuesday rollover, and failing the common path outright would be a worse
+        trade than a visible caveat. Set FANTASYPROS_API_KEY for genuinely
+        week-aware rankings.
+        """
+        from ..season import date_week
+
+        if week in self._week_warned:
+            return
+        self._week_warned.add(week)
+        current = date_week()
+        if week != current:
+            # The scrape path is also reached when a key is set but the API call
+            # fails, so don't assert a cause the caller may not have.
+            why = "no API key" if not self.api_key else "API unavailable"
+            print(f"warning: FantasyPros rankings were scraped ({why}), and the "
+                  f"public page only shows the current week (~{current}). "
+                  f"Values reported for week {week} are not week-{week} rankings.",
+                  file=sys.stderr)
 
     def _fetch_api(self, position: str, week: int) -> list[ExternalRow]:
         return fetch_api_rows(self.session, self.api_key, self.season, self.scoring,

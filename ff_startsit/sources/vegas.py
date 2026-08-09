@@ -5,19 +5,27 @@ consensus line, derives each team's implied total, and assigns it to players by
 team. Players on a bye, or whose game has no posted line, are marked unavailable
 so the blender falls back to ECR alone for them.
 
+The endpoint takes no week parameter — it returns every upcoming game — so once
+next week's lines are posted a team appears twice and the wrong week's number can
+win. Games are therefore filtered against the schedule layer before the implied
+totals are flattened. Without a schedule it falls back to first-occurrence-wins,
+which given the API's kickoff ordering still means the sooner game.
+
 Parsing is separated from HTTP so it can be tested against a saved API fixture.
 """
 
 from __future__ import annotations
 
+from datetime import datetime
 from statistics import mean
-from typing import Iterable, Optional
+from typing import Iterable, Mapping, Optional
 
 import requests
 
 from ..data.teams import normalize_team
-from ..models import Game, Player, SignalValue
+from ..models import Game, GameContext, Player, SignalValue
 from .base import Signal
+from .schedule import ScheduleProvider, parse_kickoff
 
 ODDS_URL = "https://api.the-odds-api.com/v4/sports/americanfootball_nfl/odds"
 
@@ -54,18 +62,47 @@ def parse_odds_response(events: list[dict]) -> list[Game]:
         if not totals or not home_spreads:
             continue
         games.append(Game(home_team=home, away_team=away,
-                          total=mean(totals), home_spread=mean(home_spreads)))
+                          total=mean(totals), home_spread=mean(home_spreads),
+                          kickoff=parse_kickoff(ev.get("commence_time"))))
     return games
 
 
+def games_for_week(games: Iterable[Game],
+                   week_games: Mapping[str, GameContext]) -> list[Game]:
+    """Keep only the games belonging to the requested week (pure).
+
+    The odds endpoint returns every upcoming game with no week parameter, so
+    once next week's lines are posted a team can appear twice. Matching the
+    (home, away) pair against the week's schedule is exact and doesn't depend on
+    the book having supplied a ``commence_time``.
+
+    With no schedule the games are returned unfiltered, and
+    ``implied_totals_by_team``'s first-occurrence-wins is what keeps the sooner
+    game. There is deliberately no kickoff-window fallback in between: the only
+    source of a window is the same schedule lookup, so it is empty in exactly
+    the case it would be needed.
+    """
+    if not week_games:
+        return list(games)
+    return [g for g in games
+            if (ctx := week_games.get(g.home_team)) is not None
+            and ctx.home_team == g.home_team and ctx.away_team == g.away_team]
+
+
 def implied_totals_by_team(games: Iterable[Game]) -> dict[str, float]:
-    """Flatten games into ``{team: implied_total}``."""
+    """Flatten games into ``{team: implied_total}``.
+
+    First occurrence wins. The odds endpoint returns every upcoming game, so a
+    team can appear twice once next week's line is posted alongside this week's;
+    since the API orders events by kickoff, keeping the first means keeping the
+    sooner game rather than silently overwriting it with a later one.
+    """
     out: dict[str, float] = {}
     for g in games:
         for team in (g.home_team, g.away_team):
             it = g.implied_total(team)
             if it is not None:
-                out[team] = it
+                out.setdefault(team, it)
     return out
 
 
@@ -74,10 +111,11 @@ class VegasSignal(Signal):
     higher_is_better = True  # a higher implied total is a better scoring spot
 
     def __init__(self, api_key: str = "", session: Optional[requests.Session] = None,
-                 timeout: int = 20):
+                 timeout: int = 20, schedule: Optional[ScheduleProvider] = None):
         self.api_key = api_key
         self.session = session or requests.Session()
         self.timeout = timeout
+        self.schedule = schedule
         self._games: Optional[list[Game]] = None  # per-instance cache
 
     def is_available(self) -> bool:
@@ -89,7 +127,12 @@ class VegasSignal(Signal):
             return {p.key: SignalValue(raw=None, available=False, note="no ODDS_API_KEY")
                     for p in players}
 
-        games = self._fetch_games()
+        # The raw fetch isn't week-parameterized, so it's cached once and the
+        # week filter is applied per call.
+        games = games_for_week(
+            self._fetch_games(),
+            self.schedule.for_week(week) if self.schedule else {},
+        )
         totals = implied_totals_by_team(games)
         return self.assign(players, totals)
 

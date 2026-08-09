@@ -52,3 +52,138 @@ def test_recommend_blends_and_logs(tmp_path):
     assert row["command"] == "rank"
     assert row["pick"] == "Alpha"
     assert row["week"] == 3
+
+
+class _PoolableECR(Signal):
+    """An ECR-shaped signal exposing .pooled(), like the real one."""
+
+    name = "ecr"
+    higher_is_better = False
+
+    def __init__(self, ranks, pooled_ranks=None, pool=False):
+        self.ranks = ranks
+        self.pooled_ranks = pooled_ranks or {}
+        self.pool = pool
+
+    def pooled(self):
+        return _PoolableECR(self.ranks, self.pooled_ranks, pool=True)
+
+    def is_available(self):
+        return True
+
+    def fetch(self, week, players):
+        src = self.pooled_ranks if self.pool else self.ranks
+        return {p.key: SignalValue(src[p.key]) if p.key in src
+                else SignalValue(None, available=False, note="no ECR rank")
+                for p in players}
+
+
+class _CountingVegas(Signal):
+    name = "vegas"
+    higher_is_better = True
+
+    def __init__(self):
+        self.fetches = 0
+
+    def is_available(self):
+        return True
+
+    def fetch(self, week, players):
+        self.fetches += 1
+        return {p.key: SignalValue(20.0) for p in players}
+
+
+def test_flex_signals_swaps_ecr_and_keeps_the_rest_by_reference():
+    """The other signals must be reused, not rebuilt.
+
+    Sharing the instances is what keeps their caches warm -- and what keeps the
+    pooled pass from spending a second Odds API credit.
+    """
+    from ff_startsit.pipeline import flex_signals
+
+    ecr, vegas = _PoolableECR({"1": 1.0}), _CountingVegas()
+    out = flex_signals([ecr, vegas])
+    assert out is not None
+    by_name = {s.name: s for s in out}
+    assert by_name["vegas"] is vegas          # same object, same cache
+    assert by_name["ecr"] is not ecr          # a pooled sibling
+    assert by_name["ecr"].pool is True
+
+
+def test_flex_signals_returns_none_without_a_poolable_ecr():
+    """Preseason sample runs have no real ECR, so there is nothing to pool."""
+    from ff_startsit.pipeline import flex_signals
+
+    class _Sample(Signal):
+        name = "ecr"
+        higher_is_better = False
+        is_sample = True
+
+        def is_available(self):
+            return True
+
+        def fetch(self, week, players):
+            return {}
+
+    assert flex_signals([_Sample(), _CountingVegas()]) is None
+
+
+def _flex_players():
+    return [
+        Player(key="1", name="Alpha", team="KC", position="RB"),
+        Player(key="2", name="Bravo", team="CHI", position="WR"),
+        Player(key="3", name="Charlie", team="BUF", position="TE"),
+        Player(key="4", name="Delta", team="SF", position="WR"),
+        Player(key="5", name="Echo", team="NE", position="QB"),   # not flex-eligible
+    ]
+
+
+def test_rank_flex_pool_scores_only_flex_eligible_players(tmp_path):
+    from ff_startsit.report import rank_flex_pool
+
+    settings = Settings(weights={"ecr": 1.0}, data_dir=tmp_path)
+    ecr = _PoolableECR({}, pooled_ranks={"1": 2.0, "2": 1.0, "3": 4.0, "4": 3.0})
+    rec, note = rank_flex_pool(settings, _flex_players(), 3, signals=[ecr])
+    assert note is None and rec is not None
+    # QB excluded; ranked by the pooled cross-position value.
+    assert [s.player.key for s in rec.scores] == ["2", "1", "4", "3"]
+
+
+def test_rank_flex_pool_refuses_when_ecr_coverage_is_thin(tmp_path):
+    """A failed FLEX fetch must not silently pick on the other signals alone.
+
+    ECRSignal returns [] on a request failure, and the blender happily carries
+    on with whatever else is available -- so without this gate the FLEX slot
+    would be chosen by implied team total, health and weather, invisibly.
+    """
+    from ff_startsit.report import rank_flex_pool
+
+    settings = Settings(weights={"ecr": 0.6, "vegas": 0.4}, data_dir=tmp_path)
+    # Only 1 of 4 flex candidates matched -> 25% coverage, below the 50% floor.
+    ecr = _PoolableECR({}, pooled_ranks={"1": 1.0})
+    rec, note = rank_flex_pool(settings, _flex_players(), 3,
+                               signals=[ecr, _CountingVegas()])
+    assert rec is None
+    assert "too few matches" in note
+
+
+def test_rank_flex_pool_without_signals_degrades_quietly(tmp_path):
+    from ff_startsit.report import rank_flex_pool
+
+    settings = Settings(data_dir=tmp_path)
+    rec, note = rank_flex_pool(settings, _flex_players(), 3, signals=None)
+    assert rec is None and note
+
+
+def test_rank_flex_pool_is_never_logged(tmp_path):
+    """A pooled row would re-log the same players under a second frame.
+
+    The calibrator scores pairwise concordance within one logged decision, so
+    that would double-weight those players in the grid search.
+    """
+    from ff_startsit.report import rank_flex_pool
+
+    settings = Settings(weights={"ecr": 1.0}, data_dir=tmp_path)
+    ecr = _PoolableECR({}, pooled_ranks={"1": 2.0, "2": 1.0, "3": 4.0, "4": 3.0})
+    rank_flex_pool(settings, _flex_players(), 3, signals=[ecr])
+    assert not settings.results_log_path.exists()

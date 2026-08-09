@@ -66,6 +66,12 @@ def _build_embed(week: int, scoring: str,
     """Build one league's embed (title, lineup description, alerts field)."""
     label_suffix = f" · {label}" if label else ""
     description = _lineup_lines(lineup)
+    # How the FLEX slot was decided travels with the lineup everywhere else, so
+    # it has to reach Discord readers too — otherwise they see an incomparable
+    # FLEX score, or a template fallback, with nothing saying so.
+    caveat = getattr(lineup, "caveat", None)
+    if caveat:
+        description = f"{description}\n\n-# ⚠️ {caveat}"
     if banner:
         description = f"**{banner}**\n\n{description}"
     embed: dict = {

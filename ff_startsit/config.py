@@ -6,6 +6,7 @@ rewrite them programmatically without touching the engine.
 
 from __future__ import annotations
 
+import math
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -63,8 +64,16 @@ class Settings:
         default_factory=lambda: {"ecr": 0.60, "vegas": 0.18, "injury": 0.12,
                                  "weather": 0.10})
     close_call_threshold: float = 5.0
+    # Minimum share of total blend weight a signal must carry before its
+    # disagreement can flag a close call. Keeps the flag meaningful: a 10%-weight
+    # signal flipping the top two is not evidence the pick is a coin-flip.
+    min_disagree_weight: float = 0.15
     injury_enabled: bool = True
     weather_enabled: bool = True
+    # Seconds a cached roster stays usable before it is re-fetched. Rosters turn
+    # over weekly on waivers and trades, so this cache — unlike the others — has
+    # to expire. 0 disables expiry.
+    roster_ttl: float = 12 * 3600
     # Preferred journalists (display-only view): "id:Name,id:Name" FantasyPros
     # expert ids. Empty/0/off disables the section. Never part of the blend
     # weights — this is a side-by-side view, not a signal.
@@ -95,13 +104,24 @@ class Settings:
 
 
 def _f(name: str, default: float) -> float:
+    """Read a float env var, falling back to ``default`` on anything unusable.
+
+    ``float()`` happily accepts "nan" and "inf", which then defeat every
+    downstream comparison guard (``nan < 0`` and ``nan > 0`` are both False), so
+    non-finite values are rejected here rather than being allowed to reach the
+    blend.
+    """
     val = os.getenv(name)
     if val is None or val.strip() == "":
         return default
     try:
-        return float(val)
+        parsed = float(val)
     except ValueError:
         return default
+    if not math.isfinite(parsed):
+        _warn(f"{name} is not a finite number; using {default} instead.")
+        return default
+    return parsed
 
 
 def _b(name: str, default: bool) -> bool:
@@ -117,7 +137,15 @@ def _validate_weights(weights: dict[str, float],
 
     A silently-invalid weight set (e.g. every weight 0) makes the blend score
     every player ``None`` — fail loud-but-graceful instead.
+
+    Non-finite weights are checked first: NaN compares False against everything,
+    so it would slip past both the sign and the sum guard below and then make
+    ``weighted_final``'s ``wsum > 0`` test False for every player — exactly the
+    all-``None`` blend this function exists to prevent.
     """
+    if not all(math.isfinite(w) for w in weights.values()):
+        _warn("Non-finite blend weight(s) configured; using defaults instead.")
+        return dict(defaults)
     if any(w < 0 for w in weights.values()):
         _warn("Negative blend weight(s) configured; using defaults instead.")
         return dict(defaults)
@@ -131,17 +159,22 @@ def _load_learned_weights(path: Path) -> dict[str, float]:
     """Read calibrated weights written by ``calibrate --write`` (empty if absent).
 
     A corrupt or non-numeric file is ignored with a warning rather than crashing
-    load — the defaults then stand.
+    load — the defaults then stand. ``json.loads`` accepts bare ``NaN``/
+    ``Infinity``, so non-finite entries are dropped here too.
     """
     if not path.exists():
         return {}
     try:
         import json
         data = json.loads(path.read_text())
-        return {str(k): float(v) for k, v in data.items()}
+        parsed = {str(k): float(v) for k, v in data.items()}
     except Exception:
         _warn(f"Could not read learned weights at {path}; ignoring.")
         return {}
+    finite = {k: v for k, v in parsed.items() if math.isfinite(v)}
+    if len(finite) != len(parsed):
+        _warn(f"Ignoring non-finite learned weight(s) in {path}.")
+    return finite
 
 
 def parse_leagues(raw: str) -> list[LeagueProfile]:
@@ -274,6 +307,16 @@ def load_settings(env_file: str | os.PathLike | None = None) -> Settings:
         _warn("FF_CLOSE_CALL_THRESHOLD is negative; using 5.0 instead.")
         threshold = 5.0
 
+    min_disagree = _f("FF_MIN_DISAGREE_WEIGHT", 0.15)
+    if not 0.0 <= min_disagree <= 1.0:
+        _warn("FF_MIN_DISAGREE_WEIGHT must be a weight share in [0, 1]; using 0.15.")
+        min_disagree = 0.15
+
+    roster_ttl = _f("FF_ROSTER_TTL", 12 * 3600)
+    if roster_ttl < 0:
+        _warn("FF_ROSTER_TTL is negative; using 43200 (12h) instead.")
+        roster_ttl = 12 * 3600
+
     espn_league_id = os.getenv("ESPN_LEAGUE_ID", "").strip()
     espn_team_id = os.getenv("ESPN_TEAM_ID", "").strip()
     sleeper_league_id = os.getenv("SLEEPER_LEAGUE_ID", "").strip()
@@ -305,9 +348,11 @@ def load_settings(env_file: str | os.PathLike | None = None) -> Settings:
         scoring=scoring,
         weights=weights,
         close_call_threshold=threshold,
+        min_disagree_weight=min_disagree,
         preferred_experts=os.getenv("FF_PREFERRED_EXPERTS", "").strip(),
         injury_enabled=_b("FF_INJURY", True),
         weather_enabled=_b("FF_WEATHER", True),
+        roster_ttl=roster_ttl,
         preseason_fill=_b("FF_PRESEASON_FILL", True),
         discord_webhook_url=os.getenv("DISCORD_WEBHOOK_URL", "").strip(),
         dashboard_url=os.getenv("FF_DASHBOARD_URL", "").strip(),

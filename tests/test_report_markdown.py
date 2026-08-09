@@ -135,3 +135,140 @@ def test_render_multi_digest_section_per_league():
     assert "2 league(s)" in digest
     assert "## work — PPR" in digest and "## dynasty — HALF" in digest
     assert "AlphaWork" in digest and "BravoDyno" in digest
+
+
+def test_flex_tie_break_is_deterministic():
+    """FLEX_POSITIONS used to be a set, so ties broke differently per process.
+
+    Ties are the norm here, not the exception: per-position normalization puts
+    every position's leader at 100.
+    """
+    from ff_startsit.models import Player, PlayerScore
+    from ff_startsit.report import build_lineup
+
+    def _score(key, name, pos):
+        s = PlayerScore(player=Player(key=key, name=name, team="KC", position=pos))
+        s.final = 100.0                      # deliberate three-way tie
+        return s
+
+    # Enough depth that every flex-eligible position still has a leftover once
+    # RB/RB/WR/WR/TE are filled -- otherwise there is no tie to break.
+    by_pos = {
+        "RB": [_score(f"r{i}", f"Rb {i}", "RB") for i in range(1, 4)],
+        "WR": [_score(f"w{i}", f"Wr {i}", "WR") for i in range(1, 4)],
+        "TE": [_score(f"t{i}", f"Te {i}", "TE") for i in range(1, 3)],
+    }
+    picks = dict(build_lineup(by_pos))
+    # Leftovers are r3, w3 and t2, all tied at 100.0; the fixed RB -> WR -> TE
+    # precedence resolves it the same way on every run.
+    assert picks["FLEX"].player.key == "r3"
+
+
+# --- pooled FLEX ---------------------------------------------------------
+# 3 RBs and 3 WRs: RB/RB and WR/WR consume two of each, so one of each is left
+# over for FLEX. That leftover pair is the whole problem -- positionally they
+# are both "third best at my position", which says nothing about which is the
+# better real option.
+_FLEX_PLAYERS = {
+    "rb1": ("Patrick Runner", "KC", "RB"),
+    "rb2": ("Chicago Back", "CHI", "RB"),
+    "rb3": ("Backup Back", "NYG", "RB"),
+    "wr1": ("Elite Wideout", "CIN", "WR"),
+    "wr2": ("Solid Wideout", "MIA", "WR"),
+    "wr3": ("Third Wideout", "NE", "WR"),
+}
+
+
+def _fp(key, final):
+    name, team, pos = _FLEX_PLAYERS[key]
+    return _ps(key, name, pos, final, team=team)
+
+
+def _flex_by_pos():
+    return {
+        "RB": [_fp("rb1", 100.0), _fp("rb2", 50.0), _fp("rb3", 0.0)],
+        "WR": [_fp("wr1", 100.0), _fp("wr2", 50.0), _fp("wr3", 0.0)],
+    }
+
+
+def _pool(order):
+    """A scored pooled ranking in the given order, best first."""
+    return [_fp(key, 100.0 - i * 10) for i, key in enumerate(order)]
+
+
+def test_flex_follows_the_pooled_ranking_not_positional_scores():
+    """The regression test for the cross-position comparison bug.
+
+    rb3 and wr3 both normalize to 0.0 within their own position groups, so the
+    positional path cannot tell them apart and falls back to RB-before-WR. The
+    pooled ranking can, and FLEX must follow it -- in either direction.
+    """
+    by_pos = _flex_by_pos()
+    naive = dict(report.build_lineup(by_pos))
+    assert naive["FLEX"].player.key == "rb3"     # decided by tie-break, not value
+
+    # Pool says the leftover WR is the better option: FLEX changes.
+    lineup = report.build_lineup(by_pos, flex_pool=_pool(["wr1", "rb1", "wr2", "rb2", "wr3", "rb3"]))
+    assert lineup.flex_basis == "pooled"
+    assert dict(lineup)["FLEX"].player.key == "wr3"
+
+    # Pool says the leftover RB is better: FLEX follows that too.
+    lineup_rb = report.build_lineup(by_pos, flex_pool=_pool(["wr1", "rb1", "wr2", "rb2", "rb3", "wr3"]))
+    assert dict(lineup_rb)["FLEX"].player.key == "rb3"
+
+
+def test_pooled_flex_never_reuses_a_started_player():
+    by_pos = _flex_by_pos()
+    # Pool ranks already-started players first; FLEX has to skip past them.
+    picks = dict(report.build_lineup(
+        by_pos, flex_pool=_pool(["rb1", "wr1", "rb2", "wr2", "wr3", "rb3"])))
+    assert picks["FLEX"].player.key == "wr3"
+    used = [p.player.key for p in picks.values() if p]
+    assert len(used) == len(set(used))
+
+
+def test_positional_fallback_carries_a_visible_caveat():
+    lineup = report.build_lineup(_flex_by_pos())          # no pool supplied
+    assert lineup.flex_basis == "positional"
+    assert "standard-template" in lineup.caveat
+    # ...and it reaches the reader, not just the object.
+    assert "standard-template" in report.render_digest(3, "ppr", {}, lineup=lineup)
+
+
+def test_pooled_lineup_notes_the_score_is_not_comparable():
+    """Selection is fixed, but the displayed FLEX score is still another frame."""
+    lineup = report.build_lineup(
+        _flex_by_pos(), flex_pool=_pool(["wr1", "rb1", "wr2", "rb2", "wr3", "rb3"]))
+    assert "not comparable" in lineup.caveat
+    assert "not comparable" in report.render_digest(3, "ppr", {}, lineup=lineup)
+
+
+def test_lineup_is_sequence_shaped_for_existing_renderers():
+    """Renderers and older tests iterate/index the lineup directly."""
+    lineup = report.build_lineup(_flex_by_pos())
+    assert len(lineup) == len(report.LINEUP_SLOTS)
+    assert lineup[0][0] == "QB"
+    assert [slot for slot, _ in lineup] == report.LINEUP_SLOTS
+
+
+def test_digest_and_lineup_agree_on_flex(monkeypatch):
+    """One run must not report two different FLEX picks.
+
+    render_digest rebuilds a positional lineup when it isn't handed one, so a
+    caller that computed a pooled lineup and forgot to pass it emitted the
+    pooled pick to the dashboard and a different, positionally-chosen pick to
+    the markdown digest -- with a "FLEX ranking was unavailable" caveat that was
+    not true of that run.
+    """
+    recs = {
+        "RB": _rec(_fp("rb1", 100.0), _fp("rb2", 50.0), _fp("rb3", 0.0)),
+        "WR": _rec(_fp("wr1", 100.0), _fp("wr2", 50.0), _fp("wr3", 0.0)),
+    }
+    pool = _pool(["wr1", "rb1", "wr2", "rb2", "wr3", "rb3"])   # leftover WR wins
+    ws = report.WeekScores(recs=recs, flex=_rec(*pool), flex_note=None)
+    lineup = report.lineup_from(ws)
+    assert dict(lineup)["FLEX"].player.key == "wr3"
+
+    digest = report.render_digest(3, "ppr", ws.recs, lineup=lineup)
+    assert "Third Wideout" in digest              # the pooled pick
+    assert "standard-template" not in digest      # and no false caveat

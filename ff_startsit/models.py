@@ -8,6 +8,7 @@ future #7 optimizer to consume.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from datetime import datetime
 from typing import Optional
 
 
@@ -34,6 +35,7 @@ class Game:
     away_team: str
     total: float             # over/under
     home_spread: float       # negative => home favored
+    kickoff: Optional[datetime] = None   # from the book's commence_time, if given
 
     def implied_total(self, team: str) -> Optional[float]:
         """Implied points for ``team``: total/2 - team_spread/2."""
@@ -44,6 +46,37 @@ class Game:
         else:
             return None
         return self.total / 2.0 - spread / 2.0
+
+
+@dataclass(frozen=True)
+class GameContext:
+    """One scheduled game: who, where, when, and under what roof.
+
+    The shared answer to "what is this player's game?", so weather forecasts the
+    venue the game is actually played at rather than the player's own home
+    stadium, and Vegas can tell one week's line from another.
+    """
+
+    home_team: str           # standardized abbreviation
+    away_team: str
+    kickoff: Optional[datetime] = None   # timezone-aware UTC
+    venue_id: str = ""
+    venue_name: str = ""
+    indoor: bool = False                 # the feed's per-game roof flag
+    neutral_site: bool = False
+
+    def opponent(self, team: str) -> Optional[str]:
+        if team == self.home_team:
+            return self.away_team
+        if team == self.away_team:
+            return self.home_team
+        return None
+
+    def is_home(self, team: str) -> bool:
+        return team == self.home_team
+
+    def has(self, team: str) -> bool:
+        return team in (self.home_team, self.away_team)
 
 
 @dataclass(frozen=True)

@@ -32,12 +32,11 @@ def _norm_swid(swid: Optional[str]) -> str:
 
 
 def _select_team(teams: list[dict], team_id: Optional[str], swid: Optional[str]) -> dict:
+    # An explicit team id wins over SWID auto-detection. ESPN_SWID is a global
+    # account setting while team_id is per-league and per-flag, so checking SWID
+    # first made `--team <other>` silently return your own roster in any league
+    # you own a team in — despite the flag documenting itself as an override.
     norm = _norm_swid(swid)
-    if norm:
-        for t in teams:
-            owners = [_norm_swid(o) for o in (t.get("owners") or [])]
-            if norm in owners:
-                return t
     if team_id not in (None, ""):
         try:
             wanted = int(team_id)
@@ -47,6 +46,11 @@ def _select_team(teams: list[dict], team_id: Optional[str], swid: Optional[str])
             if t.get("id") == wanted:
                 return t
         raise RosterError(f"ESPN team id {team_id!r} not found in this league.")
+    if norm:
+        for t in teams:
+            owners = [_norm_swid(o) for o in (t.get("owners") or [])]
+            if norm in owners:
+                return t
     if norm:
         raise RosterError(
             "Couldn't match your SWID to a team in this league. "
@@ -102,7 +106,11 @@ class ESPNProvider(RosterProvider):
         self.timeout = timeout
 
     def cache_tag(self) -> str:
-        return f"espn_{self.league_id}"
+        # Season and team belong in the key, not just the league: without them a
+        # roster cached last season is served verbatim this season, and two
+        # FF_LEAGUES profiles on one league with different team_ids collide on a
+        # single file (so `--team 7` returns team 3's players from cache).
+        return f"espn_{self.season}_{self.league_id}_{self.team_id or 'auto'}"
 
     def get_roster_players(self) -> list[Player]:
         payload = self._fetch()

@@ -72,8 +72,14 @@ without touching the pure engine.
   hardcoded defaults < `learned_weights.json` (written by `calibrate --write`) <
   explicit `FF_WEIGHT_*` env. Don't read weights from anywhere else.
 - **Close-call flagging is the product**, not decoration. `blend._flag_close_call`
-  flags when the top two finals are within `close_call_threshold` OR when any
-  signal ranks the runner-up above the leader. Preserve both conditions.
+  flags when the top two finals are within `close_call_threshold` OR when a
+  signal ranks the runner-up above the leader. Preserve both conditions. The
+  disagreement condition is deliberately *qualified*, not unconditional: the
+  signal must carry at least `min_disagree_weight` (`FF_MIN_DISAGREE_WEIGHT`,
+  default 0.15) of total blend weight, and the normalized gap must be at least
+  `close_call_threshold`. Without those floors a 0.10-weight — or 0-weight —
+  signal flips the flag as readily as ECR, and a flag that fires on everything
+  is not a warning.
 
 ### The self-calibration loop (#7)
 
@@ -92,6 +98,49 @@ joins the pick to the same Sleeper outcomes, and reports top-pick hit-rate plus 
 **confident-vs-close-call hit-rate split** — the honesty check on close-call
 flagging. It reuses `weighted_final`, the `OutcomeProvider` seam, and `load_decisions`;
 it never writes weights.
+
+### Game context (schedule)
+
+`sources/schedule.py:ScheduleProvider` resolves the week's fixtures once (keyless
+ESPN scoreboard) and is **shared** by every signal needing game context — it is
+not a `Signal`, has no blend weight, and is exempt from the "four places" rule.
+`venue_for` decides where a game is played: the feed's per-game `indoor` flag
+wins, then a known neutral-site venue by name, then the home team's stadium, then
+`None`. It returns `None` rather than guessing, because a wrong forecast presented
+as fact is worse than a missing signal — a missing one just re-weights the rest.
+
+`WeatherSignal` therefore scores *games*, not teams: both sides of a matchup share
+one forecast and one lookup, read at the actual kickoff hour (`timezone=UTC` end
+to end, so there is no local-time or DST arithmetic anywhere). With no schedule,
+no kickoff, an unknown venue, or a forecast that doesn't reach the game, it is
+unavailable. There is deliberately **no** fallback to "the windiest day in the
+horizon" — that invented risk from weather unrelated to the game.
+
+`VegasSignal` uses the same provider to filter events: the odds endpoint takes no
+week parameter and returns every upcoming game, so once next week's lines post a
+team appears twice. `games_for_week` matches on the (home, away) pair, falling
+back to the kickoff window and then to `implied_totals_by_team`'s
+first-occurrence-wins, which given the API's kickoff ordering keeps the sooner
+game. Unlike weather, Vegas still works without a schedule — it just filters less
+precisely.
+
+### The lineup builder and the FLEX slot
+
+`report.score_week` does one scoring pass per roster: `rank_each_position` ranks
+each position group, and `rank_flex_pool` ranks all RB/WR/TE candidates **in one
+candidate set** using FantasyPros' cross-position FLEX list (`ECRSignal.pooled()`,
+pseudo-position `FLX`). That pooled pass is what makes the FLEX pick valid —
+`normalize.to_0_100` is min-max *within* the candidate set, so per-position scores
+put every position's leader at 100 and are not comparable across positions.
+
+Three rules hold here. The pooled rec is **never** folded into `recs` (the Discord
+renderer emits an alert per `recs` entry and would duplicate them). It is **never**
+logged (the calibrator scores pairwise concordance within one decision, so it would
+double-weight those players). And it is **refused** below `MIN_FLEX_ECR_COVERAGE`
+— without ECR the pooled blend runs on Vegas/injury/weather alone, which is a worse
+pick than the fallback and an invisible one. On refusal `build_lineup` degrades to
+comparing per-position scores and says so via `Lineup.caveat`, which every renderer
+surfaces.
 
 ### Output & delivery
 

@@ -16,6 +16,7 @@ from .season import is_preseason
 from .sources.base import Signal
 from .sources.ecr import ECRSignal
 from .sources.injury import InjurySignal
+from .sources.schedule import ScheduleProvider
 from .sources.vegas import VegasSignal
 from .sources.weather import WeatherSignal
 
@@ -34,13 +35,39 @@ def build_signals(settings: Settings, season: Optional[int] = None,
     if preseason and settings.preseason_fill:
         from .sources.sample import build_sample_signals
         return build_sample_signals()
+    # One provider shared by every signal that needs game context, so the week's
+    # schedule is fetched once and both signals agree on who plays whom, where.
+    schedule = ScheduleProvider(season=season, cache_dir=settings.data_dir)
     return [
         ECRSignal(api_key=settings.fantasypros_api_key, scoring=settings.scoring,
                   season=season),
-        VegasSignal(api_key=settings.odds_api_key),
+        VegasSignal(api_key=settings.odds_api_key, schedule=schedule),
         InjurySignal(data_dir=settings.data_dir, enabled=settings.injury_enabled),
-        WeatherSignal(enabled=settings.weather_enabled),
+        WeatherSignal(enabled=settings.weather_enabled, schedule=schedule),
     ]
+
+
+def flex_signals(signals: Sequence[Signal]) -> Optional[list[Signal]]:
+    """Swap the ECR signal for its pooled sibling, keeping the rest by reference.
+
+    Vegas, injury and weather are position-agnostic — they key off team or the
+    Sleeper id — so they work unchanged on a mixed RB/WR/TE candidate set, and
+    reusing the same instances means their caches (and the Odds API quota) carry
+    over: the pooled pass costs one extra HTTP call in total.
+
+    Returns ``None`` when there is no live ECR signal to pool, which is the case
+    for preseason sample runs.
+    """
+    out: list[Signal] = []
+    found = False
+    for sig in signals:
+        pooled = getattr(sig, "pooled", None)
+        if callable(pooled) and not getattr(sig, "is_sample", False):
+            out.append(pooled())
+            found = True
+        else:
+            out.append(sig)
+    return out if found else None
 
 
 def recommend(
@@ -84,6 +111,7 @@ def recommend(
         higher_is_better=higher_is_better,
         weights=settings.weights,
         close_call_threshold=settings.close_call_threshold,
+        min_disagree_weight=settings.min_disagree_weight,
     )
 
     if log:

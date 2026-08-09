@@ -54,3 +54,15 @@ def test_non_commands_return_none():
 
 def test_uses_first_nonblank_line():
     assert parse_command("\n\n/lineup\nsome trailing prose") == ["lineup", "--md"]
+
+
+def test_non_numeric_week_is_rejected():
+    """argparse has --week as type=int and raises SystemExit on a bad value.
+
+    Validating here keeps that out of the workflow entirely, the same way an
+    unknown `source` is already rejected.
+    """
+    assert parse_command("/rank RB week abc") == ["rank", "--pos", "RB", "--md"]
+    assert parse_command("/rank RB week 5") == [
+        "rank", "--pos", "RB", "--md", "--week", "5",
+    ]
