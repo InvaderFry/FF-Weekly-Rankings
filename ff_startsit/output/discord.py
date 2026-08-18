@@ -19,6 +19,18 @@ from ..models import PlayerScore, Recommendation
 
 # Discord limits we stay safely under.
 _FIELD_VALUE_MAX = 1024
+_TITLE_MAX = 256
+#: Discord rejects a webhook payload carrying more than 10 embeds, or more than
+#: 6000 characters summed across every embed. One embed per league means a
+#: multi-league user reaches both on their own roster count, and the whole
+#: message is refused — so the payload is trimmed to fit rather than sent to be
+#: rejected. Losing the tail of a league list beats delivering nothing.
+_MAX_EMBEDS = 10
+_TOTAL_CHARS_MAX = 6000
+#: Characters held back from the budget for the trailer the last embed carries
+#: (dropped-leagues note + dashboard link + commands hint), so trimming to fit
+#: never leaves the message with no room for the parts that explain it.
+_TRAILER_RESERVE = 600
 _EMBED_COLOR = 0x2EA043  # green
 _BANNER_COLOR = 0xD29922  # amber — something needs the reader's attention
 
@@ -75,14 +87,12 @@ def _build_embed(week: int, scoring: str,
     if banner:
         description = f"**{banner}**\n\n{description}"
     embed: dict = {
-        "title": f"🏈 Week {week} start/sit — {scoring.upper()}{label_suffix}",
+        "title": _clip(f"🏈 Week {week} start/sit — {scoring.upper()}{label_suffix}",
+                       _TITLE_MAX),
         "description": _clip(description, 4096),
         "color": _BANNER_COLOR if banner else _EMBED_COLOR,
         "fields": [],
     }
-    if dashboard_url:
-        embed["url"] = dashboard_url
-
     alerts = _alerts(lineup, recs)
     if alerts:
         value = _clip("\n".join(f"• {a}" for a in alerts), _FIELD_VALUE_MAX)
@@ -90,11 +100,19 @@ def _build_embed(week: int, scoring: str,
         value = "None — all clear 🎉"
     embed["fields"].append({"name": "⚠️ Alerts", "value": value, "inline": False})
 
-    if dashboard_url:
-        embed["fields"].append(
-            {"name": "Full dashboard", "value": dashboard_url, "inline": False}
-        )
+    _dashboard_field(embed, dashboard_url)
     return embed
+
+
+def _dashboard_field(embed: dict, dashboard_url: Optional[str]) -> None:
+    """Link the embed to the full dashboard (title link + field)."""
+    if not dashboard_url:
+        return
+    embed["url"] = dashboard_url
+    embed["fields"].append(
+        {"name": "Full dashboard",
+         "value": _clip(dashboard_url, _FIELD_VALUE_MAX), "inline": False}
+    )
 
 
 def _commands_field(embed: dict, commands_url: Optional[str]) -> None:
@@ -129,24 +147,77 @@ def build_discord_payload(week: int, scoring: str,
     return {"embeds": [embed]}
 
 
+def _embed_chars(embed: dict) -> int:
+    """Characters Discord counts against the 6000-per-message budget."""
+    total = len(embed.get("title") or "") + len(embed.get("description") or "")
+    total += len((embed.get("footer") or {}).get("text") or "")
+    for f in embed.get("fields") or []:
+        total += len(f.get("name") or "") + len(f.get("value") or "")
+    return total
+
+
+def _fit_message_budget(embeds: list[dict]) -> None:
+    """Shrink the longest text blocks in place until the message fits.
+
+    The per-field caps are individually generous enough that their sum can still
+    exceed the 6000-character message limit, so the budget has to be enforced on
+    the assembled message rather than assumed from the parts. Titles and field
+    names are left alone — they are short, bounded, and carry the structure —
+    which also guarantees this terminates below the limit.
+    """
+    def blocks(embed: dict) -> list[tuple[dict, str]]:
+        """Every (container, key) holding shrinkable text in one embed."""
+        return [(embed, "description")] + [(f, "value") for f in embed["fields"]]
+
+    while sum(_embed_chars(e) for e in embeds) > _TOTAL_CHARS_MAX:
+        holder, key = max(
+            (pair for e in embeds for pair in blocks(e)),
+            key=lambda pair: len(pair[0].get(pair[1]) or ""),
+        )
+        current = holder.get(key) or ""
+        if len(current) <= 1:
+            return                      # nothing left to give back
+        holder[key] = _clip(current, max(1, len(current) // 2))
+
+
 def build_multi_discord_payload(week: int, bundles: Sequence["LeagueBundle"],
                                 dashboard_url: Optional[str] = None,
                                 commands_url: Optional[str] = None) -> dict:
-    """One message, one embed per league (Discord allows up to 10 embeds).
+    """One message, one embed per league, trimmed to what Discord will accept.
 
     ``bundles`` are ``report.LeagueBundle`` objects (duck-typed to avoid an import
-    cycle). The dashboard link + commands hint ride the last embed so the message
-    stays scannable.
+    cycle). The dashboard link + commands hint ride the last *emitted* embed so
+    the message stays scannable even when trailing leagues were dropped, and the
+    drop is stated in that embed rather than left for the reader to notice.
     """
     embeds: list[dict] = []
-    for i, b in enumerate(bundles):
-        last = i == len(bundles) - 1
+    budget = _TOTAL_CHARS_MAX
+    for b in bundles[:_MAX_EMBEDS]:
         embed = _build_embed(week, b.scoring, b.lineup, b.recs,
-                             dashboard_url=dashboard_url if last else None,
-                             banner=b.banner, label=b.label)
-        if last:
-            _commands_field(embed, commands_url)
+                             dashboard_url=None, banner=b.banner, label=b.label)
+        # Reserve room for the trailer the last embed still has to carry.
+        cost = _embed_chars(embed)
+        if embeds and cost > budget - _TRAILER_RESERVE:
+            break
+        budget -= cost
         embeds.append(embed)
+
+    if not embeds:
+        return {"embeds": []}
+
+    dropped = len(bundles) - len(embeds)
+    last = embeds[-1]
+    if dropped > 0:
+        last["fields"].append({
+            "name": "⚠️ Not shown",
+            "value": _clip(f"{dropped} more league(s) didn't fit in one Discord "
+                           "message — see the dashboard for the full set.",
+                           _FIELD_VALUE_MAX),
+            "inline": False,
+        })
+    _dashboard_field(last, dashboard_url)
+    _commands_field(last, commands_url)
+    _fit_message_budget(embeds)
     return {"embeds": embeds}
 
 

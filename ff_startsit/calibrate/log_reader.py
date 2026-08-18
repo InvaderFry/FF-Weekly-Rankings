@@ -59,6 +59,11 @@ def load_decisions(path: Path, season: Optional[str] = None,
     """Parse ``path`` (JSONL) into Decisions, optionally filtered by season/week.
 
     Malformed lines and rows without a week are skipped rather than crashing the run.
+    "Malformed" covers the whole row, not just its JSON syntax: a non-numeric
+    score, a week that isn't a number, or a line that parses to something other
+    than an object costs that one row. One corrupt field must not discard a
+    season's worth of valid decisions — the log is append-only and never
+    rewritten, so a bad row stays bad forever.
     """
     if not path.exists():
         return []
@@ -71,32 +76,46 @@ def load_decisions(path: Path, season: Optional[str] = None,
             row = json.loads(line)
         except json.JSONDecodeError:
             continue
-        wk = row.get("week")
-        if wk is None:
+        try:
+            decision = _parse_row(row, season, week)
+        except (ValueError, TypeError, AttributeError):
             continue
-        row_season = season_from_ts(row.get("ts", "")) or ""
-        if season is not None and row_season != str(season):
-            continue
-        if week is not None and int(wk) != int(week):
-            continue
-        candidates = []
-        for c in row.get("candidates", []):
-            norm = {k: float(v) for k, v in (c.get("normalized") or {}).items()
-                    if v is not None}
-            candidates.append(Candidate(
-                key=str(c.get("key", "")),
-                name=c.get("name", ""),
-                position=(c.get("position") or "").upper(),
-                normalized=norm,
-            ))
-        weights = {str(k): float(v) for k, v in (row.get("weights") or {}).items()
-                   if v is not None}
-        decisions.append(Decision(
-            week=int(wk),
-            season=row_season,
-            scoring=(row.get("scoring") or "ppr").lower(),
-            candidates=candidates,
-            weights=weights,
-            close_call=bool(row.get("close_call", False)),
-        ))
+        if decision is not None:
+            decisions.append(decision)
     return decisions
+
+
+def _parse_row(row, season: Optional[str], week: Optional[int]) -> Optional[Decision]:
+    """One log row -> a Decision, or None when it is filtered out.
+
+    Raises ValueError/TypeError/AttributeError on a malformed row; the caller
+    turns that into a skip.
+    """
+    wk = row.get("week")
+    if wk is None:
+        return None
+    row_season = season_from_ts(row.get("ts", "")) or ""
+    if season is not None and row_season != str(season):
+        return None
+    if week is not None and int(wk) != int(week):
+        return None
+    candidates = []
+    for c in row.get("candidates", []):
+        norm = {k: float(v) for k, v in (c.get("normalized") or {}).items()
+                if v is not None}
+        candidates.append(Candidate(
+            key=str(c.get("key", "")),
+            name=c.get("name", ""),
+            position=(c.get("position") or "").upper(),
+            normalized=norm,
+        ))
+    weights = {str(k): float(v) for k, v in (row.get("weights") or {}).items()
+               if v is not None}
+    return Decision(
+        week=int(wk),
+        season=row_season,
+        scoring=(row.get("scoring") or "ppr").lower(),
+        candidates=candidates,
+        weights=weights,
+        close_call=bool(row.get("close_call", False)),
+    )

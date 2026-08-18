@@ -82,3 +82,25 @@ def test_calibrate_write_blocked_on_thin_data(tmp_path):
                        outcome_provider=provider)
     assert rc == 1
     assert not settings.learned_weights_path.exists()
+
+
+def _parse_calibrate(argv):
+    from ff_startsit.cli import _build_parser
+    return _build_parser().parse_args(["calibrate", *argv])
+
+
+def test_grid_step_must_be_a_usable_resolution():
+    """`--step 0` used to reach `1.0 / step` — after the outcome joins had
+    already gone to the network — and surface as a ZeroDivisionError. A negative
+    step was worse: it silently collapsed the grid to its one-hot corners."""
+    import pytest
+
+    for bad in ("0", "0.0", "-0.05", "1.5", "abc"):
+        with pytest.raises(SystemExit):
+            _parse_calibrate(["--step", bad])
+
+
+def test_grid_step_accepts_valid_resolutions():
+    assert _parse_calibrate(["--step", "0.05"]).step == 0.05
+    assert _parse_calibrate(["--step", "1"]).step == 1.0
+    assert _parse_calibrate([]).step == 0.05

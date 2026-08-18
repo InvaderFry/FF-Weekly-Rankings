@@ -58,7 +58,13 @@ without touching the pure engine.
 
 - **`Player.key` is the Sleeper player id** and the join key every signal returns
   values against. Signals/outcomes match on this id (ESPN/manual rosters fall back
-  to name+position via `data/matching.py`), never on raw names.
+  to name+position via `data/matching.py`), never on raw names. **Team defenses are
+  the exception**: every source names them differently (ESPN `Chiefs D/ST`, Sleeper
+  `Kansas City`, FantasyPros `Kansas City Chiefs` under position `DST`, not `DEF`),
+  so `player_match_key` keys them on the canonical team abbreviation via
+  `normalize_team` and folds `DEF`/`DST` into one position. Don't reintroduce a
+  name-based DEF key — the name never matched, which silently cost the DEF slot
+  ECR's 0.60 of blend weight.
 - **Graceful degradation, never a crash.** A missing signal for a player (bye,
   unmatched, disabled) is dropped and remaining weights re-normalize — the player
   is not penalized. `pipeline.recommend` catches any signal `fetch` exception and
@@ -70,7 +76,12 @@ without touching the pure engine.
   all-`None` blend.
 - **`config.Settings` is the sole owner of blend weights.** Weight precedence:
   hardcoded defaults < `learned_weights.json` (written by `calibrate --write`) <
-  explicit `FF_WEIGHT_*` env. Don't read weights from anywhere else.
+  explicit `FF_WEIGHT_*` env. Don't read weights from anywhere else. A learned
+  file *replaces* the weight set rather than patching it (`_apply_learned`):
+  `calibrate --write` only writes the signals it observed, so merging that subset
+  into the defaults left the un-learned defaults standing and delivered a learned
+  70/30 as 57/25. A signal the file never names goes to 0; one it names with an
+  unusable value keeps its default, since that is a corrupt entry, not a verdict.
 - **Close-call flagging is the product**, not decoration. `blend._flag_close_call`
   flags when the top two finals are within `close_call_threshold` OR when a
   signal ranks the runner-up above the leader. Preserve both conditions. The
@@ -85,7 +96,9 @@ without touching the pure engine.
 
 Every `rank`/`compare` run appends a row to `.cache/results_log.jsonl`
 (`results_log.py`) capturing candidates, each signal's raw + normalized value, the
-weights, and the pick. `calibrate` (`calibrate/`) reads that log back
+weights, and the pick. `publish`/`report` do the same under an explicit `--log`;
+whole-roster passes stay opt-in because a scheduled run scores every position
+every week and would otherwise swamp the corpus with decisions nobody acted on. `calibrate` (`calibrate/`) reads that log back
 (`log_reader.py`), joins it to **actual** weekly points from the free Sleeper
 stats endpoint (`outcomes.py`), and grid-searches the weight simplex
 (`learner.py`) by pairwise ranking concordance — **re-blending the logged
@@ -141,6 +154,13 @@ double-weight those players). And it is **refused** below `MIN_FLEX_ECR_COVERAGE
 pick than the fallback and an invisible one. On refusal `build_lineup` degrades to
 comparing per-position scores and says so via `Lineup.caveat`, which every renderer
 surfaces.
+
+`report.rank_pooled` is the shared implementation of that pass, because `compare`
+faces the identical problem: a mixed RB/WR/TE comparison scored per-position puts
+each position's leader at 100 and is meaningless. So `compare` pools when every
+candidate is flex-eligible, and **refuses** otherwise (QB vs RB) or when the
+pooled ranking fails its coverage guard — there is no honest fallback, and the
+per-position blend would answer with a number that doesn't mean what it says.
 
 ### Output & delivery
 

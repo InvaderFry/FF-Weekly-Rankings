@@ -137,3 +137,46 @@ def test_unjoinable_outcomes_yield_no_pairs(tmp_path):
                       base_weights={"ecr": 0.65, "vegas": 0.20}, step=0.5)
     assert empty.pairs_used == 0
     assert empty.decisions_used == 0
+
+
+def test_malformed_row_is_skipped_not_fatal(tmp_path):
+    """The log is append-only, so one corrupt row would poison it forever.
+
+    Only JSON *syntax* errors used to be survivable; a non-numeric score or an
+    unparseable week aborted the whole load and discarded every valid decision.
+    """
+    log = tmp_path / "results_log.jsonl"
+    _write_log(log, weeks=2)
+    good = log.read_text().splitlines()
+
+    bad_score = json.loads(good[0])
+    bad_score["candidates"][0]["normalized"]["ecr"] = "n/a"
+    bad_week = json.loads(good[0])
+    bad_week["week"] = "week five"
+    bad_weight = json.loads(good[0])
+    bad_weight["weights"]["ecr"] = [1, 2]
+
+    log.write_text("\n".join([
+        good[0],
+        json.dumps(bad_score),
+        "[1, 2]",                  # valid JSON, wrong shape
+        json.dumps(bad_week),
+        json.dumps(bad_weight),
+        "{not json at all",
+        good[1],
+    ]))
+
+    decisions = load_decisions(log)
+    assert len(decisions) == 2
+    assert [d.week for d in decisions] == [1, 2]
+
+
+def test_week_filter_survives_a_row_with_an_unparseable_week(tmp_path):
+    log = tmp_path / "results_log.jsonl"
+    _write_log(log, weeks=3)
+    rows = log.read_text().splitlines()
+    broken = json.loads(rows[0])
+    broken["week"] = {"nested": "object"}
+    log.write_text("\n".join([json.dumps(broken)] + rows))
+
+    assert [d.week for d in load_decisions(log, week=2)] == [2]

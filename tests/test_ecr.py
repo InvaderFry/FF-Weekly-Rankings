@@ -190,3 +190,28 @@ def test_week_mismatch_warns_once_not_once_per_position(capsys, monkeypatch):
         Player(key="3", name="Another", team="KC", position="TE"),
     ])
     assert capsys.readouterr().err.count("not week-3 rankings") == 1
+
+
+def test_fetch_joins_def_roster_players_to_dst_ranking_rows():
+    """FantasyPros ranks defenses under "DST"; every roster source says "DEF".
+
+    Both halves of the old match key differed — name *and* position — so no
+    defense ever received an ECR rank on any roster source, and the DEF slot was
+    scored on Vegas/injury/weather alone with ECR's 0.60 weight silently gone.
+    """
+    payload = {"players": [
+        {"player_name": "Kansas City Chiefs", "player_team_id": "KC",
+         "player_position_id": "DST", "rank_ecr": 2},
+        {"player_name": "San Francisco 49ers", "player_team_id": "SF",
+         "player_position_id": "DST", "rank_ecr": 5},
+    ]}
+    sig = ECRSignal(api_key="testkey", scoring="ppr", season=2025,
+                    session=_FakeSession(payload))
+
+    players = [
+        Player(key="espn-16", name="Chiefs D/ST", team="KC", position="DEF"),  # ESPN
+        Player(key="SF", name="San Francisco", team="SF", position="DEF"),     # Sleeper
+    ]
+    out = sig.fetch(3, players)
+    assert out["espn-16"].available and out["espn-16"].raw == 2.0
+    assert out["SF"].available and out["SF"].raw == 5.0
