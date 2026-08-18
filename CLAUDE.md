@@ -98,12 +98,46 @@ Every `rank`/`compare` run appends a row to `.cache/results_log.jsonl`
 (`results_log.py`) capturing candidates, each signal's raw + normalized value, the
 weights, and the pick. `publish`/`report` do the same under an explicit `--log`;
 whole-roster passes stay opt-in because a scheduled run scores every position
-every week and would otherwise swamp the corpus with decisions nobody acted on. `calibrate` (`calibrate/`) reads that log back
+every week and would otherwise swamp the corpus with decisions nobody acted on.
+`calibrate` (`calibrate/`) reads that log back
 (`log_reader.py`), joins it to **actual** weekly points from the free Sleeper
 stats endpoint (`outcomes.py`), and grid-searches the weight simplex
 (`learner.py`) by pairwise ranking concordance — **re-blending the logged
-`normalized` values, never re-fetching**. It refuses to `--write` on thin data
-(`--min-pairs`) or when current weights already tie the grid best.
+`normalized` values, never re-fetching**. It refuses to `--write` when current
+weights already tie the grid best, or when the corpus is too thin.
+
+**"Thin" is three floors, not one** (`--min-pairs` 30, `--min-decisions` 5,
+`--min-weeks` 3), because pairs alone cannot tell one week from ten: a single
+nine-player ranking yields 36 correlated pairs off one slate, one injury report,
+one weather system, and used to clear a pairs-only gate on its own. `min_weeks`
+is the floor carrying the meaning — a `publish --log` pass adds decisions fast but
+only ever one week at a time. `CalibrationResult.shortfalls` names which floor
+fell short, since "gather more data" doesn't say what to gather. This matters
+more than it looks: because a learned file now *replaces* the weight set, a
+premature `--write` zeroes every signal the log happened not to contain rather
+than merely diluting it.
+
+`dedupe_decisions` (`log_reader.py`) collapses rows sharing `(season, week,
+scoring)` and the same candidate keys — the Thursday and Sunday passes over one
+week are one piece of evidence, not two — keeping the latest, since a repeat run
+has fresher injury and weather reads. Both `calibrate` and `backtest` apply it;
+duplicates would otherwise inflate the write gate and the honesty numbers alike.
+
+**Three kinds of run are never logged**, all for the same reason — the row would
+not mean what it claims, and the log is append-only: preseason sample runs
+(`pipeline.py`), the pooled FLEX pass (`rank_pooled`), and any run where a signal
+served a week other than the one requested. That last one is `ECRSignal.
+served_wrong_week`: the keyless scrape has no week selector, so `--week 5` returns
+current-week ranks. Show the ranking, warn, withhold the row — a warning the user
+scrolls past is enough for a table they're reading now, not for a row that would
+mislead every future calibration.
+
+The corpus survives scheduled runs on a `calibration-data` orphan branch
+(`weekly-report.yml`), since `.cache/` dies with the runner. Note
+`results_log.jsonl` is gitignored as cache everywhere else, so that push needs
+`git add -f` — without it the step silently succeeds and persists nothing. Nothing
+runs `calibrate --write` from CI; fitting weights on a cron is what the floors
+above exist to prevent.
 
 `backtest` (`calibrate/backtest.py`) is the read-only companion: it replays each
 logged decision under **the weights that run actually used** (`Decision.weights`),

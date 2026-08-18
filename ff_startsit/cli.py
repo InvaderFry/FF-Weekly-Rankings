@@ -60,6 +60,17 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         return 2
 
 
+def _positive_int(value: str) -> int:
+    """argparse type for the evidence floors: a count of at least 1."""
+    try:
+        count = int(value)
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"{value!r} is not a whole number")
+    if count < 1:
+        raise argparse.ArgumentTypeError(f"must be at least 1 (got {count})")
+    return count
+
+
 def _grid_step(value: str) -> float:
     """argparse type for --step: a grid resolution in (0, 1].
 
@@ -166,8 +177,14 @@ def _build_parser() -> argparse.ArgumentParser:
     p_cal.add_argument("--week", type=int, default=None, help="only use decisions from this week")
     p_cal.add_argument("--step", type=_grid_step, default=0.05,
                        help="weight grid resolution, in (0, 1] (default 0.05)")
-    p_cal.add_argument("--min-pairs", type=int, default=30, dest="min_pairs",
+    p_cal.add_argument("--min-pairs", type=_positive_int, default=30, dest="min_pairs",
                        help="minimum joined pairs required to trust/write a result (default 30)")
+    p_cal.add_argument("--min-decisions", type=_positive_int, default=5, dest="min_decisions",
+                       help="minimum joined decisions required to write (default 5)")
+    p_cal.add_argument("--min-weeks", type=_positive_int, default=3, dest="min_weeks",
+                       help="minimum distinct weeks required to write (default 3). Weights "
+                            "fitted to one week are fitted to that week's slate, not to your "
+                            "leagues")
     p_cal.add_argument("--log", type=Path, default=None, help="results log path (default: the cache log)")
     p_cal.add_argument("--write", action="store_true",
                        help="persist the learned weights so future runs auto-apply them")
@@ -558,7 +575,7 @@ def cmd_calibrate(args, settings: Settings, outcome_provider=None) -> int:
     defaults to the free Sleeper weekly-stats source.
     """
     from .calibrate import calibrate as run_calibrate
-    from .calibrate import load_decisions
+    from .calibrate import dedupe_decisions, load_decisions
 
     log_path = args.log or settings.results_log_path
     decisions = load_decisions(log_path, season=args.season, week=args.week)
@@ -566,10 +583,13 @@ def cmd_calibrate(args, settings: Settings, outcome_provider=None) -> int:
         print(f"No logged decisions in {log_path}. Run some rank/compare passes first?",
               file=sys.stderr)
         return 1
+    decisions = dedupe_decisions(decisions)
 
     provider = outcome_provider or _sleeper_outcome_provider(settings)
     result = run_calibrate(decisions, provider, base_weights=settings.weights,
-                           step=args.step, min_pairs=args.min_pairs)
+                           step=args.step, min_pairs=args.min_pairs,
+                           min_decisions=getattr(args, "min_decisions", 5),
+                           min_weeks=getattr(args, "min_weeks", 3))
     _print_calibration(result)
 
     if not result.pairs_used:
@@ -579,8 +599,10 @@ def cmd_calibrate(args, settings: Settings, outcome_provider=None) -> int:
 
     if args.write:
         if not result.enough_data:
-            print(f"Only {result.pairs_used} joined pairs (< --min-pairs "
-                  f"{args.min_pairs}); not writing — gather more data first.",
+            print("Not writing — the corpus is too thin to fit weights on: "
+                  + "; ".join(result.shortfalls) + ".", file=sys.stderr)
+            print("Weights fitted to one slate describe that slate, not your "
+                  "leagues. Keep logging and try again in a week or two.",
                   file=sys.stderr)
             return 1
         if result.best_concordance <= result.current_concordance:
@@ -600,8 +622,9 @@ def _fmt_weights(weights, order: Sequence[str]) -> str:
 
 
 def _print_calibration(result) -> None:
-    print(f"Calibration over {result.decisions_used} decision(s), "
-          f"{result.pairs_used} comparable pair(s); tuning {', '.join(result.signals) or '(none)'}.")
+    print(f"Calibration over {result.decisions_used} decision(s) across "
+          f"{result.weeks_used} week(s), {result.pairs_used} comparable pair(s); "
+          f"tuning {', '.join(result.signals) or '(none)'}.")
     if not result.pairs_used:
         return
     print(f"  current  weights: {_fmt_weights(result.current_weights, result.signals)}")
@@ -651,7 +674,7 @@ def cmd_backtest(args, settings: Settings, outcome_provider=None) -> int:
     so tests run offline; it defaults to the free Sleeper weekly-stats source.
     """
     from .calibrate import backtest as run_backtest
-    from .calibrate import load_decisions
+    from .calibrate import dedupe_decisions, load_decisions
 
     log_path = args.log or settings.results_log_path
     decisions = load_decisions(log_path, season=args.season, week=args.week)
@@ -659,6 +682,7 @@ def cmd_backtest(args, settings: Settings, outcome_provider=None) -> int:
         print(f"No logged decisions in {log_path}. Run some rank/compare passes first?",
               file=sys.stderr)
         return 1
+    decisions = dedupe_decisions(decisions)
 
     provider = outcome_provider or _sleeper_outcome_provider(settings)
     result = run_backtest(decisions, provider, base_weights=settings.weights)

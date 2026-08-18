@@ -139,3 +139,43 @@ def test_cmd_backtest_unjoinable_errors(tmp_path):
     rc = cmd_backtest(_args(log), settings,
                       outcome_provider=lambda s, w, sc: (lambda k, n, p: None))
     assert rc == 1
+
+
+def test_duplicate_runs_do_not_inflate_the_hit_rate(tmp_path):
+    """A re-run of the same week is the same evidence, counted once.
+
+    Backtest reports honesty numbers — a hit-rate padded by whichever weeks the
+    user happened to re-run is not an honest number.
+    """
+    from ff_startsit.calibrate.log_reader import dedupe_decisions
+
+    log = tmp_path / "results_log.jsonl"
+    outcomes = _write_log(log)
+    rows = log.read_text().splitlines()
+    # Re-run weeks 1 and 2 (both correct picks) — undeduped, they would drag the
+    # miss in week 3 from 1-in-3 down to 1-in-5.
+    log.write_text("\n".join(rows + [rows[0], rows[1]]))
+
+    raw = load_decisions(log)
+    deduped = dedupe_decisions(raw)
+    assert (len(raw), len(deduped)) == (5, 3)
+
+    inflated = backtest(raw, _provider(outcomes), base_weights={"ecr": 1.0})
+    honest = backtest(deduped, _provider(outcomes), base_weights={"ecr": 1.0})
+
+    assert inflated.decisions_used == 5
+    assert honest.decisions_used == 3
+    assert honest.hit_rate < inflated.hit_rate
+
+
+def test_cmd_backtest_dedupes_before_reporting(tmp_path, capsys):
+    log = tmp_path / "results_log.jsonl"
+    outcomes = _write_log(log)
+    rows = log.read_text().splitlines()
+    log.write_text("\n".join(rows + [rows[0], rows[1]]))
+
+    args = argparse.Namespace(season=None, week=None, log=log)
+    rc = cmd_backtest(args, Settings(weights={"ecr": 1.0}, data_dir=tmp_path),
+                      outcome_provider=_provider(outcomes))
+    assert rc == 0
+    assert "3 evaluatable decision(s)" in capsys.readouterr().out

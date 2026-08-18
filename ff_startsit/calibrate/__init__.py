@@ -2,7 +2,7 @@
 
 from .backtest import BacktestResult, backtest
 from .learner import CalibrationResult, calibrate
-from .log_reader import Decision, load_decisions
+from .log_reader import Decision, dedupe_decisions, load_decisions
 from .outcomes import OutcomeIndex, SleeperStatsClient, build_outcome_lookup
 
 __all__ = [
@@ -11,6 +11,7 @@ __all__ = [
     "BacktestResult",
     "backtest",
     "Decision",
+    "dedupe_decisions",
     "load_decisions",
     "OutcomeIndex",
     "SleeperStatsClient",

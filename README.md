@@ -157,6 +157,21 @@ ffstartsit calibrate --week 5        # only weeks 5; also --season YYYY
 ffstartsit calibrate --write         # persist the learned weights (auto-applied next run)
 ```
 
+**Feeding the log.** `rank` and `compare` log every run. The whole-roster commands
+take `--log` to opt in (`publish --log`, `report --log`) — off by default so a
+scheduled pass scoring every position every week can't swamp the corpus with
+decisions nobody acted on. The weekly Action runs `publish --log` and keeps the
+growing log on a `calibration-data` branch, since a runner's disk does not survive
+the job. To calibrate against what it has collected:
+
+```bash
+git fetch origin calibration-data
+git show origin/calibration-data:results_log.jsonl > /tmp/results_log.jsonl
+ffstartsit calibrate --log /tmp/results_log.jsonl
+```
+
+Calibration stays a deliberate act — nothing fits weights on a cron.
+
 - **Outcomes source:** the free, no-auth Sleeper weekly-stats endpoint, which
   returns precomputed PPR/Half/Standard points keyed by the same player id the log
   uses (ESPN/manual rosters fall back to name+position matching). No key needed.
@@ -167,9 +182,21 @@ ffstartsit calibrate --write         # persist the learned weights (auto-applied
   #1 pick was the week's actual best) for the current vs learned weights.
 - **Apply:** `--write` saves `.cache/learned_weights.json`; the next run picks it up
   automatically (precedence: defaults → learned file → explicit `FF_WEIGHT_*`).
-  It refuses to write on thin data (`--min-pairs`, default 30) or when your current
-  weights already match the best on the grid — surfacing coin-flips over false
-  confidence, same as the rest of the tool.
+  A learned file *replaces* the weight set rather than patching it, so the ratio it
+  found is the ratio you get: a signal the file never names is weighted 0, not left
+  at its default.
+- **Evidence floors:** `--write` needs `--min-pairs` (30), `--min-decisions` (5) *and*
+  `--min-weeks` (3) — pairs alone cannot tell one week from ten, since a single
+  nine-player ranking yields 36 pairs off one slate, one injury report, one weather
+  system. Repeated runs of the same question in the same week are collapsed before
+  counting. A refusal names which floor fell short. `--write` is also declined when
+  your current weights already match the best on the grid — surfacing coin-flips
+  over false confidence, same as the rest of the tool.
+- **What never gets logged:** preseason sample runs, the pooled FLEX pass, and any
+  run where a signal served a different week than the one asked for (the keyless
+  FantasyPros scrape has no week selector, so `--week 5` returns current-week ranks).
+  The ranking is still shown with a warning; only the log row is withheld, because
+  the log is append-only and would mislead every future `calibrate` and `backtest`.
 
 ### Backtest (`backtest`)
 

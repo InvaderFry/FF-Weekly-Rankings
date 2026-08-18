@@ -227,3 +227,54 @@ def test_score_week_log_excludes_the_pooled_flex_pass(tmp_path, monkeypatch):
     # Every logged decision is within one position group, never the pooled set.
     for row in rows:
         assert len({c["position"] for c in row["candidates"]}) == 1
+
+
+class _WrongWeekECR(Signal):
+    """An ECR-shaped signal that served a week other than the one requested."""
+
+    name = "ecr"
+    higher_is_better = False
+
+    def __init__(self, ranks, served_wrong_week=True):
+        self._ranks = ranks
+        self.served_wrong_week = served_wrong_week
+
+    def is_available(self):
+        return True
+
+    def fetch(self, week, players):
+        return {p.key: SignalValue(raw=self._ranks.get(p.key),
+                                   available=p.key in self._ranks)
+                for p in players}
+
+
+def test_wrong_week_signal_still_ranks_but_is_never_logged(tmp_path, capsys):
+    """Keep the answer, drop the row.
+
+    The scraped FantasyPros page has no week selector, so a --week 5 request
+    returns the current week's ranks. That is still worth showing with a warning,
+    but logging it would score present-day consensus against week 5's outcomes in
+    every future calibrate and backtest run — permanently, since the log is
+    append-only.
+    """
+    settings = Settings(weights={"ecr": 1.0}, data_dir=tmp_path)
+    players = [Player(key="1", name="Alpha", team="KC", position="RB"),
+               Player(key="2", name="Bravo", team="SF", position="RB")]
+
+    rec = recommend(settings, players, week=5,
+                    signals=[_WrongWeekECR({"1": 1.0, "2": 8.0})], command="rank")
+
+    assert rec.scores[0].player.key == "1"          # the ranking is still produced
+    assert not settings.results_log_path.exists()   # ...but nothing was logged
+    assert "not logging this week-5 run" in capsys.readouterr().err
+
+
+def test_right_week_signal_logs_normally(tmp_path):
+    settings = Settings(weights={"ecr": 1.0}, data_dir=tmp_path)
+    players = [Player(key="1", name="Alpha", team="KC", position="RB"),
+               Player(key="2", name="Bravo", team="SF", position="RB")]
+
+    recommend(settings, players, week=5, command="rank",
+              signals=[_WrongWeekECR({"1": 1.0, "2": 8.0}, served_wrong_week=False)])
+
+    assert settings.results_log_path.exists()

@@ -6,6 +6,7 @@ fake signals.
 
 from __future__ import annotations
 
+import sys
 from typing import Iterable, Optional, Sequence
 
 from .config import Settings
@@ -102,6 +103,16 @@ def recommend(
                 # blend degrades to whatever other signals are available.
                 signal_values[sig.name] = unavailable_for(players, f"{sig.name} fetch failed")
         higher_is_better[sig.name] = sig.higher_is_better
+
+    # Same rule as the sample-data guard above, applied to the other way a run's
+    # values can fail to mean what the logged row would claim: a signal that
+    # served a different week than the one asked for. Only knowable after the
+    # fetch, since it is the scrape itself that reveals the mismatch.
+    if log and any(getattr(s, "served_wrong_week", False) for s in signals):
+        log = False
+        print(f"warning: not logging this week-{week} run — a signal served data "
+              "for a different week, which would mislead `calibrate` and "
+              "`backtest` permanently.", file=sys.stderr)
 
     rec = blend(
         week=week,

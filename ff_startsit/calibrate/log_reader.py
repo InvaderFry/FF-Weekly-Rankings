@@ -16,7 +16,7 @@ import json
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Sequence
 
 
 @dataclass(frozen=True)
@@ -83,6 +83,31 @@ def load_decisions(path: Path, season: Optional[str] = None,
         if decision is not None:
             decisions.append(decision)
     return decisions
+
+
+def dedupe_decisions(decisions: Sequence[Decision]) -> list[Decision]:
+    """Collapse decisions that are the same question asked twice.
+
+    The log is append-only, so re-running ``/rank RB`` in the same week — or a
+    scheduled pass firing twice — writes the same decision again. Those rows are
+    one piece of evidence, not two, and counting them twice inflates both the
+    calibrator's ``--write`` gate and the backtest's hit-rate.
+
+    Identity is ``(season, week, scoring)`` plus the candidate key set: same
+    contest, same players. The *last* row wins, since a repeat run reflects the
+    freshest signals. Order is otherwise preserved.
+    """
+    by_identity: dict[tuple, int] = {}
+    kept: list[Optional[Decision]] = []
+    for d in decisions:
+        identity = (d.season, d.week, d.scoring,
+                    frozenset(c.key for c in d.candidates))
+        previous = by_identity.get(identity)
+        if previous is not None:
+            kept[previous] = None           # superseded by this newer run
+        by_identity[identity] = len(kept)
+        kept.append(d)
+    return [d for d in kept if d is not None]
 
 
 def _parse_row(row, season: Optional[str], week: Optional[int]) -> Optional[Decision]:

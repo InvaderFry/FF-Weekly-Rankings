@@ -1,13 +1,14 @@
 import json
 
 from ff_startsit.calibrate.learner import (
+    JoinedDecision,
     calibrate,
     concordance,
     hit_rate,
     signals_in,
     simplex,
 )
-from ff_startsit.calibrate.log_reader import load_decisions
+from ff_startsit.calibrate.log_reader import dedupe_decisions, load_decisions
 
 
 def _write_log(path, weeks=5):
@@ -73,10 +74,10 @@ def test_learner_recovers_predictive_signal(tmp_path):
 
 def test_concordance_and_hit_rate_math():
     # One decision: vegas orders correctly, so vegas=1 is perfect, ecr=1 is inverted.
-    joined = [[
+    joined = [JoinedDecision(season="2024", week=3, rows=[
         ({"ecr": 100.0, "vegas": 0.0}, 1.0),
         ({"ecr": 0.0, "vegas": 100.0}, 9.0),
-    ]]
+    ])]
     conc_vegas, pairs = concordance(joined, {"vegas": 1.0})
     assert (conc_vegas, pairs) == (1.0, 1)
     conc_ecr, _ = concordance(joined, {"ecr": 1.0})
@@ -180,3 +181,92 @@ def test_week_filter_survives_a_row_with_an_unparseable_week(tmp_path):
     log.write_text("\n".join([json.dumps(broken)] + rows))
 
     assert [d.week for d in load_decisions(log, week=2)] == [2]
+
+
+def _one_big_decision(path, candidates=9):
+    """One ranking with many players: the shape that used to clear --min-pairs.
+
+    C(9,2) = 36 correlated pairs from a single slate, single injury report,
+    single weather system.
+    """
+    outcomes, cands = {}, []
+    for i in range(candidates):
+        key = f"1-{i}"
+        cands.append({"key": key, "name": f"P{i}", "position": "RB",
+                      "normalized": {"ecr": 100.0 - i * 10.0, "vegas": i * 10.0}})
+        outcomes[key] = float(i)
+    path.write_text(json.dumps({
+        "ts": "2024-10-01T12:00:00+00:00", "week": 1, "scoring": "ppr",
+        "weights": {"ecr": 0.65, "vegas": 0.20}, "candidates": cands,
+    }))
+    return outcomes
+
+
+def test_one_ranking_clears_min_pairs_but_is_not_enough_data(tmp_path):
+    """The review's exact case: 36 pairs from one decision beats a floor of 30."""
+    log = tmp_path / "results_log.jsonl"
+    outcomes = _one_big_decision(log)
+    result = calibrate(load_decisions(log), _provider(outcomes),
+                       base_weights={"ecr": 0.65, "vegas": 0.20}, step=0.25)
+
+    assert result.pairs_used == 36 and result.pairs_used >= 30
+    assert result.weeks_used == 1 and result.decisions_used == 1
+    assert result.enough_data is False
+    assert any("week" in s for s in result.shortfalls)
+
+
+def test_evidence_spread_across_weeks_is_enough_data(tmp_path):
+    log = tmp_path / "results_log.jsonl"
+    outcomes = _write_log(log, weeks=5)
+    result = calibrate(load_decisions(log), _provider(outcomes),
+                       base_weights={"ecr": 0.65, "vegas": 0.20}, step=0.25)
+
+    assert (result.weeks_used, result.decisions_used) == (5, 5)
+    assert result.enough_data is True
+    assert result.shortfalls == []
+
+
+def test_shortfalls_name_every_floor_that_failed(tmp_path):
+    log = tmp_path / "results_log.jsonl"
+    outcomes = _write_log(log, weeks=2)      # 2 weeks, 2 decisions, 12 pairs
+    result = calibrate(load_decisions(log), _provider(outcomes),
+                       base_weights={"ecr": 0.65, "vegas": 0.20}, step=0.25)
+
+    assert result.enough_data is False
+    joined = " ".join(result.shortfalls)
+    assert "12 comparable pairs (need 30)" in joined
+    assert "2 joined decisions (need 5)" in joined
+    assert "2 distinct week(s) (need 3)" in joined
+
+
+def test_dedupe_collapses_a_repeated_run(tmp_path):
+    """Re-running the same question in the same week is one piece of evidence."""
+    log = tmp_path / "results_log.jsonl"
+    outcomes = _write_log(log, weeks=5)
+    rows = log.read_text().splitlines()
+    log.write_text("\n".join(rows + [rows[0], rows[2]]))   # two exact re-runs
+
+    raw = load_decisions(log)
+    deduped = dedupe_decisions(raw)
+    assert (len(raw), len(deduped)) == (7, 5)
+
+    result = calibrate(deduped, _provider(outcomes),
+                       base_weights={"ecr": 0.65, "vegas": 0.20}, step=0.25)
+    inflated = calibrate(raw, _provider(outcomes),
+                         base_weights={"ecr": 0.65, "vegas": 0.20}, step=0.25)
+    assert (result.pairs_used, result.decisions_used) == (30, 5)
+    assert inflated.pairs_used == 42          # what the duplicates would have bought
+
+
+def test_dedupe_keeps_the_freshest_run_of_a_repeat(tmp_path):
+    """A Sunday re-run has newer injury and weather reads than Thursday's."""
+    log = tmp_path / "results_log.jsonl"
+    _write_log(log, weeks=1)
+    first = json.loads(log.read_text().splitlines()[0])
+    later = json.loads(json.dumps(first))
+    later["candidates"][0]["normalized"]["ecr"] = 42.0
+    log.write_text("\n".join([json.dumps(first), json.dumps(later)]))
+
+    deduped = dedupe_decisions(load_decisions(log))
+    assert len(deduped) == 1
+    assert deduped[0].candidates[0].normalized["ecr"] == 42.0
