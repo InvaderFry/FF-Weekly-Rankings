@@ -148,6 +148,13 @@ class ECRSignal(Signal):
         #: instead of one list per position.
         self.pool_position = pool_position
         self.last_source: str = ""  # "api" or "scrape", for diagnostics
+        #: True once this signal has served values for a week that is not the week
+        #: they describe — the scrape path has no week selector, so a `--week 5`
+        #: request silently returns the current week's rankings. The values are
+        #: still worth showing (with the warning below), but a decision built on
+        #: them must not reach the append-only results log, where it would score
+        #: present-day consensus against a past week's outcomes forever.
+        self.served_wrong_week: bool = False
         self._rows_cache: dict[tuple[str, int], list[ExternalRow]] = {}
         self._week_warned: set[int] = set()  # warn once per week, not per position
 
@@ -237,13 +244,23 @@ class ECRSignal(Signal):
         Tuesday rollover, and failing the common path outright would be a worse
         trade than a visible caveat. Set FANTASYPROS_API_KEY for genuinely
         week-aware rankings.
+
+        The caveat does not stop at stderr, though — this also sets
+        ``served_wrong_week``, which keeps the run out of the results log. A
+        warning the user can scroll past is enough for a ranking they are reading
+        now; it is not enough for a row that would mislead every future
+        calibration run.
         """
         from ..season import date_week
 
+        current = date_week()
+        if week != current:
+            # Set before the warn-once guard: the flag gates logging on every run,
+            # while the message only needs saying once per week.
+            self.served_wrong_week = True
         if week in self._week_warned:
             return
         self._week_warned.add(week)
-        current = date_week()
         if week != current:
             # The scrape path is also reached when a key is set but the API call
             # fails, so don't assert a cause the caller may not have.

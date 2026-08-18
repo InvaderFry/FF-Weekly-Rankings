@@ -24,7 +24,7 @@ import os
 import sys
 import time
 from pathlib import Path
-from typing import Optional, Sequence
+from typing import Iterable, Optional, Sequence
 
 import requests
 
@@ -53,6 +53,41 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     except (RosterError, SleeperError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 2
+    except requests.RequestException as exc:
+        # `sync` is the one command that bypasses `_get_roster`, so it has no
+        # stale-cache fallback and would otherwise surface a raw traceback.
+        print(f"error: network request failed: {exc}", file=sys.stderr)
+        return 2
+
+
+def _positive_int(value: str) -> int:
+    """argparse type for the evidence floors: a count of at least 1."""
+    try:
+        count = int(value)
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"{value!r} is not a whole number")
+    if count < 1:
+        raise argparse.ArgumentTypeError(f"must be at least 1 (got {count})")
+    return count
+
+
+def _grid_step(value: str) -> float:
+    """argparse type for --step: a grid resolution in (0, 1].
+
+    Validated at parse time because the failure is otherwise both late and
+    opaque — ``simplex`` computes ``1.0 / step`` only after the outcome joins
+    have already gone to the network, so 0 surfaces as a ZeroDivisionError at
+    the end of a slow run, and a negative step silently collapses the grid to
+    the one-hot corners instead of erroring.
+    """
+    try:
+        step = float(value)
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"{value!r} is not a number")
+    if not 0 < step <= 1:
+        raise argparse.ArgumentTypeError(
+            f"step must be greater than 0 and at most 1 (got {step})")
+    return step
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -98,6 +133,8 @@ def _build_parser() -> argparse.ArgumentParser:
                               help="whole-roster markdown digest (lineup + all positions)")
     p_report.add_argument("--week", type=int, default=None)
     p_report.add_argument("--out", type=Path, default=None, help="write digest to a file too")
+    p_report.add_argument("--log", action="store_true",
+                          help="append these decisions to the results log (feeds `calibrate`)")
     p_report.set_defaults(func=cmd_report)
 
     p_jour = sub.add_parser("journalists", parents=[roster_parent],
@@ -128,6 +165,8 @@ def _build_parser() -> argparse.ArgumentParser:
     p_pub.add_argument("--dashboard", type=Path, default=None, help="write the HTML dashboard here")
     p_pub.add_argument("--discord", action="store_true", help="also send the Discord notification")
     p_pub.add_argument("--url", default=None, help="dashboard URL to link (or FF_DASHBOARD_URL)")
+    p_pub.add_argument("--log", action="store_true",
+                       help="append these decisions to the results log (feeds `calibrate`)")
     p_pub.add_argument("--all-leagues", action="store_true", dest="all_leagues",
                        help="one pass per configured league -> combined digest/dashboard/Discord")
     p_pub.set_defaults(func=cmd_publish)
@@ -136,9 +175,16 @@ def _build_parser() -> argparse.ArgumentParser:
                            help="learn blend weights from your logged decisions vs actual outcomes (#7)")
     p_cal.add_argument("--season", default=None, help="only use decisions from this season")
     p_cal.add_argument("--week", type=int, default=None, help="only use decisions from this week")
-    p_cal.add_argument("--step", type=float, default=0.05, help="weight grid resolution (default 0.05)")
-    p_cal.add_argument("--min-pairs", type=int, default=30, dest="min_pairs",
+    p_cal.add_argument("--step", type=_grid_step, default=0.05,
+                       help="weight grid resolution, in (0, 1] (default 0.05)")
+    p_cal.add_argument("--min-pairs", type=_positive_int, default=30, dest="min_pairs",
                        help="minimum joined pairs required to trust/write a result (default 30)")
+    p_cal.add_argument("--min-decisions", type=_positive_int, default=5, dest="min_decisions",
+                       help="minimum joined decisions required to write (default 5)")
+    p_cal.add_argument("--min-weeks", type=_positive_int, default=3, dest="min_weeks",
+                       help="minimum distinct weeks required to write (default 3). Weights "
+                            "fitted to one week are fitted to that week's slate, not to your "
+                            "leagues")
     p_cal.add_argument("--log", type=Path, default=None, help="results log path (default: the cache log)")
     p_cal.add_argument("--write", action="store_true",
                        help="persist the learned weights so future runs auto-apply them")
@@ -194,6 +240,11 @@ def cmd_rank(args, settings: Settings) -> int:
     return 0
 
 
+def _pos_list(positions: Iterable[str]) -> str:
+    """Positions as a stable, readable list for error messages."""
+    return "/".join(sorted(positions))
+
+
 def cmd_compare(args, settings: Settings) -> int:
     settings, profile = _league_context(args, settings)
     players = _get_roster(args, settings, profile)
@@ -204,12 +255,44 @@ def cmd_compare(args, settings: Settings) -> int:
 
     week = _resolve_week(args, settings)
     _print_preseason_banner(settings, md=args.md)
-    rec = recommend(settings, candidates, week, command="compare")
+
+    positions = {p.position for p in candidates}
+    note = None
+    if len(positions) == 1:
+        rec = recommend(settings, candidates, week, command="compare")
+    elif positions <= set(report.FLEX_POSITIONS):
+        # Per-position ECR ranks are not comparable — an RB1 and a WR1 both
+        # normalize to 100 — so a mixed flex-eligible set has to be scored
+        # against FantasyPros' cross-position FLEX list, exactly as the FLEX
+        # slot is. Refuse rather than fall back: the positional blend would
+        # answer the question with a number that does not mean what it says.
+        from .pipeline import build_signals
+
+        signals = build_signals(settings)
+        rec, reason = report.rank_pooled(settings, candidates, week, signals,
+                                         "compare:pooled")
+        if rec is None:
+            print(f"Can't compare {_pos_list(positions)} on this data: {reason}. "
+                  "Per-position ranks aren't comparable across positions, so "
+                  "there is no honest ranking to give here.", file=sys.stderr)
+            return 1
+        note = report.POOLED_COMPARE_NOTE
+    else:
+        print(f"Can't compare across {_pos_list(positions)}: a rank of 1 means "
+              "something different in each position group, so the scores would "
+              "not be comparable. Compare within one position, or among "
+              "flex-eligible players (RB/WR/TE).", file=sys.stderr)
+        return 1
+
     title = _titled(f"Week {week} compare • {settings.scoring.upper()}", profile)
     if args.md:
         print(render.render_markdown(rec, title=title))
+        if note:
+            print(f"\n_{note}_")
     else:
         render.render_table(rec, title=title)
+        if note:
+            print(f"note: {note}", file=sys.stderr)
     return 0
 
 
@@ -232,7 +315,9 @@ def cmd_lineup(args, settings: Settings) -> int:
             if pick is None:
                 lines.append(f"| {slot} | _(no option)_ | | |")
             else:
-                lines.append(f"| {slot} | {pick.player.name} | {pick.player.team or 'BYE'} "
+                lines.append(f"| {render.md_cell(slot)} "
+                             f"| {render.md_cell(pick.player.name)} "
+                             f"| {render.md_cell(pick.player.team or 'BYE')} "
                              f"| {pick.final:.1f} |")
         if lineup.caveat:
             lines += ["", f"> ⚠️ {lineup.caveat}"]
@@ -254,7 +339,8 @@ def cmd_report(args, settings: Settings) -> int:
     settings, profile = _league_context(args, settings)
     players = _get_roster(args, settings, profile)
     week = _resolve_week(args, settings)
-    digest = report.build_digest(settings, players, week, label=_league_label(profile))
+    digest = report.build_digest(settings, players, week, label=_league_label(profile),
+                                 log=getattr(args, "log", False))
     print(digest)
     if args.out:
         args.out.parent.mkdir(parents=True, exist_ok=True)
@@ -335,7 +421,13 @@ def cmd_notify(args, settings: Settings) -> int:
                                     banner=season.preseason_banner(settings),
                                     commands_url=_commands_url(settings),
                                     label=_league_label(profile))
-    send_discord(settings.discord_webhook_url, payload)
+    try:
+        send_discord(settings.discord_webhook_url, payload)
+    except Exception as exc:
+        # Same contract as `publish --discord`: a Discord hiccup is warned about,
+        # never a traceback.
+        print(f"warning: Discord notification failed: {exc}", file=sys.stderr)
+        return 1
     print("Sent Discord notification.")
     return 0
 
@@ -360,7 +452,8 @@ def cmd_publish(args, settings: Settings) -> int:
         print(f"warning: {banner}", file=sys.stderr)
 
     # The single scoring pass shared by every output.
-    ws = report.score_week(settings, players, week)
+    ws = report.score_week(settings, players, week,
+                           log=getattr(args, "log", False))
     recs = ws.recs
     lineup = report.lineup_from(ws)
     # One journalist pass too, shared by digest and dashboard (display-only).
@@ -419,7 +512,8 @@ def _league_bundles(args, settings: Settings, week: int) -> list:
             lsettings = replace(settings, scoring=profile.scoring)
         try:
             players = _get_roster(args, lsettings, profile)
-            ws = report.score_week(lsettings, players, week)
+            ws = report.score_week(lsettings, players, week,
+                                   log=getattr(args, "log", False))
             recs = ws.recs
             lineup = report.lineup_from(ws)
             journalists = report.build_journalist_view(lsettings, players, week)
@@ -481,7 +575,7 @@ def cmd_calibrate(args, settings: Settings, outcome_provider=None) -> int:
     defaults to the free Sleeper weekly-stats source.
     """
     from .calibrate import calibrate as run_calibrate
-    from .calibrate import load_decisions
+    from .calibrate import dedupe_decisions, load_decisions
 
     log_path = args.log or settings.results_log_path
     decisions = load_decisions(log_path, season=args.season, week=args.week)
@@ -489,10 +583,13 @@ def cmd_calibrate(args, settings: Settings, outcome_provider=None) -> int:
         print(f"No logged decisions in {log_path}. Run some rank/compare passes first?",
               file=sys.stderr)
         return 1
+    decisions = dedupe_decisions(decisions)
 
     provider = outcome_provider or _sleeper_outcome_provider(settings)
     result = run_calibrate(decisions, provider, base_weights=settings.weights,
-                           step=args.step, min_pairs=args.min_pairs)
+                           step=args.step, min_pairs=args.min_pairs,
+                           min_decisions=getattr(args, "min_decisions", 5),
+                           min_weeks=getattr(args, "min_weeks", 3))
     _print_calibration(result)
 
     if not result.pairs_used:
@@ -502,8 +599,10 @@ def cmd_calibrate(args, settings: Settings, outcome_provider=None) -> int:
 
     if args.write:
         if not result.enough_data:
-            print(f"Only {result.pairs_used} joined pairs (< --min-pairs "
-                  f"{args.min_pairs}); not writing — gather more data first.",
+            print("Not writing — the corpus is too thin to fit weights on: "
+                  + "; ".join(result.shortfalls) + ".", file=sys.stderr)
+            print("Weights fitted to one slate describe that slate, not your "
+                  "leagues. Keep logging and try again in a week or two.",
                   file=sys.stderr)
             return 1
         if result.best_concordance <= result.current_concordance:
@@ -523,8 +622,9 @@ def _fmt_weights(weights, order: Sequence[str]) -> str:
 
 
 def _print_calibration(result) -> None:
-    print(f"Calibration over {result.decisions_used} decision(s), "
-          f"{result.pairs_used} comparable pair(s); tuning {', '.join(result.signals) or '(none)'}.")
+    print(f"Calibration over {result.decisions_used} decision(s) across "
+          f"{result.weeks_used} week(s), {result.pairs_used} comparable pair(s); "
+          f"tuning {', '.join(result.signals) or '(none)'}.")
     if not result.pairs_used:
         return
     print(f"  current  weights: {_fmt_weights(result.current_weights, result.signals)}")
@@ -574,7 +674,7 @@ def cmd_backtest(args, settings: Settings, outcome_provider=None) -> int:
     so tests run offline; it defaults to the free Sleeper weekly-stats source.
     """
     from .calibrate import backtest as run_backtest
-    from .calibrate import load_decisions
+    from .calibrate import dedupe_decisions, load_decisions
 
     log_path = args.log or settings.results_log_path
     decisions = load_decisions(log_path, season=args.season, week=args.week)
@@ -582,6 +682,7 @@ def cmd_backtest(args, settings: Settings, outcome_provider=None) -> int:
         print(f"No logged decisions in {log_path}. Run some rank/compare passes first?",
               file=sys.stderr)
         return 1
+    decisions = dedupe_decisions(decisions)
 
     provider = outcome_provider or _sleeper_outcome_provider(settings)
     result = run_backtest(decisions, provider, base_weights=settings.weights)

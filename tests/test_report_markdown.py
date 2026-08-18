@@ -272,3 +272,24 @@ def test_digest_and_lineup_agree_on_flex(monkeypatch):
     digest = report.render_digest(3, "ppr", ws.recs, lineup=lineup)
     assert "Third Wideout" in digest              # the pooled pick
     assert "standard-template" not in digest      # and no false caveat
+
+
+def test_markdown_table_escapes_pipes_and_newlines_in_names():
+    """An unescaped `|` opens a phantom column; a newline ends the table."""
+    import re
+
+    a = PlayerScore(player=Player(key="1", name="Bad | Name", team="KC", position="RB"))
+    a.final, a.normalized = 90.0, {"ecr": 100.0}
+    a.flags = ["injury: Q | doubtful"]
+    b = PlayerScore(player=Player(key="2", name="Line\nBreak", team="SF", position="RB"))
+    b.final, b.normalized = 10.0, {"ecr": 0.0}
+    rec = Recommendation(week=3, scoring="ppr", weights={"ecr": 1.0}, scores=[a, b])
+
+    md = render_markdown(rec)
+    rows = [ln for ln in md.splitlines() if ln.startswith("|")]
+    # Header + separator + one row per player, all with the same column count.
+    assert len(rows) == 4
+    widths = {len(re.findall(r"(?<!\\)\|", ln)) for ln in rows}
+    assert len(widths) == 1, f"ragged table: {rows}"
+    assert r"Bad \| Name" in md
+    assert "Line Break" in md

@@ -155,26 +155,67 @@ def _validate_weights(weights: dict[str, float],
     return weights
 
 
-def _load_learned_weights(path: Path) -> dict[str, float]:
+def _load_learned_weights(path: Path) -> tuple[dict[str, float], set[str]]:
     """Read calibrated weights written by ``calibrate --write`` (empty if absent).
+
+    Returns ``(usable weights, every signal named in the file)``. The second half
+    matters because a signal the file *mentions* was one the calibrator actually
+    observed, even when its value is unusable — which is a different situation
+    from a signal the file never mentions at all, and ``_apply_learned`` treats
+    the two differently.
 
     A corrupt or non-numeric file is ignored with a warning rather than crashing
     load — the defaults then stand. ``json.loads`` accepts bare ``NaN``/
     ``Infinity``, so non-finite entries are dropped here too.
     """
     if not path.exists():
-        return {}
+        return {}, set()
     try:
         import json
         data = json.loads(path.read_text())
         parsed = {str(k): float(v) for k, v in data.items()}
     except Exception:
         _warn(f"Could not read learned weights at {path}; ignoring.")
-        return {}
+        return {}, set()
     finite = {k: v for k, v in parsed.items() if math.isfinite(v)}
     if len(finite) != len(parsed):
         _warn(f"Ignoring non-finite learned weight(s) in {path}.")
-    return finite
+    return finite, set(parsed)
+
+
+def _apply_learned(defaults: dict[str, float], learned: dict[str, float],
+                   named: set[str]) -> dict[str, float]:
+    """Overlay calibrated weights on the defaults without distorting what was learned.
+
+    ``calibrate --write`` writes only the signals it actually observed in the
+    results log, so a learned file is routinely a *subset* of the known signals.
+    Merging that subset into a full default dict silently rewrites the learned
+    ratio: ``{"ecr": 0.70, "vegas": 0.30}`` plus the leftover 0.12 injury and
+    0.10 weather defaults sums to 1.22, and once ``weighted_final``
+    renormalizes, the calibrator's 70/30 is delivered as 57/25 alongside two
+    weights it never endorsed.
+
+    So a learned file replaces the weight set rather than patching it: a signal
+    it never mentions goes to 0, which is what the grid search concluded when it
+    never saw that signal. A signal it *does* mention but with an unusable value
+    keeps its default — that is a corrupt entry, not a verdict. An empty file
+    (absent or unreadable) leaves the defaults alone entirely. Explicit
+    ``FF_WEIGHT_*`` env still overrides either, per the documented precedence.
+    """
+    if not learned:
+        return dict(defaults)
+    unknown = sorted(named - set(defaults))
+    if unknown:
+        _warn("Learned weights name unknown signal(s) "
+              f"{', '.join(unknown)}; ignoring them.")
+    dropped = sorted(k for k in defaults if k not in named)
+    if dropped:
+        covered = ", ".join(sorted(named & defaults.keys()))
+        _warn(f"Learned weights cover only {covered}; weighting "
+              f"{', '.join(dropped)} at 0. Set FF_WEIGHT_* to override, or "
+              "recalibrate on a log containing every signal.")
+    return {k: float(learned.get(k, defaults[k] if k in named else 0.0))
+            for k in defaults}
 
 
 def parse_leagues(raw: str) -> list[LeagueProfile]:
@@ -290,8 +331,8 @@ def load_settings(env_file: str | os.PathLike | None = None) -> Settings:
     # Weight precedence: hardcoded defaults < learned file (calibrate --write) <
     # explicit FF_WEIGHT_* env overrides. Config stays the single owner of weights.
     default_weights = {"ecr": 0.60, "vegas": 0.18, "injury": 0.12, "weather": 0.10}
-    base = dict(default_weights)
-    base.update(_load_learned_weights(data_dir / "learned_weights.json"))
+    learned, learned_named = _load_learned_weights(data_dir / "learned_weights.json")
+    base = _apply_learned(default_weights, learned, learned_named)
     weights = _validate_weights(
         {
             "ecr": _f("FF_WEIGHT_ECR", base["ecr"]),

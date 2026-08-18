@@ -23,8 +23,17 @@ from typing import Callable, Iterator, Mapping, Optional, Sequence
 from ..engine.blend import weighted_final
 from .log_reader import Decision
 
-# A decision reduced to its joined candidates: (normalized scores, actual points).
-JoinedDecision = list[tuple[dict[str, float], float]]
+# One logged decision reduced to the candidates that joined to a real outcome.
+# It keeps ``season``/``week`` because the --write gate has to count *independent*
+# evidence, and a bare list of rows cannot say which week it came from.
+JoinedRow = tuple[dict[str, float], float]   # (normalized scores, actual points)
+
+
+@dataclass
+class JoinedDecision:
+    season: str
+    week: int
+    rows: list[JoinedRow]
 
 # Resolve a candidate's actual points: (key, name, position) -> points or None.
 OutcomeLookup = Callable[[str, str, str], Optional[float]]
@@ -43,7 +52,12 @@ class CalibrationResult:
     current_hit_rate: float
     decisions_used: int
     pairs_used: int
+    weeks_used: int = 0
     enough_data: bool = field(default=False)
+    #: Which evidence floors the corpus failed, phrased for the user. Empty when
+    #: ``enough_data`` is True. "30 pairs but only 1 week" is actionable; a bare
+    #: "not enough data" leaves the user guessing what to go collect.
+    shortfalls: list[str] = field(default_factory=list)
 
 
 def signals_in(decisions: Sequence[Decision]) -> list[str]:
@@ -82,7 +96,7 @@ def join_outcomes(decisions: Sequence[Decision], provider: OutcomeProvider,
         lookup = cache[slice_key]
         if lookup is None:
             continue
-        rows: JoinedDecision = []
+        rows: list[JoinedRow] = []
         for c in d.candidates:
             if not needed.issubset(c.normalized):
                 continue
@@ -91,7 +105,7 @@ def join_outcomes(decisions: Sequence[Decision], provider: OutcomeProvider,
                 continue
             rows.append((c.normalized, pts))
         if len(rows) >= 2:
-            joined.append(rows)
+            joined.append(JoinedDecision(season=d.season, week=d.week, rows=rows))
     return joined
 
 
@@ -106,7 +120,7 @@ def concordance(joined: Sequence[JoinedDecision],
     agree = 0.0
     total = 0
     for decision in joined:
-        finals = [(weighted_final(norm, weights), pts) for norm, pts in decision]
+        finals = [(weighted_final(norm, weights), pts) for norm, pts in decision.rows]
         for i in range(len(finals)):
             fi, ai = finals[i]
             if fi is None:
@@ -129,7 +143,7 @@ def hit_rate(joined: Sequence[JoinedDecision],
     hits = 0
     used = 0
     for decision in joined:
-        scored = [(weighted_final(norm, weights), pts) for norm, pts in decision]
+        scored = [(weighted_final(norm, weights), pts) for norm, pts in decision.rows]
         scored = [(f, p) for f, p in scored if f is not None]
         if not scored:
             continue
@@ -166,8 +180,21 @@ def simplex(signals: Sequence[str], step: float) -> Iterator[dict[str, float]]:
 
 def calibrate(decisions: Sequence[Decision], provider: OutcomeProvider, *,
               base_weights: Mapping[str, float], step: float = 0.05,
-              min_pairs: int = 30) -> CalibrationResult:
-    """Join logged decisions to outcomes and grid-search the best blend weights."""
+              min_pairs: int = 30, min_decisions: int = 5,
+              min_weeks: int = 3) -> CalibrationResult:
+    """Join logged decisions to outcomes and grid-search the best blend weights.
+
+    The three floors gate ``--write`` together because pairs alone cannot tell one
+    week from ten: a single nine-player ranking yields 36 pairs, all drawn from one
+    slate, one set of injuries, one weather system. Fitting weights to that is
+    fitting them to a week. ``min_weeks`` is the floor that carries the meaning —
+    a whole-roster ``publish --log`` pass adds decisions quickly but only ever one
+    week at a time.
+
+    ``min_decisions`` is deliberately low: it exists to block the one-giant-ranking
+    case, not to demand volume. Five weekly RB rankings are five independent reads
+    on the same question — real evidence, even though it is only five rows.
+    """
     signals = signals_in(decisions)
     joined = join_outcomes(decisions, provider, signals)
 
@@ -191,6 +218,15 @@ def calibrate(decisions: Sequence[Decision], provider: OutcomeProvider, *,
             if hr > best_hr:
                 best_hr, best_weights = hr, trial
 
+    weeks = len({(j.season, j.week) for j in joined})
+    shortfalls = []
+    if pairs < min_pairs:
+        shortfalls.append(f"{pairs} comparable pairs (need {min_pairs})")
+    if len(joined) < min_decisions:
+        shortfalls.append(f"{len(joined)} joined decisions (need {min_decisions})")
+    if weeks < min_weeks:
+        shortfalls.append(f"{weeks} distinct week(s) (need {min_weeks})")
+
     return CalibrationResult(
         signals=signals,
         best_weights=best_weights,
@@ -201,5 +237,7 @@ def calibrate(decisions: Sequence[Decision], provider: OutcomeProvider, *,
         current_hit_rate=round(current_hr, 4),
         decisions_used=len(joined),
         pairs_used=pairs,
-        enough_data=pairs >= min_pairs,
+        weeks_used=weeks,
+        enough_data=not shortfalls,
+        shortfalls=shortfalls,
     )

@@ -16,7 +16,7 @@ on:
         default: ""
 
 permissions:
-  contents: read
+  contents: write       # append the decision log to the calibration-data branch
   issues: write
   pages: write          # publish the dashboard to GitHub Pages
   id-token: write       # required by actions/deploy-pages
@@ -54,6 +54,9 @@ jobs:
       FF_PREFERRED_EXPERTS: ${{ vars.FF_PREFERRED_EXPERTS }}
       DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
       INPUT_WEEK: ${{ github.event.inputs.week }}
+      # Where the #7 decision log lives between runs (see "Restore decision log").
+      LOG_BRANCH: calibration-data
+      LOG_FILE: results_log.jsonl
     steps:
       - uses: actions/checkout@v4
 
@@ -64,6 +67,21 @@ jobs:
       - name: Install
         run: pip install -e .
 
+      # The decision log is the corpus `calibrate` learns from, and a runner's
+      # filesystem does not survive the job. Keep it on an orphan branch that
+      # holds nothing else, so the log accumulates across scheduled runs instead
+      # of starting empty every week.
+      - name: Restore decision log
+        run: |
+          mkdir -p .cache
+          if git fetch --depth=1 origin "$LOG_BRANCH" 2>/dev/null \
+             && git show "FETCH_HEAD:$LOG_FILE" > .cache/results_log.jsonl 2>/dev/null; then
+            echo "Restored $(wc -l < .cache/results_log.jsonl) logged decision(s)."
+          else
+            rm -f .cache/results_log.jsonl
+            echo "No decision log on $LOG_BRANCH yet — starting a fresh one."
+          fi
+
       - name: Publish (one scoring pass -> digest + dashboard + Discord)
         run: |
           WEEK_ARG=""
@@ -72,11 +90,46 @@ jobs:
           # though the notification fires before the deploy step below completes.
           OWNER="${GITHUB_REPOSITORY%%/*}"; REPO="${GITHUB_REPOSITORY##*/}"
           DASH_URL="https://${OWNER,,}.github.io/${REPO}/"
-          python -m ff_startsit publish $WEEK_ARG --all-leagues \
+          python -m ff_startsit publish $WEEK_ARG --all-leagues --log \
             --report report.md --dashboard ./site/index.html \
             --discord --url "$DASH_URL"
           # Mirror the digest to the run summary (viewable in the GitHub mobile app).
           cat report.md >> "$GITHUB_STEP_SUMMARY"
+
+      # Best-effort: the digest, dashboard and Discord ping are what the user
+      # actually depends on, so a push failure here warns rather than failing the
+      # run — same trade the publish command makes for a Discord hiccup.
+      # `concurrency` above is what keeps two runs from racing this branch.
+      - name: Persist decision log
+        continue-on-error: true
+        run: |
+          if [ ! -s .cache/results_log.jsonl ]; then
+            echo "Nothing logged this run (preseason, or a signal served the wrong week) — leaving $LOG_BRANCH alone."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          WORKTREE="$(mktemp -d)"
+          if git fetch --depth=1 origin "$LOG_BRANCH" 2>/dev/null; then
+            git worktree add --detach "$WORKTREE" FETCH_HEAD
+            git -C "$WORKTREE" checkout -B "$LOG_BRANCH"
+          else
+            git worktree add --detach "$WORKTREE"
+            git -C "$WORKTREE" checkout --orphan "$LOG_BRANCH"
+            git -C "$WORKTREE" rm -rf --quiet . || true
+          fi
+          cp .cache/results_log.jsonl "$WORKTREE/$LOG_FILE"
+          # -f is required: results_log.jsonl is gitignored as cache everywhere
+          # else in this repo, so a plain `git add` would silently do nothing and
+          # the log would never actually persist.
+          git -C "$WORKTREE" add -f "$LOG_FILE"
+          if git -C "$WORKTREE" diff --cached --quiet; then
+            echo "Log unchanged; nothing to push."
+          else
+            git -C "$WORKTREE" commit -m "Log week $(date -u +%Y-%m-%d) decisions"
+            git -C "$WORKTREE" push origin "$LOG_BRANCH"
+            echo "Pushed $(wc -l < .cache/results_log.jsonl) decision(s) to $LOG_BRANCH."
+          fi
 
       # Post the issue first so the core digest always lands, even if Pages/Discord
       # aren't configured yet.

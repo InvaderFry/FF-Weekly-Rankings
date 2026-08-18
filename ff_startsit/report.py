@@ -13,7 +13,7 @@ from typing import Optional, Sequence
 
 from .config import Settings
 from .models import Player, PlayerScore, Recommendation
-from .output.render import render_markdown
+from .output.render import md_cell, render_markdown
 from .pipeline import build_signals, recommend
 from .season import preseason_banner
 from .sources.journalists import JournalistFetcher, JournalistView, parse_experts
@@ -43,6 +43,11 @@ FLEX_CAVEAT_POSITIONAL = (
 FLEX_NOTE_POOLED = (
     "FLEX is scored against the pooled RB/WR/TE candidate set, so its score is "
     "not comparable to the other slots' positional scores."
+)
+POOLED_COMPARE_NOTE = (
+    "Scored against FantasyPros' cross-position RB/WR/TE ranking, because a "
+    "per-position rank of 1 means \"RB1\" and \"WR1\" indistinguishably. These "
+    "scores are not comparable to a single-position rank or compare."
 )
 
 
@@ -120,6 +125,45 @@ def rank_each_position(settings: Settings, players: Sequence[Player], week: int,
     return recs
 
 
+def rank_pooled(settings: Settings, cands: Sequence[Player], week: int,
+                signals: Optional[Sequence], command: str,
+                ) -> tuple[Optional[Recommendation], Optional[str]]:
+    """Score a mixed RB/WR/TE set against one cross-position candidate pool.
+
+    Returns ``(recommendation, None)`` on success, or ``(None, reason)`` when the
+    pooled ranking can't be trusted. Shared by the FLEX slot and by
+    ``compare``, which face the same problem: ``normalize.to_0_100`` is min-max
+    *within* the candidate set, so per-position scores put every position's
+    leader at 100 and cannot be compared across positions. Only FantasyPros'
+    cross-position FLEX list makes such a comparison meaningful.
+
+    Never logged: the calibrator scores pairwise concordance within a single
+    logged decision, so a pooled row would re-log these players under a second
+    normalization frame and double-weight them in the grid search.
+    """
+    from .pipeline import flex_signals
+
+    if len(cands) < 2:
+        return None, "too few flex-eligible players to pool"
+    if signals is None:
+        return None, "no live signals for this run"
+    pooled_signals = flex_signals(signals)
+    if pooled_signals is None:
+        return None, "no live ECR signal to pool"
+
+    rec = recommend(settings, cands, week, signals=pooled_signals,
+                    command=command, log=False)
+
+    covered = sum(1 for s in rec.scores
+                  if (v := s.raw.get("ecr")) is not None and v.available)
+    if covered / len(cands) < MIN_FLEX_ECR_COVERAGE:
+        # Without ECR the pooled blend is running on implied team total, health
+        # and weather alone — a worse pick than the positional fallback, and one
+        # the user would never see. Refuse it.
+        return None, "FantasyPros FLEX ranking returned too few matches"
+    return rec, None
+
+
 def rank_flex_pool(settings: Settings, players: Sequence[Player], week: int,
                    signals: Optional[Sequence] = None,
                    ) -> tuple[Optional[Recommendation], Optional[str]]:
@@ -135,36 +179,21 @@ def rank_flex_pool(settings: Settings, players: Sequence[Player], week: int,
     shrinking the candidate set, so this is an approximation — a stable "flex
     value" for one fetch, rather than a re-rank per remaining candidate.
     """
-    from .pipeline import flex_signals
-
     cands = [p for p in players if p.position in FLEX_POSITIONS]
-    if len(cands) < 2:
-        return None, "too few flex-eligible players to pool"
-    if signals is None:
-        return None, "no live signals for this run"
-    pooled_signals = flex_signals(signals)
-    if pooled_signals is None:
-        return None, "no live ECR signal to pool"
-
-    # Never logged: the calibrator scores pairwise concordance within a single
-    # logged decision, so a pooled row would re-log these players under a second
-    # normalization frame and double-weight them in the grid search.
-    rec = recommend(settings, cands, week, signals=pooled_signals,
-                    command="report:flex", log=False)
-
-    covered = sum(1 for s in rec.scores
-                  if (v := s.raw.get("ecr")) is not None and v.available)
-    if covered / len(cands) < MIN_FLEX_ECR_COVERAGE:
-        # Without ECR the pooled blend is running on implied team total, health
-        # and weather alone — a worse FLEX pick than the positional fallback,
-        # and one the user would never see. Refuse it.
-        return None, "FantasyPros FLEX ranking returned too few matches"
-    return rec, None
+    return rank_pooled(settings, cands, week, signals, "report:flex")
 
 
 def score_week(settings: Settings, players: Sequence[Player], week: int,
                log: bool = False) -> WeekScores:
-    """One signal set, one per-position pass, one pooled FLEX pass."""
+    """One signal set, one per-position pass, one pooled FLEX pass.
+
+    ``log`` appends the per-position decisions to the results log, so the
+    whole-roster commands can feed the #7 calibrator the same way ``rank`` and
+    ``compare`` do. It stays opt-in and defaults off: a scheduled run that
+    scores every position every week would otherwise dominate the corpus with
+    rows nobody acted on. The pooled FLEX pass is never logged either way —
+    see ``rank_pooled``.
+    """
     signals = build_signals(settings)
     recs = rank_each_position(settings, players, week, log=log, signals=signals)
     flex, note = rank_flex_pool(settings, players, week, signals=signals)
@@ -278,9 +307,9 @@ def build_journalist_view(settings: Settings, players: Sequence[Player],
 
 
 def build_digest(settings: Settings, players: Sequence[Player], week: int,
-                 label: str = "") -> str:
+                 label: str = "", log: bool = False) -> str:
     """Assemble the full whole-roster markdown digest (one scoring pass)."""
-    ws = score_week(settings, players, week)
+    ws = score_week(settings, players, week, log=log)
     return render_digest(week, settings.scoring, ws.recs,
                          banner=preseason_banner(settings),
                          journalists=build_journalist_view(settings, players, week),
@@ -312,7 +341,8 @@ def _digest_body(recs: dict[str, Recommendation],
         if pick is None:
             lines.append(f"| {slot} | _(no option)_ | | |")
         else:
-            lines.append(f"| {slot} | {pick.player.name} | {pick.player.team or 'BYE'} "
+            lines.append(f"| {md_cell(slot)} | {md_cell(pick.player.name)} "
+                         f"| {md_cell(pick.player.team or 'BYE')} "
                          f"| {pick.final:.1f} |")
 
     if getattr(lineup, "caveat", None):
@@ -363,7 +393,7 @@ def render_multi_digest(week: int, bundles: Sequence[LeagueBundle]) -> str:
         "",
     ]
     for b in bundles:
-        lines += [f"## {b.label} — {b.scoring.upper()}", ""]
+        lines += [f"## {md_cell(b.label)} — {b.scoring.upper()}", ""]
         lines += _digest_body(b.recs, banner=b.banner, journalists=b.journalists,
                               lineup=b.lineup)
         lines.append("")
@@ -386,13 +416,14 @@ def render_journalists_markdown(view: JournalistView) -> str:
         rows = view.by_position.get(pos)
         if not rows:
             continue
-        header = ["#", "Player", "Team", "Avg rank"] + [e.name for e in view.experts]
+        header = ["#", "Player", "Team", "Avg rank"] + [md_cell(e.name)
+                                                        for e in view.experts]
         lines += ["", f"### {pos}", "",
                   "| " + " | ".join(header) + " |",
                   "|" + "---|" * len(header)]
         for i, row in enumerate(rows, start=1):
-            cells = [str(i), row.player.name, row.player.team or "BYE",
-                     f"{row.avg_rank:.1f}"]
+            cells = [str(i), md_cell(row.player.name),
+                     md_cell(row.player.team or "BYE"), f"{row.avg_rank:.1f}"]
             for e in view.experts:
                 rank = row.ranks.get(e.id)
                 cells.append("—" if rank is None else f"{rank:.0f}")

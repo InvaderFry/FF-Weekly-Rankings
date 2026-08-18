@@ -58,7 +58,13 @@ without touching the pure engine.
 
 - **`Player.key` is the Sleeper player id** and the join key every signal returns
   values against. Signals/outcomes match on this id (ESPN/manual rosters fall back
-  to name+position via `data/matching.py`), never on raw names.
+  to name+position via `data/matching.py`), never on raw names. **Team defenses are
+  the exception**: every source names them differently (ESPN `Chiefs D/ST`, Sleeper
+  `Kansas City`, FantasyPros `Kansas City Chiefs` under position `DST`, not `DEF`),
+  so `player_match_key` keys them on the canonical team abbreviation via
+  `normalize_team` and folds `DEF`/`DST` into one position. Don't reintroduce a
+  name-based DEF key — the name never matched, which silently cost the DEF slot
+  ECR's 0.60 of blend weight.
 - **Graceful degradation, never a crash.** A missing signal for a player (bye,
   unmatched, disabled) is dropped and remaining weights re-normalize — the player
   is not penalized. `pipeline.recommend` catches any signal `fetch` exception and
@@ -70,7 +76,12 @@ without touching the pure engine.
   all-`None` blend.
 - **`config.Settings` is the sole owner of blend weights.** Weight precedence:
   hardcoded defaults < `learned_weights.json` (written by `calibrate --write`) <
-  explicit `FF_WEIGHT_*` env. Don't read weights from anywhere else.
+  explicit `FF_WEIGHT_*` env. Don't read weights from anywhere else. A learned
+  file *replaces* the weight set rather than patching it (`_apply_learned`):
+  `calibrate --write` only writes the signals it observed, so merging that subset
+  into the defaults left the un-learned defaults standing and delivered a learned
+  70/30 as 57/25. A signal the file never names goes to 0; one it names with an
+  unusable value keeps its default, since that is a corrupt entry, not a verdict.
 - **Close-call flagging is the product**, not decoration. `blend._flag_close_call`
   flags when the top two finals are within `close_call_threshold` OR when a
   signal ranks the runner-up above the leader. Preserve both conditions. The
@@ -85,12 +96,48 @@ without touching the pure engine.
 
 Every `rank`/`compare` run appends a row to `.cache/results_log.jsonl`
 (`results_log.py`) capturing candidates, each signal's raw + normalized value, the
-weights, and the pick. `calibrate` (`calibrate/`) reads that log back
+weights, and the pick. `publish`/`report` do the same under an explicit `--log`;
+whole-roster passes stay opt-in because a scheduled run scores every position
+every week and would otherwise swamp the corpus with decisions nobody acted on.
+`calibrate` (`calibrate/`) reads that log back
 (`log_reader.py`), joins it to **actual** weekly points from the free Sleeper
 stats endpoint (`outcomes.py`), and grid-searches the weight simplex
 (`learner.py`) by pairwise ranking concordance — **re-blending the logged
-`normalized` values, never re-fetching**. It refuses to `--write` on thin data
-(`--min-pairs`) or when current weights already tie the grid best.
+`normalized` values, never re-fetching**. It refuses to `--write` when current
+weights already tie the grid best, or when the corpus is too thin.
+
+**"Thin" is three floors, not one** (`--min-pairs` 30, `--min-decisions` 5,
+`--min-weeks` 3), because pairs alone cannot tell one week from ten: a single
+nine-player ranking yields 36 correlated pairs off one slate, one injury report,
+one weather system, and used to clear a pairs-only gate on its own. `min_weeks`
+is the floor carrying the meaning — a `publish --log` pass adds decisions fast but
+only ever one week at a time. `CalibrationResult.shortfalls` names which floor
+fell short, since "gather more data" doesn't say what to gather. This matters
+more than it looks: because a learned file now *replaces* the weight set, a
+premature `--write` zeroes every signal the log happened not to contain rather
+than merely diluting it.
+
+`dedupe_decisions` (`log_reader.py`) collapses rows sharing `(season, week,
+scoring)` and the same candidate keys — the Thursday and Sunday passes over one
+week are one piece of evidence, not two — keeping the latest, since a repeat run
+has fresher injury and weather reads. Both `calibrate` and `backtest` apply it;
+duplicates would otherwise inflate the write gate and the honesty numbers alike.
+
+**Three kinds of run are never logged**, all for the same reason — the row would
+not mean what it claims, and the log is append-only: preseason sample runs
+(`pipeline.py`), the pooled FLEX pass (`rank_pooled`), and any run where a signal
+served a week other than the one requested. That last one is `ECRSignal.
+served_wrong_week`: the keyless scrape has no week selector, so `--week 5` returns
+current-week ranks. Show the ranking, warn, withhold the row — a warning the user
+scrolls past is enough for a table they're reading now, not for a row that would
+mislead every future calibration.
+
+The corpus survives scheduled runs on a `calibration-data` orphan branch
+(`weekly-report.yml`), since `.cache/` dies with the runner. Note
+`results_log.jsonl` is gitignored as cache everywhere else, so that push needs
+`git add -f` — without it the step silently succeeds and persists nothing. Nothing
+runs `calibrate --write` from CI; fitting weights on a cron is what the floors
+above exist to prevent.
 
 `backtest` (`calibrate/backtest.py`) is the read-only companion: it replays each
 logged decision under **the weights that run actually used** (`Decision.weights`),
@@ -141,6 +188,13 @@ double-weight those players). And it is **refused** below `MIN_FLEX_ECR_COVERAGE
 pick than the fallback and an invisible one. On refusal `build_lineup` degrades to
 comparing per-position scores and says so via `Lineup.caveat`, which every renderer
 surfaces.
+
+`report.rank_pooled` is the shared implementation of that pass, because `compare`
+faces the identical problem: a mixed RB/WR/TE comparison scored per-position puts
+each position's leader at 100 and is meaningless. So `compare` pools when every
+candidate is flex-eligible, and **refuses** otherwise (QB vs RB) or when the
+pooled ranking fails its coverage guard — there is no honest fallback, and the
+per-position blend would answer with a number that doesn't mean what it says.
 
 ### Output & delivery
 

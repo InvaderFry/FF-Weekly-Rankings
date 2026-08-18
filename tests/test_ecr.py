@@ -190,3 +190,96 @@ def test_week_mismatch_warns_once_not_once_per_position(capsys, monkeypatch):
         Player(key="3", name="Another", team="KC", position="TE"),
     ])
     assert capsys.readouterr().err.count("not week-3 rankings") == 1
+
+
+def test_fetch_joins_def_roster_players_to_dst_ranking_rows():
+    """FantasyPros ranks defenses under "DST"; every roster source says "DEF".
+
+    Both halves of the old match key differed — name *and* position — so no
+    defense ever received an ECR rank on any roster source, and the DEF slot was
+    scored on Vegas/injury/weather alone with ECR's 0.60 weight silently gone.
+    """
+    payload = {"players": [
+        {"player_name": "Kansas City Chiefs", "player_team_id": "KC",
+         "player_position_id": "DST", "rank_ecr": 2},
+        {"player_name": "San Francisco 49ers", "player_team_id": "SF",
+         "player_position_id": "DST", "rank_ecr": 5},
+    ]}
+    sig = ECRSignal(api_key="testkey", scoring="ppr", season=2025,
+                    session=_FakeSession(payload))
+
+    players = [
+        Player(key="espn-16", name="Chiefs D/ST", team="KC", position="DEF"),  # ESPN
+        Player(key="SF", name="San Francisco", team="SF", position="DEF"),     # Sleeper
+    ]
+    out = sig.fetch(3, players)
+    assert out["espn-16"].available and out["espn-16"].raw == 2.0
+    assert out["SF"].available and out["SF"].raw == 5.0
+
+
+class _FakeScrapeResp:
+    def __init__(self, html):
+        self.text = html
+
+    def raise_for_status(self):
+        pass
+
+
+class _FakeScrapeSession:
+    """Serves the scrape fixture for any GET — the keyless (default) path."""
+
+    def __init__(self, html):
+        self._html = html
+
+    def get(self, url, **kwargs):
+        return _FakeScrapeResp(self._html)
+
+
+def _scrape_signal():
+    html = (FIXTURES / "ecr_scrape_rb.html").read_text()
+    return ECRSignal(api_key="", scoring="ppr", season=2025,
+                     session=_FakeScrapeSession(html))
+
+
+def test_scrape_flags_a_week_it_could_not_have_served(monkeypatch, capsys):
+    """The public page has no week selector, so a --week 5 scrape returns
+    whatever week is current. The values are still shown, but the run is marked
+    so it never reaches the append-only results log."""
+    import ff_startsit.season as season_mod
+
+    monkeypatch.setattr(season_mod, "date_week", lambda *a, **k: 3)
+    sig = _scrape_signal()
+    assert sig.served_wrong_week is False
+
+    sig.fetch(5, [Player(key="1", name="Patrick Runner", team="KC", position="RB")])
+
+    assert sig.served_wrong_week is True
+    assert sig.last_source == "scrape"
+    assert "not week-5 rankings" in capsys.readouterr().err
+
+
+def test_scrape_of_the_current_week_is_not_flagged(monkeypatch):
+    import ff_startsit.season as season_mod
+
+    monkeypatch.setattr(season_mod, "date_week", lambda *a, **k: 3)
+    sig = _scrape_signal()
+    sig.fetch(3, [Player(key="1", name="Patrick Runner", team="KC", position="RB")])
+    assert sig.served_wrong_week is False
+
+
+def test_wrong_week_warns_once_per_week_but_stays_flagged(monkeypatch, capsys):
+    """A whole-roster pass fetches one list per position, all for the same week.
+
+    The warning is deduplicated per week so the run isn't spammed, but the flag
+    has to hold across every position — it is what keeps the run out of the log.
+    """
+    import ff_startsit.season as season_mod
+
+    monkeypatch.setattr(season_mod, "date_week", lambda *a, **k: 3)
+    sig = _scrape_signal()
+    sig.fetch(5, [Player(key="1", name="Patrick Runner", team="KC", position="RB"),
+                  Player(key="2", name="Some Receiver", team="SF", position="WR"),
+                  Player(key="3", name="Some End", team="BUF", position="TE")])
+
+    assert sig.served_wrong_week is True
+    assert capsys.readouterr().err.count("not week-5 rankings") == 1

@@ -187,3 +187,94 @@ def test_rank_flex_pool_is_never_logged(tmp_path):
     ecr = _PoolableECR({}, pooled_ranks={"1": 2.0, "2": 1.0, "3": 4.0, "4": 3.0})
     rank_flex_pool(settings, _flex_players(), 3, signals=[ecr])
     assert not settings.results_log_path.exists()
+
+
+def _logging_score_week(tmp_path, monkeypatch, **kw):
+    """score_week over the flex roster with a fake ECR — offline, like every test."""
+    from ff_startsit import report
+
+    settings = Settings(weights={"ecr": 1.0}, data_dir=tmp_path)
+    ecr = _PoolableECR({"1": 1.0, "2": 2.0, "3": 3.0, "4": 4.0, "5": 1.0},
+                       pooled_ranks={"1": 2.0, "2": 1.0, "3": 4.0, "4": 3.0})
+    monkeypatch.setattr(report, "build_signals", lambda settings: [ecr])
+    ws = report.score_week(settings, _flex_players(), 3, **kw)
+    return settings, ws
+
+
+def test_score_week_logs_only_when_asked(tmp_path, monkeypatch):
+    """Whole-roster runs feed the #7 calibrator only on an explicit opt-in.
+
+    `publish`/`report` score every position every week, so logging them by
+    default would swamp the corpus with decisions nobody acted on.
+    """
+    settings, _ = _logging_score_week(tmp_path, monkeypatch)
+    assert not settings.results_log_path.exists()
+
+
+def test_score_week_log_excludes_the_pooled_flex_pass(tmp_path, monkeypatch):
+    """Even when logging is on, the pooled pass stays out of the corpus."""
+    import json
+
+    settings, ws = _logging_score_week(tmp_path, monkeypatch, log=True)
+
+    # The pooled pass really ran — otherwise this test would pass vacuously.
+    assert ws.flex is not None and ws.flex_note is None
+
+    rows = [json.loads(ln) for ln in
+            settings.results_log_path.read_text().strip().splitlines()]
+    assert rows, "log=True should have written the per-position decisions"
+    assert {r["command"] for r in rows} == {"report"}
+    # Every logged decision is within one position group, never the pooled set.
+    for row in rows:
+        assert len({c["position"] for c in row["candidates"]}) == 1
+
+
+class _WrongWeekECR(Signal):
+    """An ECR-shaped signal that served a week other than the one requested."""
+
+    name = "ecr"
+    higher_is_better = False
+
+    def __init__(self, ranks, served_wrong_week=True):
+        self._ranks = ranks
+        self.served_wrong_week = served_wrong_week
+
+    def is_available(self):
+        return True
+
+    def fetch(self, week, players):
+        return {p.key: SignalValue(raw=self._ranks.get(p.key),
+                                   available=p.key in self._ranks)
+                for p in players}
+
+
+def test_wrong_week_signal_still_ranks_but_is_never_logged(tmp_path, capsys):
+    """Keep the answer, drop the row.
+
+    The scraped FantasyPros page has no week selector, so a --week 5 request
+    returns the current week's ranks. That is still worth showing with a warning,
+    but logging it would score present-day consensus against week 5's outcomes in
+    every future calibrate and backtest run — permanently, since the log is
+    append-only.
+    """
+    settings = Settings(weights={"ecr": 1.0}, data_dir=tmp_path)
+    players = [Player(key="1", name="Alpha", team="KC", position="RB"),
+               Player(key="2", name="Bravo", team="SF", position="RB")]
+
+    rec = recommend(settings, players, week=5,
+                    signals=[_WrongWeekECR({"1": 1.0, "2": 8.0})], command="rank")
+
+    assert rec.scores[0].player.key == "1"          # the ranking is still produced
+    assert not settings.results_log_path.exists()   # ...but nothing was logged
+    assert "not logging this week-5 run" in capsys.readouterr().err
+
+
+def test_right_week_signal_logs_normally(tmp_path):
+    settings = Settings(weights={"ecr": 1.0}, data_dir=tmp_path)
+    players = [Player(key="1", name="Alpha", team="KC", position="RB"),
+               Player(key="2", name="Bravo", team="SF", position="RB")]
+
+    recommend(settings, players, week=5, command="rank",
+              signals=[_WrongWeekECR({"1": 1.0, "2": 8.0}, served_wrong_week=False)])
+
+    assert settings.results_log_path.exists()

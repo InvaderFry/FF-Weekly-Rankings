@@ -459,3 +459,144 @@ def test_refresh_and_offline_together_is_an_error(tmp_path, monkeypatch):
     _with_stub(monkeypatch, _StubProvider([]))
     with pytest.raises(RosterError):
         cli._get_roster(_stub_args(refresh=True, offline=True), settings)
+
+
+def _mixed_roster():
+    return [
+        Player("1", "Runner One", "KC", "RB"),
+        Player("2", "Catcher Two", "SF", "WR"),
+        Player("3", "Passer Three", "BUF", "QB"),
+    ]
+
+
+def _compare_args(*names, md=False):
+    import argparse
+    return argparse.Namespace(players=list(names), md=md, source=None, league=None,
+                              team=None, week=None, league_name=None)
+
+
+def test_compare_refuses_positions_that_cannot_be_pooled(monkeypatch, capsys):
+    """A QB rank of 1 and an RB rank of 1 come from different populations.
+
+    `normalize.to_0_100` is min-max within the candidate set, so both would land
+    on 100 and the blend would answer with a number that does not mean what it
+    says. Refuse rather than mislead.
+    """
+    monkeypatch.setattr(cli, "_get_roster", lambda args, settings, profile=None: _mixed_roster())
+    monkeypatch.setattr(cli, "_resolve_week", lambda args, settings: 7)
+
+    rc = cli.cmd_compare(_compare_args("Runner One", "Passer Three"), _settings())
+    assert rc == 1
+    err = capsys.readouterr().err
+    assert "QB/RB" in err
+    assert "would not be comparable" in err
+
+
+def test_compare_uses_the_pooled_flex_basis_for_mixed_flex_players(monkeypatch, capsys):
+    """RB vs WR is the real 'who do I flex' question — pool it, don't refuse it."""
+    from ff_startsit import report
+    from ff_startsit.models import PlayerScore, Recommendation
+
+    monkeypatch.setattr(cli, "_get_roster", lambda args, settings, profile=None: _mixed_roster())
+    monkeypatch.setattr(cli, "_resolve_week", lambda args, settings: 7)
+
+    seen = {}
+
+    def fake_pooled(settings, cands, week, signals, command):
+        seen["positions"] = sorted(p.position for p in cands)
+        seen["command"] = command
+        ps = PlayerScore(player=cands[0])
+        ps.final, ps.normalized = 91.0, {"ecr": 91.0}
+        return Recommendation(week=week, scoring="ppr", weights={"ecr": 1.0},
+                              scores=[ps]), None
+
+    monkeypatch.setattr(report, "rank_pooled", fake_pooled)
+
+    rc = cli.cmd_compare(_compare_args("Runner One", "Catcher Two"), _settings())
+    assert rc == 0
+    assert seen["positions"] == ["RB", "WR"]
+    assert seen["command"] == "compare:pooled"
+    # The reader is told the score is on the pooled basis, as the FLEX slot does.
+    assert "cross-position RB/WR/TE ranking" in capsys.readouterr().err
+
+
+def test_compare_refuses_when_the_pooled_ranking_is_untrustworthy(monkeypatch, capsys):
+    """Falling back to the per-position blend here would be the invalid answer."""
+    from ff_startsit import report
+
+    monkeypatch.setattr(cli, "_get_roster", lambda args, settings, profile=None: _mixed_roster())
+    monkeypatch.setattr(cli, "_resolve_week", lambda args, settings: 7)
+    monkeypatch.setattr(report, "rank_pooled",
+                        lambda *a, **k: (None, "FantasyPros FLEX ranking returned too few matches"))
+
+    rc = cli.cmd_compare(_compare_args("Runner One", "Catcher Two"), _settings())
+    assert rc == 1
+    assert "too few matches" in capsys.readouterr().err
+
+
+def test_compare_within_one_position_is_unchanged(monkeypatch):
+    """Same-position compare must keep logging through the normal path."""
+    from ff_startsit.models import PlayerScore, Recommendation
+
+    players = [Player("1", "Runner One", "KC", "RB"), Player("2", "Runner Two", "SF", "RB")]
+    monkeypatch.setattr(cli, "_get_roster", lambda args, settings, profile=None: players)
+    monkeypatch.setattr(cli, "_resolve_week", lambda args, settings: 7)
+
+    seen = {}
+
+    def fake_recommend(settings, cands, week, **kw):
+        seen.update(kw)
+        ps = PlayerScore(player=cands[0])
+        ps.final, ps.normalized = 90.0, {"ecr": 90.0}
+        return Recommendation(week=week, scoring="ppr", weights={"ecr": 1.0}, scores=[ps])
+
+    monkeypatch.setattr(cli, "recommend", fake_recommend)
+
+    rc = cli.cmd_compare(_compare_args("Runner One", "Runner Two"), _settings())
+    assert rc == 0
+    assert seen["command"] == "compare"
+    assert "signals" not in seen          # per-position ECR, not the pooled sibling
+
+
+def test_notify_warns_instead_of_raising_on_discord_failure(tmp_path, monkeypatch, capsys):
+    """CLAUDE.md: `publish`/`notify` warn-and-continue on Discord failure."""
+    import argparse
+
+    from ff_startsit import report
+    from ff_startsit.models import PlayerScore, Recommendation
+    from ff_startsit.output import discord as discord_mod
+
+    players = [Player("1", "Alpha", "KC", "RB")]
+    monkeypatch.setattr(cli, "_get_roster", lambda args, settings, profile=None: players)
+    monkeypatch.setattr(cli, "_resolve_week", lambda args, settings: 7)
+
+    def fake_rank(settings, plyrs, week, log=False, signals=None):
+        ps = PlayerScore(player=players[0])
+        ps.final, ps.normalized = 90.0, {"ecr": 90.0}
+        return {"RB": Recommendation(week=week, scoring="ppr",
+                                     weights={"ecr": 1.0}, scores=[ps])}
+
+    monkeypatch.setattr(report, "rank_each_position", fake_rank)
+    monkeypatch.setattr(discord_mod, "send_discord",
+                        lambda url, payload, **kw: (_ for _ in ()).throw(RuntimeError("webhook 404")))
+
+    args = argparse.Namespace(source=None, league=None, team=None, week=None,
+                              league_name=None, url=None)
+    rc = cli.cmd_notify(args, _settings(discord_webhook_url="https://discord.test/webhook"))
+    assert rc == 1
+    assert "Discord notification failed" in capsys.readouterr().err
+
+
+def test_network_failure_is_reported_not_raised(monkeypatch, capsys):
+    """`sync` bypasses `_get_roster`, so nothing else catches its transport errors."""
+    import requests
+
+    def boom(args, settings):
+        raise requests.ConnectionError("dns is down")
+
+    monkeypatch.setattr(cli, "cmd_sync", boom)
+    monkeypatch.setattr(cli, "load_settings", lambda: _settings())
+
+    rc = cli.main(["sync"])
+    assert rc == 2
+    assert "network request failed" in capsys.readouterr().err

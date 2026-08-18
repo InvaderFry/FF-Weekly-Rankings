@@ -93,7 +93,8 @@ def build_outcome_lookup(stats_by_id: Mapping[str, float],
                 x for x in [info.get("first_name"), info.get("last_name")] if x
             )
         if name and position:
-            by_name_pos[player_match_key(name, position)] = pts
+            # ``team`` matters only for defenses, where it is the canonical id.
+            by_name_pos[player_match_key(name, position, info.get("team"))] = pts
     return OutcomeIndex(stats_by_id, by_name_pos)
 
 

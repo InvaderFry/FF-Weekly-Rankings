@@ -93,3 +93,37 @@ def test_preferred_experts_env(tmp_path, monkeypatch):
     monkeypatch.setenv("FF_DATA_DIR", str(tmp_path))
     monkeypatch.setenv("FF_PREFERRED_EXPERTS", "101:Justin Boone,102:Jamey Eisenberg")
     assert load_settings().preferred_experts == "101:Justin Boone,102:Jamey Eisenberg"
+
+
+def test_partial_learned_weights_keep_the_learned_ratio(tmp_path, monkeypatch):
+    """`calibrate --write` writes only the signals it observed.
+
+    Patching that subset into the full defaults used to leave the un-learned
+    defaults in place, so a learned 70/30 summed to 1.22 and reached the blend
+    as 57/25 alongside two weights the grid search never endorsed.
+    """
+    _clear_weight_env(monkeypatch)
+    monkeypatch.setenv("FF_DATA_DIR", str(tmp_path))
+    (tmp_path / "learned_weights.json").write_text(json.dumps({"ecr": 0.70, "vegas": 0.30}))
+    weights = load_settings().weights
+    assert weights == {"ecr": 0.70, "vegas": 0.30, "injury": 0.0, "weather": 0.0}
+    assert sum(weights.values()) == 1.0
+
+
+def test_full_learned_weights_are_used_verbatim(tmp_path, monkeypatch):
+    _clear_weight_env(monkeypatch)
+    monkeypatch.setenv("FF_DATA_DIR", str(tmp_path))
+    learned = {"ecr": 0.5, "vegas": 0.2, "injury": 0.2, "weather": 0.1}
+    (tmp_path / "learned_weights.json").write_text(json.dumps(learned))
+    assert load_settings().weights == learned
+
+
+def test_env_still_overrides_a_partial_learned_file(tmp_path, monkeypatch):
+    """Documented precedence: defaults < learned file < explicit FF_WEIGHT_*."""
+    _clear_weight_env(monkeypatch)
+    monkeypatch.setenv("FF_DATA_DIR", str(tmp_path))
+    (tmp_path / "learned_weights.json").write_text(json.dumps({"ecr": 0.70, "vegas": 0.30}))
+    monkeypatch.setenv("FF_WEIGHT_WEATHER", "0.25")
+    weights = load_settings().weights
+    assert weights["weather"] == 0.25
+    assert weights["ecr"] == 0.70
