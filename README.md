@@ -137,9 +137,15 @@ calibration. Set `FF_PREFERRED_EXPERTS` to FantasyPros expert ids —
 walks through finding them — then:
 
 ```bash
+ffstartsit experts "Justin Boone" "Jamey Eisenberg" "Dave Richard"
+                                     # look the ids up, print the line to paste
+ffstartsit experts --verify          # are the configured ids live and distinct?
 ffstartsit journalists               # just this section, on demand
 ffstartsit report                    # digest now ends with the section
 ```
+
+These ranks also annotate every add in the waiver report, so this variable is
+worth setting even if you never look at the journalists section itself.
 
 ### Waiver wire & trades (`waivers`)
 
@@ -381,6 +387,7 @@ Notes:
 ```
 ff_startsit/
   cli.py            entry point: sync / rank / compare / lineup / report / waivers
+  sources/experts.py  find & verify FantasyPros expert ids (setup helper)
   config.py         .env-driven Settings (weights, threshold, scoring)
   models.py         Player, Game, SignalValue, PlayerScore, Recommendation
   pipeline.py       assemble signals -> fetch -> blend -> log

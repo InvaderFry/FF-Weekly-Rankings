@@ -7,10 +7,12 @@ Subcommands:
   lineup    suggest the best starter at each standard position (stretch)
   report    whole-roster markdown digest (lineup + all positions)
   journalists  your preferred journalists' ranks + average (display-only view)
+  experts   find/check FantasyPros expert ids for FF_PREFERRED_EXPERTS
   dashboard build a static HTML dashboard (for GitHub Pages)
   notify    send the week's summary to a Discord webhook
   publish   one scoring pass -> digest + dashboard + Discord (used by the Action)
   calibrate learn blend weights from your logged decisions vs actual outcomes (#7)
+  waivers   waiver-wire adds/drops + trade ideas (the Tuesday pass)
 
 Roster source defaults to ESPN (FF_ROSTER_SOURCE), overridable per command with
 --source {espn,sleeper,manual} plus --league / --team.
@@ -142,6 +144,18 @@ def _build_parser() -> argparse.ArgumentParser:
                                  "(FF_PREFERRED_EXPERTS; display-only)")
     p_jour.add_argument("--week", type=int, default=None)
     p_jour.set_defaults(func=cmd_journalists)
+
+    # No roster_parent: this touches no league, only FantasyPros (same as
+    # calibrate/backtest).
+    p_exp = sub.add_parser("experts",
+                           help="find/check FantasyPros expert ids for FF_PREFERRED_EXPERTS")
+    p_exp.add_argument("names", nargs="*",
+                       help='analyst names, e.g. "Justin Boone" "Dave Richard"')
+    p_exp.add_argument("--list", action="store_true", dest="list_all",
+                       help="dump every expert id the FantasyPros directory yields")
+    p_exp.add_argument("--verify", action="store_true",
+                       help="check the ids already in FF_PREFERRED_EXPERTS")
+    p_exp.set_defaults(func=cmd_experts)
 
     p_dash = sub.add_parser("dashboard", parents=[roster_parent],
                             help="build a static HTML dashboard (for GitHub Pages)")
@@ -386,6 +400,120 @@ def cmd_journalists(args, settings: Settings) -> int:
               "offline, or no data for this week).", file=sys.stderr)
         return 1
     print(report.render_journalists_markdown(view))
+    return 0
+
+
+#: Shown whenever discovery can't resolve a name. The browser method works
+#: regardless of markup changes, so it is always the fallback we point at.
+_MANUAL_STEPS = """
+Find it by hand (one analyst at a time — that's what makes the id unambiguous):
+  1. Open https://www.fantasypros.com/nfl/rankings/ppr-rb.php
+  2. Click "Pick Experts", deselect everyone, select ONLY that analyst, Apply.
+  3. The URL now ends with &filters=NNNN — NNNN is their id.
+  4. Repeat per analyst, then set:
+     FF_PREFERRED_EXPERTS=1234:Justin Boone,120:Jamey Eisenberg,125:Dave Richard
+"""
+
+
+def cmd_experts(args, settings: Settings, finder=None, verifier=None) -> int:
+    """Find FantasyPros expert ids by name, list them, or verify configured ones.
+
+    A setup helper — it reads no roster, touches no blend weight, and writes
+    nothing to the results log. ``finder``/``verifier`` are injectable so the
+    tests stay offline, the same seam ``cmd_calibrate`` uses.
+    """
+    from .sources.experts import (ExpertFinder, format_env_line, verify_experts)
+    from .sources.journalists import parse_experts
+
+    if getattr(args, "verify", False):
+        experts = parse_experts(settings.preferred_experts)
+        if not experts:
+            print("FF_PREFERRED_EXPERTS is not set — nothing to verify. Run "
+                  "`ffstartsit experts \"Justin Boone\" ...` to find ids first.",
+                  file=sys.stderr)
+            return 1
+        checks = (verifier or verify_experts)(experts, scoring=settings.scoring)
+        return _print_expert_checks(checks)
+
+    finder = finder or ExpertFinder()
+
+    if getattr(args, "list_all", False):
+        experts = finder.list_all()
+        if not experts:
+            print("Couldn't read the expert directory." + _MANUAL_STEPS,
+                  file=sys.stderr)
+            return 1
+        _print_expert_table(experts, finder)
+        print(f"\n{len(experts)} experts. Pick yours and set FF_PREFERRED_EXPERTS "
+              "to the id:Name pairs.")
+        return 0
+
+    names = getattr(args, "names", None) or []
+    if not names:
+        print('Give at least one name, e.g.\n'
+              '  ffstartsit experts "Justin Boone" "Jamey Eisenberg" "Dave Richard"\n'
+              "or --list to dump them all, or --verify to check what you have.",
+              file=sys.stderr)
+        return 1
+
+    found, missing = finder.find_all(names)
+    if found:
+        _print_expert_table(found, finder)
+        print("\nPaste this into .env (and set the same value as the "
+              "FF_PREFERRED_EXPERTS repo *variable* for the scheduled runs):\n")
+        print(format_env_line(found))
+        print("\nThen check them: ffstartsit experts --verify")
+    if missing:
+        print(f"\nCouldn't resolve: {', '.join(missing)}", file=sys.stderr)
+        print(_MANUAL_STEPS, file=sys.stderr)
+    # Any unresolved name means the printed line is incomplete — say so with the
+    # exit code, but still print what was found: a partial answer beats none.
+    return 0 if found and not missing else 1
+
+
+def _print_expert_table(experts, finder=None) -> None:
+    from rich.console import Console
+    from rich.table import Table
+
+    table = Table(title="FantasyPros experts")
+    table.add_column("id", justify="right")
+    table.add_column("name")
+    if finder is not None and getattr(finder, "pages", None):
+        table.add_column("found on")
+    for e in experts:
+        row = [e.id, e.name]
+        if finder is not None and getattr(finder, "pages", None):
+            row.append(finder.pages.get(e.name, ""))
+        table.add_row(*row)
+    Console().print(table)
+
+
+def _print_expert_checks(checks) -> int:
+    """Render verification results; non-zero exit if anything looks wrong."""
+    from rich.console import Console
+    from rich.table import Table
+
+    table = Table(title="FF_PREFERRED_EXPERTS check")
+    table.add_column("id", justify="right")
+    table.add_column("name")
+    table.add_column("rows", justify="right")
+    table.add_column("verdict")
+    for c in checks:
+        verdict = "[green]ok[/green]" if c.ok else f"[red]{c.problem}[/red]"
+        table.add_row(c.expert.id, c.expert.name, str(c.rows), verdict)
+    Console().print(table)
+
+    bad = [c for c in checks if not c.ok]
+    if bad:
+        print("\nAt least one id looks wrong.", file=sys.stderr)
+        print(_MANUAL_STEPS, file=sys.stderr)
+        return 1
+    # Be precise about what this proved, and what it did not.
+    print("\nAll ids return distinct rankings, so the filter is working and none "
+          "of them is silently serving consensus.")
+    print("Note this checks that each id is live and distinct — not that it "
+          "belongs to the analyst you named it after. Only the per-expert page "
+          "(the lookup above) ties a number to a name.")
     return 0
 
 
