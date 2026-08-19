@@ -66,3 +66,18 @@ def test_non_numeric_week_is_rejected():
     assert parse_command("/rank RB week 5") == [
         "rank", "--pos", "RB", "--md", "--week", "5",
     ]
+
+
+def test_waivers_maps_to_the_command():
+    assert parse_command("/waivers") == ["waivers"]
+
+
+def test_waivers_all_fans_out_over_every_league():
+    assert parse_command("/waivers all") == ["waivers", "--all-leagues"]
+
+
+def test_waivers_takes_the_shared_inline_options():
+    assert parse_command("/waivers all week 5") == [
+        "waivers", "--all-leagues", "--week", "5"]
+    assert parse_command("/waivers league-name dynasty") == [
+        "waivers", "--league-name", "dynasty"]

@@ -1,0 +1,10 @@
+{
+  "players": [
+    {"id": 4426502, "onTeamId": 0, "player": {"id": 4426502, "fullName": "Jauan Jennings", "defaultPositionId": 3, "proTeamId": 25, "injuryStatus": "ACTIVE", "ownership": {"percentOwned": 41.7}}},
+    {"id": 4429795, "onTeamId": 0, "player": {"id": 4429795, "fullName": "Zach Charbonnet", "defaultPositionId": 2, "proTeamId": 26, "injuryStatus": "QUESTIONABLE", "ownership": {"percentOwned": 22.4}}},
+    {"id": 4361050, "onTeamId": 0, "player": {"id": 4361050, "fullName": "Tyjae Spears", "defaultPositionId": 2, "proTeamId": 10, "injuryStatus": "OUT", "ownership": {"percentOwned": 8.1}}},
+    {"id": 4426502, "onTeamId": 0, "player": {"id": 4426502, "fullName": "Jauan Jennings", "defaultPositionId": 3, "proTeamId": 25, "ownership": {"percentOwned": 41.7}}},
+    {"id": 555555, "onTeamId": 0, "player": {"id": 555555, "fullName": "Some Linebacker", "defaultPositionId": 9, "proTeamId": 17}},
+    {"id": -16001, "onTeamId": 0, "player": {"id": -16001, "fullName": "Bears D/ST", "defaultPositionId": 16, "proTeamId": 3}}
+  ]
+}

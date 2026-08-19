@@ -171,6 +171,28 @@ def _build_parser() -> argparse.ArgumentParser:
                        help="one pass per configured league -> combined digest/dashboard/Discord")
     p_pub.set_defaults(func=cmd_publish)
 
+    p_wai = sub.add_parser("waivers", parents=[roster_parent],
+                           help="Tuesday waiver-wire adds/drops + trade ideas")
+    p_wai.add_argument("--week", type=int, default=None)
+    p_wai.add_argument("--report", type=Path, default=None,
+                       help="write the markdown digest here")
+    p_wai.add_argument("--dashboard", type=Path, default=None,
+                       help="write the HTML waivers page here")
+    p_wai.add_argument("--discord", action="store_true",
+                       help="also send the Discord notification")
+    p_wai.add_argument("--url", default=None,
+                       help="dashboard URL to link (or FF_DASHBOARD_URL)")
+    p_wai.add_argument("--all-leagues", action="store_true", dest="all_leagues",
+                       help="one pass per configured league -> combined outputs")
+    p_wai.add_argument("--limit", type=int, default=None,
+                       help="free agents to consider per league (or FF_WAIVER_LIMIT)")
+    p_wai.add_argument("--no-trades", action="store_true", dest="no_trades",
+                       help="skip the trade-ideas section")
+    p_wai.add_argument("--no-columns", action="store_true", dest="no_columns",
+                       help="skip the CBS/Yahoo waiver-column quotes")
+    # Deliberately no --log: see cmd_waivers.
+    p_wai.set_defaults(func=cmd_waivers)
+
     p_cal = sub.add_parser("calibrate",
                            help="learn blend weights from your logged decisions vs actual outcomes (#7)")
     p_cal.add_argument("--season", default=None, help="only use decisions from this season")
@@ -564,6 +586,113 @@ def _cmd_publish_all(args, settings: Settings) -> int:
                 send_discord(settings.discord_webhook_url, payload)
                 print("Sent Discord notification.")
             except Exception as exc:
+                print(f"warning: Discord notification failed: {exc}", file=sys.stderr)
+    return 0
+
+
+def _waiver_bundles(args, settings: Settings, week: int) -> list:
+    """Build one WaiverBundle per configured league.
+
+    Modeled on ``_league_bundles``: a league that fails is skipped with a
+    warning so the others still report. The extra skip here is a roster source
+    with no league behind it — a manual CSV has no free agents and no trade
+    partners, and saying so beats an empty section.
+    """
+    from dataclasses import replace
+
+    from .waivers.base import LeagueViewProvider
+    from .waivers.build import build_bundle
+    from .waivers.columns import ColumnFetcher
+
+    profiles = (settings.leagues if getattr(args, "all_leagues", False)
+                else [resolve_league(settings, getattr(args, "league_name", None))])
+
+    limit = getattr(args, "limit", None) or settings.waiver_limit
+    include_trades = settings.trade_suggestions and not getattr(args, "no_trades", False)
+    include_columns = settings.column_scrape and not getattr(args, "no_columns", False)
+    # One fetcher across every league: the writers publish one column a week, not
+    # one per league, so re-fetching per league would be three needless requests
+    # each and three copies of the same credits line.
+    fetcher = ColumnFetcher() if include_columns else None
+
+    bundles: list = []
+    for profile in profiles:
+        lsettings = settings
+        if profile.scoring and profile.scoring != settings.scoring:
+            lsettings = replace(settings, scoring=profile.scoring)
+        try:
+            provider = build_roster_provider(lsettings, args.source, args.league,
+                                             args.team, profile=profile)
+            if not isinstance(provider, LeagueViewProvider):
+                print(f"warning: skipping league {profile.name!r}: the "
+                      f"{provider.name!r} source can't see a free-agent pool or "
+                      f"other teams.", file=sys.stderr)
+                continue
+            players = _get_roster(args, lsettings, profile)
+            bundles.append(build_bundle(
+                lsettings, _league_label(profile) or profile.name, provider,
+                players, week, limit=limit,
+                max_adds=lsettings.waiver_max_adds,
+                max_trades=lsettings.max_trade_ideas,
+                include_trades=include_trades,
+                include_columns=include_columns,
+                column_fetcher=fetcher,
+            ))
+        except (RosterError, SleeperError) as exc:
+            print(f"warning: skipping league {profile.name!r}: {exc}", file=sys.stderr)
+            continue
+    return bundles
+
+
+def cmd_waivers(args, settings: Settings) -> int:
+    """Waiver-wire adds/drops + trade ideas -> digest, dashboard page, Discord.
+
+    There is deliberately **no** ``--log`` flag. The #7 results log holds
+    start/sit decisions the user acted on; a waiver row would pack a hundred
+    players — most of them on other people's teams — into a single "decision"
+    whose pairwise concordance means nothing, and would count toward the
+    ``calibrate --write`` floors with evidence nobody acted on. The log is
+    append-only, so there is no undoing it.
+    """
+    from datetime import date
+
+    from .output.discord import build_waiver_payload, send_discord
+    from .output.html import build_waivers_html
+    from .waivers.render import render_waiver_digest
+
+    week = _resolve_week(args, settings)
+    bundles = _waiver_bundles(args, settings, week)
+    if not bundles:
+        print("No configured league could be scored for waivers.", file=sys.stderr)
+        return 1
+
+    digest = render_waiver_digest(week, bundles)
+    print(digest)
+    if args.report:
+        args.report.parent.mkdir(parents=True, exist_ok=True)
+        args.report.write_text(digest)
+
+    if args.dashboard:
+        html = build_waivers_html(week, bundles,
+                                  generated_on=date.today().isoformat())
+        args.dashboard.parent.mkdir(parents=True, exist_ok=True)
+        args.dashboard.write_text(html)
+        print(f"Wrote waivers page ({len(bundles)} league(s)) to {args.dashboard}")
+
+    if args.discord:
+        if not settings.discord_webhook_url:
+            print("DISCORD_WEBHOOK_URL is not set — skipping Discord.", file=sys.stderr)
+        else:
+            dashboard_url = args.url or settings.dashboard_url or None
+            payload = build_waiver_payload(week, bundles,
+                                           dashboard_url=dashboard_url,
+                                           commands_url=_commands_url(settings))
+            try:
+                send_discord(settings.discord_webhook_url, payload)
+                print("Sent Discord notification.")
+            except Exception as exc:
+                # Same contract as publish: a Discord hiccup never sinks the
+                # digest and dashboard the rest of the workflow depends on.
                 print(f"warning: Discord notification failed: {exc}", file=sys.stderr)
     return 0
 

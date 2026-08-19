@@ -22,10 +22,16 @@ permissions:
   id-token: write       # required by actions/deploy-pages
 
 # A manual run overlapping a scheduled one would race the Pages deployment and
-# could file duplicate issues. GitHub's Pages guidance calls for this group; not
-# cancelling in progress so a half-finished deploy is never left published.
+# could file duplicate issues. Not cancelling in progress so a half-finished
+# deploy is never left published.
+#
+# The group is shared with waivers.yml on purpose. Every Pages deploy replaces
+# the *whole* site, so two workflows deploying concurrently would each publish
+# only the pages it built and silently delete the other's. Both workflows emit
+# the complete ./site (index.html + waivers.html) and this group makes their
+# deploys queue instead of race.
 concurrency:
-  group: weekly-report-${{ github.ref }}
+  group: ff-startsit-pages
   cancel-in-progress: false
 
 jobs:
@@ -46,6 +52,8 @@ jobs:
       ESPN_TEAM_ID: ${{ secrets.ESPN_TEAM_ID }}
       ESPN_S2: ${{ secrets.ESPN_S2 }}
       ESPN_SWID: ${{ secrets.ESPN_SWID }}
+      # Only needed if one of your FF_LEAGUES entries uses source `sleeper`.
+      SLEEPER_USERNAME: ${{ secrets.SLEEPER_USERNAME }}
       ODDS_API_KEY: ${{ secrets.ODDS_API_KEY }}
       FANTASYPROS_API_KEY: ${{ secrets.FANTASYPROS_API_KEY }}
       # Repository *variable* (Settings -> Secrets and variables -> Actions ->
@@ -95,6 +103,17 @@ jobs:
             --discord --url "$DASH_URL"
           # Mirror the digest to the run summary (viewable in the GitHub mobile app).
           cat report.md >> "$GITHUB_STEP_SUMMARY"
+
+      # The site is deployed as a whole, so this run has to republish the
+      # waivers page too or deploying would delete Tuesday's. No --discord and
+      # no issue post: this is the page only, Tuesday owns the notification.
+      - name: Rebuild waivers page (so the deploy doesn't drop it)
+        continue-on-error: true
+        run: |
+          WEEK_ARG=""
+          if [ -n "$INPUT_WEEK" ]; then WEEK_ARG="--week $INPUT_WEEK"; fi
+          python -m ff_startsit waivers $WEEK_ARG --all-leagues \
+            --dashboard ./site/waivers.html
 
       # Best-effort: the digest, dashboard and Discord ping are what the user
       # actually depends on, so a push failure here warns rather than failing the

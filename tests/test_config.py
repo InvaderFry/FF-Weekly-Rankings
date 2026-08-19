@@ -127,3 +127,44 @@ def test_env_still_overrides_a_partial_learned_file(tmp_path, monkeypatch):
     weights = load_settings().weights
     assert weights["weather"] == 0.25
     assert weights["ecr"] == 0.70
+
+
+# --- waiver/trade knobs ---------------------------------------------------
+def test_waiver_settings_have_defaults(monkeypatch):
+    for var in ("FF_WAIVER_LIMIT", "FF_WAIVER_MAX_ADDS", "FF_MAX_TRADE_IDEAS",
+                "FF_TRADE_SUGGESTIONS", "FF_COLUMN_SCRAPE"):
+        monkeypatch.delenv(var, raising=False)
+    s = load_settings()
+    assert (s.waiver_limit, s.waiver_max_adds, s.max_trade_ideas) == (150, 8, 5)
+    assert s.trade_suggestions and s.column_scrape
+
+
+def test_waiver_settings_read_the_env(monkeypatch):
+    monkeypatch.setenv("FF_WAIVER_LIMIT", "40")
+    monkeypatch.setenv("FF_MAX_TRADE_IDEAS", "0")
+    monkeypatch.setenv("FF_COLUMN_SCRAPE", "0")
+    s = load_settings()
+    assert s.waiver_limit == 40 and s.max_trade_ideas == 0
+    assert s.column_scrape is False
+
+
+def test_a_bad_waiver_limit_falls_back_loudly(monkeypatch, capsys):
+    """Same fail-loud-but-graceful contract as the weights: a negative limit
+    would slice the pool to nothing and silently produce a report with no adds."""
+    monkeypatch.setenv("FF_WAIVER_LIMIT", "-5")
+    assert load_settings().waiver_limit == 150
+    assert "FF_WAIVER_LIMIT" in capsys.readouterr().out
+
+
+def test_a_non_integer_waiver_limit_falls_back_loudly(monkeypatch, capsys):
+    monkeypatch.setenv("FF_WAIVER_MAX_ADDS", "lots")
+    assert load_settings().waiver_max_adds == 8
+    assert "FF_WAIVER_MAX_ADDS" in capsys.readouterr().out
+
+
+def test_the_waiver_knobs_are_not_blend_weights(monkeypatch):
+    """The waiver pass adds no Signal, so CLAUDE.md's "four places" weight rule
+    does not apply to it — and these settings must never reach the blend."""
+    monkeypatch.setenv("FF_WAIVER_LIMIT", "40")
+    monkeypatch.setenv("FF_TRADE_SUGGESTIONS", "0")
+    assert set(load_settings().weights) == {"ecr", "vegas", "injury", "weather"}

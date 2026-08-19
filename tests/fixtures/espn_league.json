@@ -7,6 +7,8 @@
       "id": 1,
       "name": "My Team",
       "owners": ["{AAAA1111-BBBB-2222-CCCC-3333DDDD4444}"],
+      "waiverRank": 7,
+      "transactionCounter": {"acquisitionBudgetSpent": 35},
       "roster": {
         "entries": [
           {"playerPoolEntry": {"player": {"id": 3139477, "fullName": "Patrick Mahomes", "defaultPositionId": 1, "proTeamId": 12}}},
@@ -21,6 +23,8 @@
       "id": 2,
       "name": "Rival Team",
       "owners": ["{ZZZZ9999-YYYY-8888-XXXX-7777WWWW6666}"],
+      "waiverRank": 2,
+      "transactionCounter": {"acquisitionBudgetSpent": 12},
       "roster": {
         "entries": [
           {"playerPoolEntry": {"player": {"id": 3916387, "fullName": "Josh Allen", "defaultPositionId": 1, "proTeamId": 2}}},
@@ -28,5 +32,16 @@
         ]
       }
     }
-  ]
+  ],
+  "settings": {
+    "acquisitionSettings": {
+      "acquisitionType": "WAIVERS_TRADITIONAL",
+      "isUsingAcquisitionBudget": true,
+      "acquisitionBudget": 100,
+      "waiverProcessDays": ["WEDNESDAY"]
+    },
+    "rosterSettings": {
+      "lineupSlotCounts": {"0": 1, "2": 2, "4": 2, "6": 1, "16": 1, "17": 1, "20": 6, "21": 1, "23": 1}
+    }
+  }
 }

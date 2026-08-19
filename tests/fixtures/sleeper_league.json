@@ -1,0 +1,21 @@
+{
+  "league_id": "999",
+  "name": "Dynasty",
+  "roster_positions": [
+    "QB",
+    "RB",
+    "RB",
+    "WR",
+    "WR",
+    "TE",
+    "FLEX",
+    "K",
+    "DEF",
+    "BN",
+    "BN"
+  ],
+  "settings": {
+    "waiver_type": 2,
+    "waiver_budget": 100
+  }
+}

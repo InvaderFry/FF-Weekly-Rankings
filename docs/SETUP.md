@@ -26,6 +26,7 @@ set it in both places.
 | `FANTASYPROS_API_KEY` | ECR via API (optional) | FantasyPros; without it the app scrapes the public page |
 | `DISCORD_WEBHOOK_URL` | Discord notifications (optional) | Discord webhook ([steps](#5-discord-optional)) |
 | `SLEEPER_USERNAME`, `SLEEPER_LEAGUE_ID` | Sleeper roster (alternative to ESPN) | Your Sleeper account |
+| `FF_WAIVER_LIMIT`, `FF_WAIVER_MAX_ADDS`, `FF_TRADE_SUGGESTIONS`, `FF_MAX_TRADE_IDEAS`, `FF_COLUMN_SCRAPE` | Waiver/trade report (optional) | Sensible defaults baked in ([steps](#7-waiver-wire--trades)) |
 | `FF_SCORING`, `FF_WEIGHT_*`, `FF_INJURY`, `FF_WEATHER`, `FF_CLOSE_CALL_THRESHOLD`, `FF_PRESEASON_FILL` | Tuning (all optional) | Sensible defaults baked in — see `.env.example` |
 
 ## 1. Local setup (`.env`)
@@ -166,14 +167,17 @@ Leave the variable unset (or set it to `0`) to hide the section.
    New Webhook**, pick the channel, **Copy Webhook URL**.
 2. Set it as `DISCORD_WEBHOOK_URL`. Leave unset to skip Discord.
 
-## 6. GitHub Actions setup (the twice-weekly runs)
+## 6. GitHub Actions setup (the scheduled runs)
 
-The repo ships two workflows that run this code **on GitHub's servers**, where
+The repo ships three workflows that run this code **on GitHub's servers**, where
 your local `.env` doesn't exist:
 
 - **Weekly start/sit report** (`weekly-report.yml`) — Thursday and Sunday
   (cron, UTC), posts the digest as an issue, deploys the dashboard to GitHub
   Pages, pings Discord.
+- **Tuesday waiver wire & trades** (`waivers.yml`) — Tuesday evening, posts the
+  waiver report as an issue, deploys `waivers.html` alongside the dashboard,
+  pings Discord. Reads the same secrets; needs no extra ones.
 - **ChatOps** (`chatops.yml`) — replies to `/rank RB`-style comments on issues.
 
 They read their configuration from your repository's Actions settings:
@@ -195,6 +199,7 @@ They read their configuration from your repository's Actions settings:
    | `ODDS_API_KEY` | if you use the Vegas signal |
    | `FANTASYPROS_API_KEY` | if you have one |
    | `DISCORD_WEBHOOK_URL` | if you want Discord pings |
+   | `SLEEPER_USERNAME` | if any `FF_LEAGUES` entry uses `source: sleeper` |
 
    Secrets you skip just disable that feature — nothing breaks. Set **either**
    `FF_LEAGUES` (multiple leagues, and the weekly Action publishes all of them)
@@ -219,12 +224,49 @@ They read their configuration from your repository's Actions settings:
    `https://<owner>.github.io/<repo>/`.
 2. Trigger a run by hand: **Actions** tab → **Weekly start/sit report** →
    **Run workflow** (works from the GitHub mobile app too). Check the run's
-   summary for the digest and any warnings.
+   summary for the digest and any warnings. Do the same for **Tuesday waiver
+   wire & trades** to see that report.
 3. When ESPN cookies expire, update the `ESPN_S2`/`ESPN_SWID` **secrets** here
    too, not just your local `.env`.
 
 > Cron times are UTC and drift an hour with daylight saving; edit the `cron:`
-> lines in `weekly-report.yml` to taste.
+> lines in `weekly-report.yml` / `waivers.yml` to taste. The waiver run is set
+> for 7pm Tuesday US Central (6pm once standard time starts), which is ahead of
+> Wednesday-morning waiver processing either way.
+
+> Both workflows deploy to the same GitHub Pages site, and a Pages deploy
+> replaces the site wholesale. That's why each one rebuilds **both** pages and
+> they share a `concurrency: group: ff-startsit-pages` — otherwise the later run
+> would silently delete the earlier run's page.
+
+## 7. Waiver wire & trades
+
+`ffstartsit waivers` needs no new credentials — it reuses your ESPN cookies or
+Sleeper username to read the league's free-agent pool and every team's roster.
+The knobs are all optional:
+
+| Variable | Default | What it does |
+|---|---|---|
+| `FF_WAIVER_LIMIT` | `150` | Free agents considered per league, in the platform's own relevance order |
+| `FF_WAIVER_MAX_ADDS` | `8` | Most adds (and drop candidates) listed per league |
+| `FF_TRADE_SUGGESTIONS` | `1` | `0` removes the trade section |
+| `FF_MAX_TRADE_IDEAS` | `5` | Cap on trade ideas per league |
+| `FF_COLUMN_SCRAPE` | `1` | `0` skips fetching the CBS/Yahoo waiver columns |
+
+Two things worth knowing:
+
+- **Set `FF_PREFERRED_EXPERTS`** ([section 3](#3-preferred-journalists-ff_preferred_experts)).
+  Boone's, Eisenberg's and Richard's *rankings* reach the waiver report through
+  it — that's the reliable half. The column quotes are a bonus that disappears
+  quietly if a site changes layout or paywalls the piece.
+- **A `manual` CSV league is skipped** with a warning. A hand-typed roster has no
+  free-agent pool and no trade partners behind it, so there's nothing to read.
+
+Try it locally before wiring the workflow:
+
+```bash
+ffstartsit waivers --all-leagues
+```
 
 ## Quick reference: where does each value go?
 
@@ -233,7 +275,9 @@ They read their configuration from your repository's Actions settings:
 | `ESPN_LEAGUE_ID`, `ESPN_TEAM_ID`, `ESPN_S2`, `ESPN_SWID` | ✅ | ✅ | |
 | `FF_LEAGUES` (multiple leagues) | ✅ | ✅ | |
 | `ODDS_API_KEY`, `FANTASYPROS_API_KEY`, `DISCORD_WEBHOOK_URL` | ✅ | ✅ | |
+| `SLEEPER_USERNAME` (Sleeper leagues) | ✅ | ✅ | |
 | `FF_PREFERRED_EXPERTS` | ✅ | | ✅ |
+| Waiver knobs (`FF_WAIVER_*`, `FF_TRADE_*`, `FF_COLUMN_SCRAPE`) | ✅ | | *not wired to Actions — defaults apply there* |
 | Tuning (`FF_SCORING`, `FF_WEIGHT_*`, …) | ✅ | | *not wired to Actions — defaults apply there* |
 
 *(The tuning knobs aren't currently passed to the workflows; the scheduled runs

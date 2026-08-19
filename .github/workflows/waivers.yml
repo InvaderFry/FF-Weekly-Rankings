@@ -1,0 +1,119 @@
+name: Tuesday waiver wire & trades
+
+# Posts waiver-wire adds/drops and trade ideas as a GitHub Issue, republishes the
+# GitHub Pages site (both pages), and pings Discord — Tuesday evening, after
+# Monday night football has settled the week and before Wednesday-morning waivers
+# process. Can also be run on demand (Actions -> Run workflow) from the phone.
+on:
+  schedule:
+    # 00:00 UTC Wednesday = 7:00pm Tuesday CDT. GitHub cron has no daylight
+    # saving, so from early November this lands at 6:00pm CST — still Tuesday
+    # evening, still ahead of Wednesday's waiver run. Edit to taste.
+    - cron: "0 0 * * 3"
+  workflow_dispatch:
+    inputs:
+      week:
+        description: "NFL week (blank = auto-detect)"
+        required: false
+        default: ""
+
+permissions:
+  contents: read        # unlike weekly-report.yml, this run writes no decision log
+  issues: write
+  pages: write
+  id-token: write
+
+# Shared with weekly-report.yml: a Pages deploy replaces the whole site, so the
+# two workflows must queue rather than race — otherwise whichever finishes last
+# publishes only its own pages and deletes the other's.
+concurrency:
+  group: ff-startsit-pages
+  cancel-in-progress: false
+
+jobs:
+  waivers:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    env:
+      FF_ROSTER_SOURCE: espn
+      # Same multi-league secret the weekly report uses. A Sleeper league is
+      # declared here with its own source, e.g.
+      # "work=espn:111111:3,dynasty=sleeper:999999:".
+      FF_LEAGUES: ${{ secrets.FF_LEAGUES }}
+      ESPN_LEAGUE_ID: ${{ secrets.ESPN_LEAGUE_ID }}
+      ESPN_TEAM_ID: ${{ secrets.ESPN_TEAM_ID }}
+      ESPN_S2: ${{ secrets.ESPN_S2 }}
+      ESPN_SWID: ${{ secrets.ESPN_SWID }}
+      # Required for any `sleeper` league — Sleeper resolves rosters by username.
+      SLEEPER_USERNAME: ${{ secrets.SLEEPER_USERNAME }}
+      ODDS_API_KEY: ${{ secrets.ODDS_API_KEY }}
+      FANTASYPROS_API_KEY: ${{ secrets.FANTASYPROS_API_KEY }}
+      # Repository *variable*, not a secret. These are the FantasyPros expert ids
+      # for your preferred journalists (Boone / Eisenberg / Richard); their ranks
+      # are what the waiver report scores adds against. See docs/SETUP.md.
+      FF_PREFERRED_EXPERTS: ${{ vars.FF_PREFERRED_EXPERTS }}
+      DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+      INPUT_WEEK: ${{ github.event.inputs.week }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install
+        run: pip install -e .
+
+      # Note what is *not* here: the calibration-data restore/persist steps from
+      # weekly-report.yml. The waiver pass is never written to the #7 results log
+      # (see cli.cmd_waivers), so there is no log for this workflow to carry.
+      - name: Waiver wire & trades
+        run: |
+          WEEK_ARG=""
+          if [ -n "$INPUT_WEEK" ]; then WEEK_ARG="--week $INPUT_WEEK"; fi
+          # Deterministic project Pages URL: Discord fires before the deploy step
+          # below finishes, so the link can't come from the deploy's output.
+          OWNER="${GITHUB_REPOSITORY%%/*}"; REPO="${GITHUB_REPOSITORY##*/}"
+          WAIVERS_URL="https://${OWNER,,}.github.io/${REPO}/waivers.html"
+          python -m ff_startsit waivers $WEEK_ARG --all-leagues \
+            --report waivers.md --dashboard ./site/waivers.html \
+            --discord --url "$WAIVERS_URL"
+          cat waivers.md >> "$GITHUB_STEP_SUMMARY"
+
+      # A Pages deploy replaces the entire site, so this run has to rebuild the
+      # start/sit page too or deploying would delete it. No --log and no
+      # --discord: Thursday/Sunday own the start/sit decisions and the ping.
+      - name: Rebuild start/sit page (so the deploy doesn't drop it)
+        continue-on-error: true
+        run: |
+          WEEK_ARG=""
+          if [ -n "$INPUT_WEEK" ]; then WEEK_ARG="--week $INPUT_WEEK"; fi
+          python -m ff_startsit publish $WEEK_ARG --all-leagues \
+            --dashboard ./site/index.html
+
+      - name: Post / update issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          WEEK=$(grep -oE 'Week [0-9]+' waivers.md | head -1 | grep -oE '[0-9]+' || true)
+          TITLE="Week ${WEEK:-?} waiver wire"
+          NUM=$(gh issue list --state open --search "in:title \"$TITLE\"" \
+                --json number,title --jq ".[] | select(.title==\"$TITLE\") | .number" | head -1)
+          if [ -n "$NUM" ]; then
+            echo "Updating issue #$NUM"
+            gh issue comment "$NUM" --body-file waivers.md
+          else
+            echo "Creating issue: $TITLE"
+            gh issue create --title "$TITLE" --body-file waivers.md
+          fi
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: ./site
+
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

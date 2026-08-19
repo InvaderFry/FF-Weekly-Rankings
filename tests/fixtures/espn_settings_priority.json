@@ -1,0 +1,11 @@
+{
+  "settings": {
+    "acquisitionSettings": {
+      "acquisitionType": "WAIVERS_TRADITIONAL",
+      "isUsingAcquisitionBudget": false,
+      "waiverProcessDays": [
+        "WEDNESDAY"
+      ]
+    }
+  }
+}
