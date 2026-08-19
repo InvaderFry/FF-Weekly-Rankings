@@ -21,7 +21,7 @@ set it in both places.
 | `ESPN_TEAM_ID` | ESPN **public** league | Your team page URL |
 | `ESPN_S2`, `ESPN_SWID` | ESPN **private** league | Browser cookies ([steps](#private-league-cookies)) |
 | `FF_LEAGUES` | Multiple leagues (optional) | `name=source:id:team[:scoring]`, comma-separated ([steps](#multiple-leagues-ff_leagues)) |
-| `FF_PREFERRED_EXPERTS` | Preferred journalists view (optional) | FantasyPros expert ids ([steps](#3-preferred-journalists-ff_preferred_experts)) |
+| `FF_PREFERRED_EXPERTS` | Journalist ranks in the digest **and** the waiver report | `ffstartsit experts "Justin Boone" ...` ([steps](#3-preferred-journalists-ff_preferred_experts)) |
 | `ODDS_API_KEY` | Vegas signal (optional) | Free key from [the-odds-api.com](https://the-odds-api.com/) |
 | `FANTASYPROS_API_KEY` | ECR via API (optional) | FantasyPros; without it the app scrapes the public page |
 | `DISCORD_WEBHOOK_URL` | Discord notifications (optional) | Discord webhook ([steps](#5-discord-optional)) |
@@ -87,17 +87,57 @@ the app auto-detects your team — you can skip `ESPN_TEAM_ID`.
 
 ## Multiple leagues (`FF_LEAGUES`)
 
-Follow more than one league from a single setup. `FF_LEAGUES` is one value listing
-every league:
+Follow every league you're in from a single setup. Step by step:
 
-```
-FF_LEAGUES=work=espn:111111:3,dynasty=espn:222222:7:half
+**1. Grab your ESPN cookies once.** Logged in to ESPN, open DevTools →
+**Application → Cookies → espn.com** and copy `espn_s2` and `SWID` (keep SWID's
+braces). One pair covers **every** ESPN league on your account — there are no
+per-league credentials.
+
+**2. Collect each league's id** from its URL — the number after `leagueId=` (or
+`/leagues/`), e.g. `111111`.
+
+**3. You almost certainly do NOT need team ids.** With `ESPN_SWID` set, the app
+finds *your* team in each league by matching the SWID against each team's owners.
+So leave the third field empty:
+
+```bash
+ESPN_S2=<your espn_s2 cookie>
+ESPN_SWID={your-swid-cookie}
+
+FF_LEAGUES=work=espn:111111:,dynasty=espn:222222::half,friends=espn:333333:
+FF_DEFAULT_LEAGUE=work
 #          name=source:league_id:team_id[:scoring], comma-separated
 ```
 
+Note `dynasty=espn:222222::half` — the empty third field is the skipped team id,
+and `half` is that league's scoring.
+
+**4. Add non-ESPN leagues to the same list.** A Sleeper league is
+`name=sleeper:<league_id>:`, and needs `SLEEPER_USERNAME` set (Sleeper resolves
+rosters by username). A `manual` CSV league needs no id.
+
+**5. Check each one resolves** before relying on it:
+
+```bash
+ffstartsit sync --league-name work
+ffstartsit sync --league-name dynasty
+ffstartsit publish --all-leagues       # or: ffstartsit waivers --all-leagues
+```
+
+A malformed entry is warned about on stderr and **dropped** — it doesn't fail the
+run. So a league that silently goes missing is a typo in its entry; read the
+warnings.
+
+### The fields
+
 - **`name`** is your handle for the league — pick anything (`work`, `dynasty`).
   Use it with `--league-name <name>` on any command, or `/report league-name work`
-  as an issue comment.
+  as an issue comment. Names must be unique (a duplicate keeps the first, with a
+  warning) and match case-insensitively.
+- **`team_id`** is only needed when the app can't identify you from a cookie —
+  a **public** league (no cookies at all), or when you deliberately want someone
+  *else's* team. An explicit team id **overrides** SWID auto-detection.
 - **`scoring`** (optional, `ppr|half|std`) overrides `FF_SCORING` for just that
   league.
 - ESPN cookies are per-account, so your one `ESPN_S2`/`ESPN_SWID` pair covers
@@ -119,37 +159,79 @@ to change if you only have one.
 
 ## 3. Preferred journalists (`FF_PREFERRED_EXPERTS`)
 
-This powers the optional **"Preferred journalists"** section (each journalist's
-weekly rank per player + their average). It's display-only — it never changes
-the blended score. You need each journalist's FantasyPros **expert id**:
+This is the most valuable optional variable, because it feeds **two** reports:
+the **"Preferred journalists"** section of the weekly digest (each analyst's rank
+per player, plus their average) *and* the Tuesday waiver report, where those
+ranks annotate every suggested add. It's display-only — it never changes the
+blended score.
 
-1. Open a FantasyPros **weekly** rankings page, e.g.
-   <https://www.fantasypros.com/nfl/rankings/ppr-rb.php>.
+You need each analyst's FantasyPros **expert id**.
+
+### The quick way
+
+```bash
+ffstartsit experts "Justin Boone" "Jamey Eisenberg" "Dave Richard"
+```
+
+It looks each analyst up and prints a paste-ready line:
+
+```
+FF_PREFERRED_EXPERTS=1234:Justin Boone,120:Jamey Eisenberg,125:Dave Richard
+```
+
+Put that in `.env`. `ffstartsit experts --list` dumps every expert it can find,
+if you want somebody not named above.
+
+### The manual way (always works)
+
+Do this if the lookup can't resolve a name — FantasyPros changes its markup from
+time to time, and the browser never lies. **One analyst at a time**, which is
+what makes the id unambiguous:
+
+1. Open <https://www.fantasypros.com/nfl/rankings/ppr-rb.php>.
    *(Weekly pages only exist once the season is near — before that, come back
    later; the app just omits the section until then.)*
-2. Click **Pick Experts** and deselect everything except your journalists —
-   e.g. **Justin Boone**, **Jamey Eisenberg**, **Dave Richard**.
-3. Apply. The page URL now ends with `...&filters=`**`1234:5678:9012`** — one
-   number per selected expert. Those numbers are the expert ids.
-4. Pair each id with a display name (check the picker to see which id belongs
-   to whom — select one expert at a time if unsure) and set:
+2. Click **Pick Experts**, **deselect everyone**, then select **only** Justin
+   Boone. Apply.
+3. The URL now ends with `&filters=`**`1234`** — that number is his id.
+4. Repeat for Jamey Eisenberg and Dave Richard, then write the pairs out:
 
    ```bash
-   FF_PREFERRED_EXPERTS=1234:Justin Boone,5678:Jamey Eisenberg,9012:Dave Richard
+   FF_PREFERRED_EXPERTS=1234:Justin Boone,120:Jamey Eisenberg,125:Dave Richard
    ```
 
-5. Verify:
+Selecting all three at once gives `filters=A:B:C`, which is faster but doesn't
+tell you which number is whose. One at a time is worth the extra minute — see the
+warning below about what a mislabeled id costs you.
 
-   ```bash
-   ffstartsit journalists
-   ```
+### Check them
 
-   You should see one table per position with each journalist's column. Two
-   warnings to know about:
-   - *"no rankings from preferred journalist X"* — that id returned nothing
-     (wrong id, or no weekly data yet).
-   - *"all preferred journalists returned identical ranks"* — FantasyPros
-     ignored the filter, which almost always means a wrong id. Re-check step 3.
+```bash
+ffstartsit experts --verify     # are these ids live, and distinct?
+ffstartsit journalists          # do I get three different columns?
+```
+
+`--verify` re-fetches each id's ranking and compares them. It catches three
+things:
+
+| Verdict | What it means |
+|---|---|
+| *returned no rankings* | Dead or malformed id, or no weekly data yet. |
+| *identical to unfiltered consensus* | The id is almost certainly not that analyst. |
+| *identical to expert id N* | FantasyPros ignored the filter — one of the ids is wrong. |
+
+> ⚠️ **Why the middle row matters.** A wrong-but-*valid* id returns a real
+> ranking, so the report renders somebody else's numbers under your journalist's
+> name and nothing looks broken. `--verify` is what catches that; the older
+> "all journalists returned identical ranks" warning only catches the filter
+> being ignored for *every* expert.
+
+`--verify` proves an id is live and distinct — **not** that it belongs to the
+person you named it after. Only the per-analyst lookup ties a number to a name.
+
+For the scheduled Actions runs, set the same value as the `FF_PREFERRED_EXPERTS`
+repo **variable** (not a secret — expert ids aren't sensitive); see
+[section 6](#6-github-actions-setup-the-scheduled-runs).
 
 Leave the variable unset (or set it to `0`) to hide the section.
 
@@ -255,10 +337,11 @@ The knobs are all optional:
 
 Two things worth knowing:
 
-- **Set `FF_PREFERRED_EXPERTS`** ([section 3](#3-preferred-journalists-ff_preferred_experts)).
-  Boone's, Eisenberg's and Richard's *rankings* reach the waiver report through
-  it — that's the reliable half. The column quotes are a bonus that disappears
-  quietly if a site changes layout or paywalls the piece.
+- **Set `FF_PREFERRED_EXPERTS`** ([section 3](#3-preferred-journalists-ff_preferred_experts))
+  — `ffstartsit experts "Justin Boone" "Jamey Eisenberg" "Dave Richard"` prints
+  the line to paste. Their *rankings* reach the waiver report through it, and
+  that's the reliable half. The column quotes are a bonus that disappears quietly
+  if a site changes layout or paywalls the piece.
 - **A `manual` CSV league is skipped** with a warning. A hand-typed roster has no
   free-agent pool and no trade partners behind it, so there's nothing to read.
 

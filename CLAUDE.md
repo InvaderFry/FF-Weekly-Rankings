@@ -146,6 +146,17 @@ joins the pick to the same Sleeper outcomes, and reports top-pick hit-rate plus 
 flagging. It reuses `weighted_final`, the `OutcomeProvider` seam, and `load_decisions`;
 it never writes weights.
 
+`sources/experts.py` is a **setup helper, not a signal** — it resolves analyst
+names to the FantasyPros expert ids `FF_PREFERRED_EXPERTS` wants. It is split by
+reliability on purpose: *discovery* (`ExpertFinder.find`) reads an id off the
+per-expert page whose slug is the analyst's name, so it is markup-dependent and
+returns `None` rather than a guess, because a wrong-but-valid id returns a real
+ranking and would label another analyst's numbers with your journalist's name.
+*Verification* (`verify_experts`) parses no markup at all — it re-fetches through
+`ecr.fetch_scrape_rows` and compares rankings numerically, which is what catches
+that mislabel case, plus a dead id and an ignored `filters` parameter. Only
+discovery can tie a number to a name, and the command says so.
+
 ### Game context (schedule)
 
 `sources/schedule.py:ScheduleProvider` resolves the week's fixtures once (keyless
