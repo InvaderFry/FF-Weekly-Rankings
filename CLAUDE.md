@@ -196,11 +196,78 @@ candidate is flex-eligible, and **refuses** otherwise (QB vs RB) or when the
 pooled ranking fails its coverage guard — there is no honest fallback, and the
 per-position blend would answer with a number that doesn't mean what it says.
 
+### The waiver/trade pass (`waivers/`)
+
+The Tuesday-evening companion to the start/sit pass: `ffstartsit waivers` (and
+`.github/workflows/waivers.yml`) suggests adds, drops, bids, stashes, bye-week
+holes and concrete trades, per league. Four rules hold, each of which is the
+reason a piece of it is shaped the way it is.
+
+- **It adds no `Signal`, and therefore no weight.** The "four places" rule above
+  does not apply to it and `_validate_weights` is untouched — no start/sit blend
+  changes. The preferred journalists' ranks and the writers' column mentions are
+  an *annotation* layer, exactly as `sources/journalists.py` is.
+- **Nothing here is ever written to `results_log.jsonl`.** A waiver row would
+  pack a hundred players — most of them on other people's teams — into a single
+  "decision", and the calibrator scores pairwise concordance *within* one
+  decision; it would also count toward the `calibrate --write` floors with
+  evidence nobody acted on. Every `recommend` call passes `log=False`, the
+  `waivers` command has no `--log` flag, and `waivers.yml` has none of
+  `weekly-report.yml`'s calibration-data steps.
+- **Free agents are scored in the *same* candidate set as your roster.**
+  `score.score_positions` runs one blend pass per position over your roster,
+  *every other team's* roster, and the free-agent pool together. `normalize.
+  to_0_100` is min-max within the candidate set, so a pool scored on its own puts
+  its best player at 100 whoever he is — "he beats your WR4" is only a true
+  sentence when both were normalized together. Same trap `rank_pooled` solves for
+  FLEX. It is also why `trades.py` needs no scoring pass of its own.
+- **A missing ECR is not a bad ECR.** FantasyPros ranks 40-75 per position; most
+  of a waiver pool is below that line and a bye-week player falls off it
+  entirely. Without ECR the blend runs on injury alone and returns a healthy
+  anonymous backup looking excellent — which recommended adding him and dropping
+  your bye-week RB1. So `score.has_ecr` gates both adds and drops; everything
+  else is reported as unranked rather than ranked last.
+
+`waivers/base.py:LeagueViewProvider` is a **second, optional ABC**, not new
+abstract methods on `RosterProvider` — a manual CSV has no league behind it and
+never will. `ESPNProvider` and `SleeperProvider` implement both; `cli.
+_waiver_bundles` probes with `isinstance` and skips a source that can't see a
+pool. ESPN's existing `mRoster`+`mTeam` response already carried every team's
+roster (the old `parse_roster` discarded it), so trades cost no extra request;
+only the free-agent pool needs a second call (`kona_player_info` +
+`x-fantasy-filter`). Sleeper has no free-agent endpoint at all — its pool is the
+cached `/players/nfl` blob minus every rostered id, ordered by `search_rank`.
+
+Two guards that look redundant and are not: `droppable`'s `protected` carries
+`report.build_lineup`'s **actual** FLEX pick, so `keep_counts` must *not* also
+reserve a spare at every flex position — doing both held three bodies back for
+one slot and made nothing droppable. And `trades.suggest_trades` is deliberately
+called **without** `protected`: offers are drawn from surplus only, so no
+starting slot can be traded away, and passing a lineup's worth of protected keys
+blocked every idea (surplus depth *is* the FLEX).
+
+`columns.py` (CBS for Eisenberg/Richard, Yahoo for Boone) inverts the usual
+scrape: it searches the article for names **already in the league's free-agent
+pool**, rather than parsing each site's structure. A layout change costs quotes,
+not correctness, and an invented name can't survive because it isn't in the pool.
+Team defenses are excluded outright — a defense is named after its team, and
+prose says team names constantly. One `ColumnFetcher` is shared across every
+league in a run and memoizes per `(author, week)`, including failures.
+
+Both scheduled workflows publish the **whole** `./site` (index.html +
+waivers.html) and share `concurrency: group: ff-startsit-pages`. A Pages deploy
+replaces the site wholesale, so two workflows deploying their own page would each
+silently delete the other's.
+
 ### Output & delivery
 
 `output/` renders the same `Recommendation` to a rich table, markdown, CSV/JSON
 (`render.py`), a self-contained HTML dashboard (`html.py`), and a Discord webhook
 payload (`discord.py`). `report.py` builds whole-roster digests and the shared
 lineup builder. `publish` does one scoring pass and fans out to all three outputs
-(this is what the weekly GitHub Action runs). `chatops.py` parses `/rank RB`-style
-issue comments into CLI argv for the Actions bot.
+(this is what the weekly GitHub Action runs). The waiver pass renders the same
+three ways from `WaiverBundle` (`waivers/render.py`, `html.build_waivers_html`,
+`discord.build_waiver_payload`), reusing the Discord budgeting helpers so a
+multi-league message still fits Discord's 10-embed / 6000-char limits.
+`chatops.py` parses `/rank RB`-style issue comments into CLI argv for the Actions
+bot (`/waivers` and `/waivers all` included).

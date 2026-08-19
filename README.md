@@ -141,6 +141,48 @@ ffstartsit journalists               # just this section, on demand
 ffstartsit report                    # digest now ends with the section
 ```
 
+### Waiver wire & trades (`waivers`)
+
+The Tuesday-evening companion to the Sunday lineup. Where the rest of the app
+asks *who do I start?*, this asks *who do I acquire?* — and it can see your whole
+league, not just your team:
+
+```bash
+ffstartsit waivers                                   # your default league
+ffstartsit waivers --all-leagues                     # every configured league
+ffstartsit waivers --all-leagues --report waivers.md --dashboard site/waivers.html --discord
+ffstartsit waivers --no-trades --no-columns          # just adds and drops
+```
+
+Each league's section gives you:
+
+- **Adds, each paired with a drop.** A free agent is only recommended when he
+  outscores a player you can actually cut — with the lineup builder's starters
+  ruled out, and never cutting a position below its starting requirement.
+- **A bid**, matched to how your league acquires players. FAAB leagues get a
+  dollar figure as a share of your *remaining* budget; rolling-priority leagues
+  get claim advice instead. If the platform won't tell us which it is, you get
+  neither rather than a confident number for somebody else's league.
+- **Trade ideas with named partners.** ESPN and Sleeper both hand over every
+  team's roster, so the report finds real fits — your surplus for their surplus,
+  where both starting lineups improve — and shows the gain on each side.
+- **Stash watch and bye-week holes**, including ranked players who are only on
+  the wire because their team is on bye this week.
+- **What the writers said** — quotes from Justin Boone's, Jamey Eisenberg's and
+  Dave Richard's weekly waiver columns, matched against your free-agent pool and
+  linked back to each piece. Their *rankings* also feed the report via
+  `FF_PREFERRED_EXPERTS` (above), which is the part that survives a layout
+  change: if a column can't be read, the quotes vanish and nothing else does.
+
+Two things it deliberately does not do. It adds **no blend signal**, so no
+start/sit ranking changes. And it is **never written to the results log** — a
+waiver row would pack a hundred players, most on other people's teams, into one
+"decision", and `calibrate` scores pairwise concordance *within* a decision.
+There is no `--log` flag on this command.
+
+Works on ESPN and Sleeper leagues. A `manual` CSV league is skipped with a
+warning: a hand-typed roster has no free-agent pool or trade partners behind it.
+
 Each `rank`/`compare` run appends a row to `.cache/results_log.jsonl` capturing
 the candidates, every signal's raw + normalized value, the weights used, and the
 pick — the data the calibrator learns from.
@@ -227,7 +269,7 @@ with an empty log or outcomes not yet posted, it says so and exits.
 
 You don't need to run anything locally to use this on the go. GitHub Actions
 runners have internet access, so they run the tool for you and surface results in
-the GitHub mobile app. Two workflows ship in `.github/workflows/`:
+the GitHub mobile app. Three workflows ship in `.github/workflows/`:
 
 - **Weekly digest** (`weekly-report.yml`) — runs Thursday afternoon and Sunday
   morning (and on-demand via *Actions → Run workflow*). Each run:
@@ -237,6 +279,12 @@ the GitHub mobile app. Two workflows ship in `.github/workflows/`:
     rankings, with injury/close-call rows highlighted), and
   - **pings Discord** with the lineup, alerts, and a link to the dashboard — if a
     `DISCORD_WEBHOOK_URL` secret is set.
+- **Tuesday waivers** (`waivers.yml`) — runs Tuesday evening, after Monday night
+  football and before Wednesday-morning waivers process. Posts a `Week N waiver
+  wire` issue with adds, drops, bids, trade ideas and bye holes for every
+  league, publishes them to `waivers.html` on the same Pages site, and pings
+  Discord in a different colour so it's distinguishable at a glance from the
+  start/sit post.
 - **ChatOps** (`chatops.yml`) — comment a slash command on any issue and the bot
   reply-comments the answer:
 
@@ -246,6 +294,7 @@ the GitHub mobile app. Two workflows ship in `.github/workflows/`:
   | `/rank RB` | rank your RBs (any position) |
   | `/compare Josh Allen \| Jalen Hurts` | head-to-head with close-call flag |
   | `/report` | the full digest on demand |
+  | `/waivers` | waiver adds/drops + trade ideas (`/waivers all` for every league) |
 
   Inline options work on any command: `week N`, `source espn\|sleeper\|manual`,
   `league ID`, `team ID`, `league-name NAME` — e.g. `/rank WR week 5` or
@@ -284,6 +333,13 @@ secret** (same values as your local `.env`):
 `ESPN_LEAGUE_ID`, `ESPN_S2`, `ESPN_SWID` (private league) — and optionally
 `ESPN_TEAM_ID` (public league), `ODDS_API_KEY`, `FANTASYPROS_API_KEY`.
 
+If any league in `FF_LEAGUES` uses `source: sleeper`, add `SLEEPER_USERNAME`
+too — Sleeper resolves rosters by username, and the scheduled runs have no other
+way to know whose team is yours. Declare the league in `FF_LEAGUES` (e.g.
+`dynasty=sleeper:999999:`) rather than relying on the flat `SLEEPER_LEAGUE_ID`:
+the workflows pin `FF_ROSTER_SOURCE: espn`, and a profile's own source is what
+overrides it.
+
 For the **Preferred journalists** section in the scheduled runs, add
 `FF_PREFERRED_EXPERTS` on the **Variables** tab (it's not sensitive) with the
 same `id:Name,...` value as your local `.env`.
@@ -291,7 +347,10 @@ same `id:Name,...` value as your local `.env`.
 For the **dashboard + Discord** delivery:
 - **Enable GitHub Pages once:** repo → *Settings → Pages → Build and deployment →
   Source = GitHub Actions*. After the next weekly run your dashboard lives at
-  `https://<owner>.github.io/<repo>/`.
+  `https://<owner>.github.io/<repo>/`, with the waiver report next to it at
+  `/waivers.html` (the two pages link to each other). Each deploy replaces the
+  whole site, so both workflows rebuild both pages and share a `concurrency`
+  group to keep their deploys from racing.
 - **Discord (optional):** create an incoming webhook (Discord → *Server Settings →
   Integrations → Webhooks → New Webhook → Copy URL*) and add it as the
   `DISCORD_WEBHOOK_URL` repository secret. Leave it unset to skip Discord.
@@ -300,7 +359,9 @@ Notes:
 - Only the **repo owner's** comments trigger ChatOps, and only a fixed set of
   commands runs — secrets are never echoed.
 - Cron times are UTC and drift ~1h with daylight saving; edit the `cron:` lines in
-  `weekly-report.yml` to taste.
+  `weekly-report.yml` / `waivers.yml` to taste. The waiver run is set for 7pm
+  Tuesday Central (6pm once standard time starts) — early enough to act before
+  Wednesday's waiver processing either way.
 - ESPN cookies expire periodically — if the digest starts erroring, re-grab
   `ESPN_S2`/`ESPN_SWID` and update the secrets.
 
@@ -319,7 +380,7 @@ Notes:
 
 ```
 ff_startsit/
-  cli.py            entry point: sync / rank / compare / lineup / report
+  cli.py            entry point: sync / rank / compare / lineup / report / waivers
   config.py         .env-driven Settings (weights, threshold, scoring)
   models.py         Player, Game, SignalValue, PlayerScore, Recommendation
   pipeline.py       assemble signals -> fetch -> blend -> log
@@ -336,6 +397,14 @@ ff_startsit/
     espn.py         ESPN league (cookies + team auto-detect / id fallback)
     sleeper.py      Sleeper username -> league -> roster (+ SleeperProvider)
     manual.py       hand-edited CSV roster
+  waivers/          the Tuesday pass: adds/drops + trades (adds no blend signal)
+    base.py         LeagueViewProvider ABC  <-- optional "see the whole league"
+    models.py       FantasyTeam, LeagueRules, WaiverTarget, TradeIdea, WaiverBundle
+    score.py        free agents scored in the SAME candidate set as your roster
+    trades.py       surplus/need matching across every team (pure)
+    columns.py      CBS/Yahoo waiver columns -> quotes (decorative, best-effort)
+    build.py        one league in, one WaiverBundle out
+    render.py       markdown digest for the issue comment
   data/
     teams.py        team-abbreviation normalization across sources
     stadiums.py     per-team stadium lat/lon + dome flag (for weather)
@@ -352,8 +421,8 @@ ff_startsit/
   results_log.py    append-only JSONL decision log (the #7 hook)
   output/
     render.py       rich table + markdown + CSV/JSON export
-    html.py         self-contained HTML dashboard (for GitHub Pages)
-    discord.py      Discord webhook payload + send (push notifications)
+    html.py         self-contained HTML dashboard + waivers page (GitHub Pages)
+    discord.py      Discord webhook payloads + send (start/sit and waivers)
 ```
 
 ### Growing into #7 (ensemble + self-calibration)

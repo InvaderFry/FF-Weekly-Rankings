@@ -227,3 +227,118 @@ def send_discord(webhook_url: str, payload: dict,
     sess = session or requests.Session()
     resp = sess.post(webhook_url, json=payload, timeout=timeout)
     resp.raise_for_status()
+
+
+# --- waiver wire & trades --------------------------------------------------
+#: Blurple, distinct from the green start/sit post: two scheduled messages land
+#: in the same channel each week and the colour is what tells them apart at a
+#: glance, before any text is read.
+_WAIVER_COLOR = 0x5865F2
+
+
+def _waiver_add_lines(bundle) -> list[str]:
+    lines: list[str] = []
+    for t in bundle.adds:
+        drop = f" — drop {t.drop.player.name}" if t.drop else ""
+        bid = f" · {t.bid}" if t.bid else ""
+        lines.append(f"**{t.score.player.name}** ({t.score.player.position})"
+                     f"{drop}{bid}")
+    return lines
+
+
+def _waiver_trade_lines(bundle) -> list[str]:
+    lines: list[str] = []
+    for idea in bundle.trades:
+        send = ", ".join(s.player.name for s in idea.you_send)
+        get = ", ".join(s.player.name for s in idea.you_get)
+        lines.append(f"**{idea.partner}**: send {send} → get {get} "
+                     f"(you +{idea.your_gain:.0f})")
+    return lines
+
+
+def _build_waiver_embed(bundle) -> dict:
+    """One league's waiver embed.
+
+    Adds come first and trades last on purpose: ``_fit_message_budget`` trims
+    the longest field when the message overruns, and a trade idea is the part a
+    reader can most afford to open the dashboard for. A waiver claim has a
+    deadline tonight.
+    """
+    label = f" · {bundle.label}" if bundle.label else ""
+    title = _clip(f"🔄 Week {bundle.week} waivers — "
+                  f"{bundle.scoring.upper()}{label}", _TITLE_MAX)
+
+    adds = _waiver_add_lines(bundle)
+    description = "\n".join(adds) if adds else "No add beats anyone you can drop."
+    if bundle.caveat:
+        description = f"**{bundle.caveat}**\n\n{description}"
+
+    embed = {
+        "title": title,
+        "description": _clip(description, 4096),
+        "color": _BANNER_COLOR if bundle.caveat else _WAIVER_COLOR,
+        "fields": [],
+    }
+
+    if bundle.drops:
+        embed["fields"].append({
+            "name": "✂️ Safe to cut",
+            "value": _clip(", ".join(d.score.player.name for d in bundle.drops),
+                           _FIELD_VALUE_MAX),
+            "inline": False,
+        })
+    trades = _waiver_trade_lines(bundle)
+    if trades:
+        embed["fields"].append({
+            "name": "🤝 Trade ideas",
+            "value": _clip("\n".join(trades), _FIELD_VALUE_MAX),
+            "inline": False,
+        })
+    if bundle.byes:
+        gaps = ", ".join(f"W{g.week} {g.position} ({g.available}/{g.needed})"
+                         for g in bundle.byes)
+        embed["fields"].append({
+            "name": "🗓️ Bye holes",
+            "value": _clip(gaps, _FIELD_VALUE_MAX),
+            "inline": False,
+        })
+    return embed
+
+
+def build_waiver_payload(week: int, bundles: Sequence,
+                         dashboard_url: Optional[str] = None,
+                         commands_url: Optional[str] = None) -> dict:
+    """The Tuesday waiver message: one embed per league, trimmed to fit.
+
+    Same budgeting contract as ``build_multi_discord_payload`` — Discord refuses
+    a payload over 10 embeds or 6000 characters outright, so the message is
+    trimmed here rather than sent to be rejected, and the trim is stated in the
+    last embed instead of left for the reader to spot.
+    """
+    embeds: list[dict] = []
+    budget = _TOTAL_CHARS_MAX
+    for b in bundles[:_MAX_EMBEDS]:
+        embed = _build_waiver_embed(b)
+        cost = _embed_chars(embed)
+        if embeds and cost > budget - _TRAILER_RESERVE:
+            break
+        budget -= cost
+        embeds.append(embed)
+
+    if not embeds:
+        return {"embeds": []}
+
+    dropped = len(bundles) - len(embeds)
+    last = embeds[-1]
+    if dropped > 0:
+        last["fields"].append({
+            "name": "⚠️ Not shown",
+            "value": _clip(f"{dropped} more league(s) didn't fit in one Discord "
+                           "message — see the dashboard for the full set.",
+                           _FIELD_VALUE_MAX),
+            "inline": False,
+        })
+    _dashboard_field(last, dashboard_url)
+    _commands_field(last, commands_url)
+    _fit_message_budget(embeds)
+    return {"embeds": embeds}

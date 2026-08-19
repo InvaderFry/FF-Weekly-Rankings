@@ -1,0 +1,10 @@
+{
+  "100": {"full_name": "Patrick Runner", "team": "KC", "position": "RB", "search_rank": 12, "active": true},
+  "101": {"full_name": "Chicago Back", "team": "CHI", "position": "RB", "search_rank": 4, "active": true, "injury_status": "IR"},
+  "102": {"full_name": "Buffalo Rusher", "team": "BUF", "position": "RB", "search_rank": 88, "active": true},
+  "103": {"full_name": "Retired Guy", "team": null, "position": "RB", "search_rank": 3, "active": false},
+  "200": {"full_name": "Some Kicker", "team": "GB", "position": "K", "search_rank": 250, "active": true},
+  "300": {"full_name": "Unranked Rookie", "team": "NYJ", "position": "WR", "active": true},
+  "KC": {"full_name": "Kansas City", "team": "KC", "position": "DEF"},
+  "999": {"full_name": "Practice Squad", "team": "NE", "position": "OL", "search_rank": 1, "active": true}
+}

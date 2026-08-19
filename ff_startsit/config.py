@@ -81,6 +81,21 @@ class Settings:
     # Before Week 1 there is no live data; fill runs with bundled sample data
     # (clearly labeled) instead of an empty lineup. FF_PRESEASON_FILL=0 disables.
     preseason_fill: bool = True
+    # --- Waiver wire & trades (Tuesday pass) ---
+    # None of these are blend weights: the waiver pass adds no Signal, so the
+    # "four places" rule in CLAUDE.md does not apply and `_validate_weights` is
+    # untouched. They only size and gate the extra sections.
+    # How many free agents to pull per league, in the platform's own
+    # relevance order (ESPN percent-owned, Sleeper search_rank).
+    waiver_limit: int = 150
+    # Most adds/drops to list per league.
+    waiver_max_adds: int = 8
+    # Most trade ideas to list per league. 0 disables the section.
+    max_trade_ideas: int = 5
+    trade_suggestions: bool = True
+    # Read the three writers' weekly waiver columns for named players. Purely
+    # decorative; a failure costs quotes, never the report.
+    column_scrape: bool = True
     # Distribution
     discord_webhook_url: str = ""
     dashboard_url: str = ""
@@ -129,6 +144,28 @@ def _b(name: str, default: bool) -> bool:
     if val is None or val.strip() == "":
         return default
     return val.strip().lower() not in {"0", "false", "no", "off"}
+
+
+def _i(name: str, default: int, minimum: int = 0) -> int:
+    """Read a non-negative int env var, falling back on anything unusable.
+
+    Same fail-loud-but-graceful contract as ``_f``: a garbage or out-of-range
+    value warns and uses the default rather than propagating (a negative
+    ``FF_WAIVER_LIMIT`` would slice the pool to nothing and silently produce a
+    report with no adds in it).
+    """
+    val = os.getenv(name)
+    if val is None or val.strip() == "":
+        return default
+    try:
+        parsed = int(val.strip())
+    except ValueError:
+        _warn(f"{name} is not an integer; using {default} instead.")
+        return default
+    if parsed < minimum:
+        _warn(f"{name} must be >= {minimum}; using {default} instead.")
+        return default
+    return parsed
 
 
 def _validate_weights(weights: dict[str, float],
@@ -395,6 +432,11 @@ def load_settings(env_file: str | os.PathLike | None = None) -> Settings:
         weather_enabled=_b("FF_WEATHER", True),
         roster_ttl=roster_ttl,
         preseason_fill=_b("FF_PRESEASON_FILL", True),
+        waiver_limit=_i("FF_WAIVER_LIMIT", 150, minimum=1),
+        waiver_max_adds=_i("FF_WAIVER_MAX_ADDS", 8, minimum=1),
+        max_trade_ideas=_i("FF_MAX_TRADE_IDEAS", 5),
+        trade_suggestions=_b("FF_TRADE_SUGGESTIONS", True),
+        column_scrape=_b("FF_COLUMN_SCRAPE", True),
         discord_webhook_url=os.getenv("DISCORD_WEBHOOK_URL", "").strip(),
         dashboard_url=os.getenv("FF_DASHBOARD_URL", "").strip(),
         repo_url=_repo_url(),

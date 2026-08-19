@@ -1,0 +1,4 @@
+[
+  {"roster_id": 1, "owner_id": "u1", "players": ["100", "200"], "settings": {"waiver_budget_used": 30, "waiver_position": 4}},
+  {"roster_id": 2, "owner_id": "u2", "players": ["KC"], "settings": {"waiver_budget_used": 5, "waiver_position": 1}}
+]
