@@ -261,6 +261,11 @@ def build_multi_dashboard_html(week: int, bundles: Sequence["LeagueBundle"],
 # --- waiver wire & trades page --------------------------------------------
 def _waiver_adds_table(bundle) -> str:
     if not bundle.adds:
+        # With a banner standing (preseason), this would claim a comparison that
+        # never ran — the banner already says why the section is empty. Same rule
+        # the markdown digest and the Discord embed follow.
+        if bundle.banner:
+            return ""
         return "<p class='note'>Nothing on the wire beats anyone you could drop.</p>"
     rows = [
         "<table><thead><tr><th>Add</th><th>Pos</th><th class='num'>Score</th>"
@@ -354,7 +359,23 @@ def _waiver_body(bundle) -> list[str]:
     body.append(_waiver_drops_table(bundle))
     body.append(_waiver_trades(bundle))
     body.append(_waiver_lists(bundle))
+    body.append(_waiver_roster(bundle))
     return [b for b in body if b]
+
+
+def _waiver_roster(bundle) -> str:
+    """The drafted roster, shown when a banner would otherwise stand alone."""
+    groups = bundle.roster_by_position()
+    if not groups:
+        return ""
+    out = ["<h3>Your team (drafted)</h3><ul class='ideas'>"]
+    for position, players in groups:
+        names = ", ".join(f"{p.name} ({p.team})" if p.team else p.name
+                          for p in players)
+        out.append(f"<li><strong>{escape(position)}</strong> — "
+                   f"{escape(names)}</li>")
+    out.append("</ul>")
+    return "".join(out)
 
 
 def build_waivers_html(week: int, bundles: Sequence, generated_on: str) -> str:

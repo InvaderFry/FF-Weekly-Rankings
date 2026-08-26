@@ -219,3 +219,60 @@ def test_the_rehearsal_coverage_reaches_discord_not_just_markdown():
     embed = build_waiver_payload(1, [b])["embeds"][0]
     assert "ecr 61/143" in embed["description"]
     assert "a note that Discord never renders" not in json.dumps(embed)
+
+
+# --- the drafted roster under the preseason banner -------------------------
+def _drafted_bundle():
+    b = WaiverBundle(label="work", scoring="ppr", week=1)
+    b.banner = PRESEASON
+    b.roster = [Player("1", "Josh Allen", "BUF", "QB"),
+                Player("2", "Bijan Robinson", "ATL", "RB"),
+                Player("3", "CeeDee Lamb", "DAL", "WR"),
+                Player("4", "Free Agent Wr", None, "WR")]
+    return b
+
+
+def test_the_roster_reaches_all_three_renderers():
+    b = _drafted_bundle()
+    md = render_waiver_digest(1, [b])
+    html = build_waivers_html(1, [b], generated_on="2026-08-26")
+    embed = build_waiver_payload(1, [b])["embeds"][0]
+
+    for rendered in (md, html, json.dumps(embed)):
+        assert "Your team (drafted)" in rendered
+        assert "Josh Allen" in rendered and "Bijan Robinson" in rendered
+    # A player with no NFL team (bye/FA) still renders, without an empty paren.
+    assert "Free Agent Wr (None)" not in md
+
+
+def test_the_roster_carries_no_scores_it_did_not_compute():
+    """The run that shows a roster is the one that refused to score anything."""
+    md = render_waiver_digest(1, [_drafted_bundle()])
+    roster_block = md.split("Your team (drafted)")[1]
+    assert "Score" not in roster_block and "100.0" not in roster_block
+
+
+def test_the_banner_still_comes_first():
+    md = render_waiver_digest(1, [_drafted_bundle()])
+    assert md.index(PRESEASON) < md.index("Your team (drafted)")
+
+
+def test_an_undrafted_league_shows_no_roster_section():
+    b = WaiverBundle(label="work", scoring="ppr", week=1)
+    b.banner = PRESEASON
+    assert "Your team" not in render_waiver_digest(1, [b])
+    assert "Your team" not in build_waivers_html(1, [b], generated_on="2026-08-26")
+    assert "Your team" not in json.dumps(build_waiver_payload(1, [b])["embeds"][0])
+
+
+def test_the_html_page_makes_the_same_empty_wire_claim_as_the_others():
+    """All three renderers suppress the empty-wire line under a banner; the page
+    used to keep it and claim a comparison that never ran."""
+    b = WaiverBundle(label="work", scoring="ppr", week=1)
+    b.banner = PRESEASON
+    html = build_waivers_html(1, [b], generated_on="2026-08-26")
+    assert "Nothing on the wire" not in html
+    # ...but an ordinary quiet week still says so.
+    quiet = WaiverBundle(label="work", scoring="ppr", week=9)
+    assert "Nothing on the wire" in build_waivers_html(9, [quiet],
+                                                       generated_on="2026-10-01")

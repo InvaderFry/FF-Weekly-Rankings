@@ -164,7 +164,10 @@ ffstartsit waivers --rehearse                        # preseason dry run, live d
 Before Week 1 the waiver pass **refuses** rather than guessing: there are no
 weekly rankings to score a wire against, and the bundled preseason sample data
 that gives the start/sit table something to show would, dealt to a real roster,
-name real players to claim and real players to cut.
+name real players to claim and real players to cut. Once you've drafted, the
+refusal lists your team under the warning — names only, no scores, since nothing
+was scored — so a preseason message confirms the draft landed instead of saying
+only "not yet".
 
 `--rehearse` is the dress rehearsal — still preseason, but scored on live
 rankings, lines and your real free-agent pool instead of the sample fill, so it

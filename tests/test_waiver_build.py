@@ -289,3 +289,45 @@ def test_outside_the_window_preseason_still_refuses(tmp_path):
     b = _build(tmp_path, provider=_ExplodingProvider(),
                preseason=True, rehearse=False)
     assert b.adds == [] and "PRESEASON" in b.banner
+
+
+# --- the drafted roster under the refusal ----------------------------------
+def test_the_refusal_still_shows_the_team_you_drafted(tmp_path):
+    """A refusal that says only "not yet" is a message with nothing in it. The
+    roster was already fetched before build_bundle ran, so showing it is free."""
+    b = _build(tmp_path, provider=_ExplodingProvider(),
+               preseason=True, rehearse=False)
+    assert [p.name for p in b.roster] == [p.name for p in MINE]
+    assert b.adds == [] and "PRESEASON" in b.banner   # still a refusal
+
+
+def test_before_the_draft_there_is_no_team_to_show(tmp_path):
+    b = build_bundle(Settings(data_dir=tmp_path), "work", _ExplodingProvider(),
+                     [], 1, include_columns=False, preseason=True, rehearse=False)
+    assert b.roster == [] and b.roster_by_position() == []
+
+
+def test_the_roster_rides_only_on_the_refusal(tmp_path):
+    """In season and in a rehearsal the report has real adds and drops to show,
+    so the roster listing would be noise."""
+    assert _build(tmp_path, preseason=False).roster == []
+    assert _build(tmp_path, preseason=True, rehearse=True).roster == []
+
+
+def test_roster_groups_are_ordered_and_lose_nobody(tmp_path):
+    b = _build(tmp_path, provider=_ExplodingProvider(),
+               preseason=True, rehearse=False)
+    groups = b.roster_by_position()
+    assert [pos for pos, _ in groups] == ["QB", "RB", "WR", "TE", "K", "DEF"]
+    assert sum(len(players) for _, players in groups) == len(MINE)
+    # Alphabetical inside a position, so the same roster reads the same twice.
+    rbs = dict(groups)["RB"]
+    assert [p.name for p in rbs] == sorted(p.name for p in rbs)
+
+
+def test_an_unexpected_position_is_listed_not_dropped(tmp_path):
+    """A missing player reads as a draft that didn't come through."""
+    odd = list(MINE) + [_p("x1", "Odd Slot", "P")]
+    b = build_bundle(Settings(data_dir=tmp_path), "work", _ExplodingProvider(),
+                     odd, 1, include_columns=False, preseason=True, rehearse=False)
+    assert dict(b.roster_by_position())["P"][0].name == "Odd Slot"

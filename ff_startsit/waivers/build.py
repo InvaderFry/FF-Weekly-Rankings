@@ -142,8 +142,12 @@ def build_bundle(settings: Settings, label: str, provider: LeagueViewProvider,
     rehearsing = preseason and rehearse
     if preseason and not rehearsing:
         # No notes: MARGIN_NOTE explains scores that this bundle doesn't carry.
+        # The roster does come along: it was fetched before build_bundle was
+        # called, so showing it costs nothing, and it is the one real thing a
+        # refusal can say — that the draft landed and this is the team. Still no
+        # scores or ranks, because there are none.
         return WaiverBundle(label=label, scoring=settings.scoring, week=week,
-                            banner=WAIVER_BANNER)
+                            banner=WAIVER_BANNER, roster=list(my_players))
 
     rules = _rules(provider)
     teams = _teams(provider)

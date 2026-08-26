@@ -90,6 +90,28 @@ def _bye_section(bundle: WaiverBundle) -> list[str]:
     return lines
 
 
+def _roster_section(bundle: WaiverBundle) -> list[str]:
+    """Your drafted team, under a banner that would otherwise stand alone.
+
+    Names only — no scores, no ranks. The run that shows this is the one that
+    refused to score anything, and a number here would be the invented number
+    the refusal exists to avoid.
+    """
+    groups = bundle.roster_by_position()
+    if not groups:
+        return []
+    lines = ["### Your team (drafted)", ""]
+    for position, players in groups:
+        names = ", ".join(_with_team(p) for p in players)
+        lines.append(f"- **{md_cell(position)}** — {md_cell(names)}")
+    lines.append("")
+    return lines
+
+
+def _with_team(player) -> str:
+    return f"{player.name} ({player.team})" if player.team else player.name
+
+
 def _mentions_section(bundle: WaiverBundle) -> list[str]:
     """Quotes from the writers, attributed and linked back to their columns."""
     quoted = [(t, m) for t in bundle.adds for m in t.mentions]
@@ -120,6 +142,7 @@ def render_bundle(bundle: WaiverBundle, heading: str = "###") -> list[str]:
     lines += _stash_section(bundle)
     lines += _bye_section(bundle)
     lines += _mentions_section(bundle)
+    lines += _roster_section(bundle)
     return lines
 
 

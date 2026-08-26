@@ -21,6 +21,11 @@ ACQ_FAAB = "faab"
 ACQ_PRIORITY = "priority"
 ACQ_UNKNOWN = "unknown"
 
+#: Order the drafted roster is listed in. A third copy of ``report.POSITION_ORDER``
+#: on purpose, the same way ``output/html.py`` keeps one: this is the lowest layer
+#: in the package, and importing ``report`` from here would cycle.
+ROSTER_ORDER = ["QB", "RB", "WR", "TE", "K", "DEF"]
+
 
 @dataclass(frozen=True)
 class FantasyTeam:
@@ -166,4 +171,28 @@ class WaiverBundle:
     #: started" and "this league's free-agent list was unreachable" stay
     #: distinguishable to every renderer.
     banner: Optional[str] = None
+    #: Your drafted roster, shown under a banner that has nothing else to say.
+    #: Only populated on the preseason refusal, where the report would otherwise
+    #: be a warning and nothing else — and where the roster is the one real thing
+    #: the run already holds, since ``cli._get_roster`` fetched it before
+    #: ``build_bundle`` was ever called. Empty before the draft, which is exactly
+    #: when there is no team to show.
+    roster: list[Player] = field(default_factory=list)
+
+    def roster_by_position(self) -> list[tuple[str, list[Player]]]:
+        """The drafted roster grouped for display, in lineup order.
+
+        One definition for all three renderers, so the digest, the dashboard and
+        the Discord embed cannot disagree about what the team is. A position the
+        platform names something unexpected is listed after the known ones rather
+        than dropped — a missing player reads as a draft that didn't come through.
+        """
+        groups: dict[str, list[Player]] = {}
+        for player in self.roster:
+            groups.setdefault(player.position, []).append(player)
+        ordered = [(pos, groups.pop(pos)) for pos in ROSTER_ORDER if pos in groups]
+        ordered += sorted(groups.items())
+        for _, players in ordered:
+            players.sort(key=lambda p: p.name)
+        return ordered
     notes: list[str] = field(default_factory=list)
