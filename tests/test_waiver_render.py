@@ -204,3 +204,18 @@ def test_the_banner_flips_the_embed_to_the_warning_colour():
 
     embed = build_waiver_payload(1, [_preseason_bundle()])["embeds"][0]
     assert embed["color"] == _BANNER_COLOR
+
+
+def test_the_rehearsal_coverage_reaches_discord_not_just_markdown():
+    """Coverage rides in the banner rather than `notes` for exactly this reason:
+    notes reach the digest and the dashboard, but never the embed — and the
+    Discord message is the thing being rehearsed."""
+    b = WaiverBundle(label="work", scoring="ppr", week=1)
+    b.banner = "🧪 DRESS REHEARSAL — early look. Live coverage: ecr 61/143."
+    b.notes = ["a note that Discord never renders"]
+
+    assert "ecr 61/143" in render_waiver_digest(1, [b])
+    assert "ecr 61/143" in build_waivers_html(1, [b], generated_on="2026-08-27")
+    embed = build_waiver_payload(1, [b])["embeds"][0]
+    assert "ecr 61/143" in embed["description"]
+    assert "a note that Discord never renders" not in json.dumps(embed)

@@ -204,6 +204,9 @@ def _build_parser() -> argparse.ArgumentParser:
                        help="skip the trade-ideas section")
     p_wai.add_argument("--no-columns", action="store_true", dest="no_columns",
                        help="skip the CBS/Yahoo waiver-column quotes")
+    p_wai.add_argument("--rehearse", action="store_true",
+                       help="preseason dress rehearsal: score live data instead "
+                            "of refusing (no-op once the season starts)")
     # Deliberately no --log: see cmd_waivers.
     p_wai.set_defaults(func=cmd_waivers)
 
@@ -765,6 +768,9 @@ def _waiver_bundles(args, settings: Settings, week: int) -> list:
                 include_trades=include_trades,
                 include_columns=include_columns,
                 column_fetcher=fetcher,
+                # None, not False, so an unset flag still lets build_bundle
+                # detect the pre-kickoff window on its own.
+                rehearse=getattr(args, "rehearse", False) or None,
             ))
         except (RosterError, SleeperError) as exc:
             print(f"warning: skipping league {profile.name!r}: {exc}", file=sys.stderr)
@@ -789,7 +795,7 @@ def cmd_waivers(args, settings: Settings) -> int:
     from .waivers.render import render_waiver_digest
 
     week = _resolve_week(args, settings)
-    banner = season.waiver_preseason_banner()
+    banner = season.waiver_banner(rehearse=getattr(args, "rehearse", False))
     if banner:
         # Make the Action log say it too, not just the rendered outputs.
         print(f"warning: {banner}", file=sys.stderr)

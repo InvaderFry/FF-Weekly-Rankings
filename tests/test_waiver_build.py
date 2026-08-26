@@ -107,6 +107,7 @@ def _build(tmp_path, provider=None, schedule=None, **kw):
     # In-season by default: these cases are about the scoring pass, and
     # build_bundle refuses outright before Week 1 (see the preseason tests).
     kw.setdefault("preseason", False)
+    kw.setdefault("rehearse", False)
     return build_bundle(Settings(data_dir=tmp_path), "work",
                         provider or _Provider(), MINE, 9,
                         signals=[_FakeECR()], schedule=schedule or _NoSchedule(), **kw)
@@ -182,7 +183,8 @@ def test_building_a_bundle_writes_no_decision_log(tmp_path):
     """#7 invariant, at the level that actually touches the pipeline."""
     settings = Settings(data_dir=tmp_path)
     build_bundle(settings, "work", _Provider(), MINE, 9, signals=[_FakeECR()],
-                 schedule=_NoSchedule(), include_columns=False, preseason=False)
+                 schedule=_NoSchedule(), include_columns=False, preseason=False,
+                 rehearse=False)
     assert not settings.results_log_path.exists()
 
 
@@ -235,3 +237,55 @@ def test_preseason_refuses_instead_of_suggesting_sample_moves(tmp_path):
 def test_in_season_is_unaffected_by_the_preseason_guard(tmp_path):
     b = _build(tmp_path, preseason=False)
     assert b.banner is None and b.adds
+
+
+def test_a_rehearsal_scores_live_data_instead_of_refusing(tmp_path):
+    """The dress rehearsal is preseason by the calendar but real underneath —
+    it proves the pipeline rather than demonstrating it."""
+    b = _build(tmp_path, preseason=True, rehearse=True)
+    assert b.adds and b.drops                       # the provider was read
+    assert b.banner and "DRESS REHEARSAL" in b.banner
+
+
+def test_a_rehearsal_reports_what_the_live_signals_reached(tmp_path):
+    """Without the counts an empty rehearsal reads exactly like a broken one."""
+    b = _build(tmp_path, preseason=True, rehearse=True)
+    assert "Live coverage:" in b.banner
+    # _FakeECR covers every player in RANKS; the pool is f1/f2, both ranked.
+    assert f"ecr 2/{len(POOL)}" in b.banner
+
+
+def test_the_rehearsal_never_reaches_the_sample_fill(monkeypatch, tmp_path):
+    """The whole point: build_signals must be asked for live signals, since the
+    sample fill is exactly what the rehearsal exists to avoid."""
+    asked = {}
+
+    def _spy(settings, **kw):
+        asked.update(kw)
+        return [_FakeECR()]
+
+    monkeypatch.setattr("ff_startsit.waivers.build.build_signals", _spy)
+    build_bundle(Settings(data_dir=tmp_path), "work", _Provider(), MINE, 1,
+                 schedule=_NoSchedule(), include_columns=False,
+                 preseason=True, rehearse=True)
+    assert asked["preseason"] is False
+
+
+def test_the_window_is_detected_when_the_flag_is_not_passed(monkeypatch, tmp_path):
+    """The scheduled cron carries no --rehearse; build_bundle finds the
+    pre-kickoff window itself."""
+    monkeypatch.setattr("ff_startsit.waivers.build.is_rehearsal_window",
+                        lambda today=None: True)
+    b = _build(tmp_path, preseason=True, rehearse=None)
+    assert b.adds and "DRESS REHEARSAL" in b.banner
+
+
+def test_rehearsing_in_season_is_a_no_op_not_a_banner(tmp_path):
+    b = _build(tmp_path, preseason=False, rehearse=True)
+    assert b.banner is None and b.adds
+
+
+def test_outside_the_window_preseason_still_refuses(tmp_path):
+    b = _build(tmp_path, provider=_ExplodingProvider(),
+               preseason=True, rehearse=False)
+    assert b.adds == [] and "PRESEASON" in b.banner

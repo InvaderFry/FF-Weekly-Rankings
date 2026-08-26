@@ -249,6 +249,23 @@ reason a piece of it is shaped the way it is.
   "here is what this report could not see", and the two must stay
   distinguishable to a renderer that colors on either.
 
+  The **dress rehearsal** is the third path through that gate, and the reason
+  the switch is "use live signals despite the calendar" rather than "run anyway":
+  a run that only bypasses the refusal still gets the sample fill, which
+  rehearses the demo rather than the system. So past the gate `build_bundle`
+  asks `build_signals` for `preseason=False` unconditionally. It fires on request
+  (`--rehearse`, a `workflow_dispatch` checkbox) or by itself inside
+  `season.is_rehearsal_window` — the final 7 days before kickoff, *not* the first
+  preseason week, which is late July when there are no weekly rankings to fetch
+  and a run proves the least. The window is exactly one week wide so precisely
+  one of `waivers.yml`'s weekly crons lands in it: one rehearsal a season, with
+  no arithmetic tying the window to the schedule. Nothing is invented if the data
+  isn't there yet — `score.has_ecr` already empties the report — so the banner
+  carries `score.signal_coverage` counts, because an empty rehearsal must not
+  read the same as a broken one. Those counts ride in the *banner*, not `notes`:
+  `notes` reach the digest and the dashboard but never the Discord embed, and the
+  Discord message is the thing being rehearsed.
+
 Relatedly, `SleeperClient.current_week` reads `/state/nfl`'s `season_type`
 before its `week`: that endpoint counts *preseason* weeks through August, so
 `week: 3` there is the third preseason game, not Week 3 of the season, and

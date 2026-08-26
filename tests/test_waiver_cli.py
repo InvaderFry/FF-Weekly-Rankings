@@ -2,6 +2,8 @@
 
 import pytest
 
+from ff_startsit.waivers.build import build_bundle as cli_build_bundle
+
 from ff_startsit import cli
 from ff_startsit.config import LeagueProfile, Settings
 from ff_startsit.models import Player, SignalValue
@@ -84,7 +86,7 @@ class _Args:
                         refresh=False, offline=False, week=9, report=None,
                         dashboard=None, discord=False, url=None,
                         all_leagues=False, limit=None, no_trades=False,
-                        no_columns=True)
+                        no_columns=True, rehearse=False)
         defaults.update(kw)
         self.__dict__.update(defaults)
 
@@ -103,8 +105,8 @@ def _offline(monkeypatch, tmp_path):
     # are about the in-season command.
     monkeypatch.setattr("ff_startsit.waivers.build.is_preseason",
                         lambda today=None: False)
-    monkeypatch.setattr(cli.season, "waiver_preseason_banner",
-                        lambda today=None: None)
+    monkeypatch.setattr(cli.season, "waiver_banner",
+                        lambda rehearse=False, today=None: None)
 
 
 def _settings(tmp_path, leagues=None):
@@ -221,8 +223,10 @@ def test_preseason_command_warns_and_suggests_nothing(monkeypatch, tmp_path, cap
                         lambda *a, **k: _FakeProvider())
     monkeypatch.setattr("ff_startsit.waivers.build.is_preseason",
                         lambda today=None: True)
-    monkeypatch.setattr(cli.season, "waiver_preseason_banner",
-                        lambda today=None: cli.season.WAIVER_BANNER)
+    monkeypatch.setattr("ff_startsit.waivers.build.is_rehearsal_window",
+                        lambda today=None: False)
+    monkeypatch.setattr(cli.season, "waiver_banner",
+                        lambda rehearse=False, today=None: cli.season.WAIVER_BANNER)
 
     assert cli.cmd_waivers(_Args(), _settings(tmp_path)) == 0
 
@@ -230,3 +234,32 @@ def test_preseason_command_warns_and_suggests_nothing(monkeypatch, tmp_path, cap
     assert "PRESEASON" in captured.err          # the Actions log says it too
     assert "PRESEASON" in captured.out          # and so does the digest
     assert "Free Wr" not in captured.out        # no add is named
+
+
+def test_rehearse_flag_reaches_the_builder_and_names_the_situation(
+        monkeypatch, tmp_path, capsys):
+    """The manual dress rehearsal: --rehearse must both reach the builder and
+    say which of the two preseason situations this is."""
+    monkeypatch.setattr(cli, "build_roster_provider",
+                        lambda *a, **k: _FakeProvider())
+    monkeypatch.setattr("ff_startsit.waivers.build.is_preseason",
+                        lambda today=None: True)
+    monkeypatch.setattr(cli.season, "waiver_banner",
+                        lambda rehearse=False, today=None: (
+                            cli.season.REHEARSAL_BANNER if rehearse
+                            else cli.season.WAIVER_BANNER))
+
+    seen = {}
+    real = cli_build_bundle
+
+    def _spy(*a, **kw):
+        seen.update(kw)
+        return real(*a, **kw)
+
+    monkeypatch.setattr("ff_startsit.waivers.build.build_bundle", _spy)
+    assert cli.cmd_waivers(_Args(rehearse=True), _settings(tmp_path)) == 0
+
+    assert seen["rehearse"] is True
+    captured = capsys.readouterr()
+    assert "DRESS REHEARSAL" in captured.err     # not the refusal notice
+    assert "Free Wr" in captured.out             # and it really scored the pool

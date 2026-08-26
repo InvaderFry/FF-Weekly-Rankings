@@ -115,8 +115,34 @@ def score_positions(settings: Settings, players: Sequence[Player], week: int,
 
 def has_ecr(score: PlayerScore) -> bool:
     """Whether the blend's heaviest signal actually covered this player."""
-    value = score.raw.get("ecr")
+    return _covered(score, "ecr")
+
+
+def _covered(score: PlayerScore, signal: str) -> bool:
+    value = score.raw.get(signal)
     return bool(value is not None and value.available and value.raw is not None)
+
+
+def signal_coverage(index: dict[str, PlayerScore],
+                    players: Sequence[Player]) -> dict[str, int]:
+    """How many of ``players`` each signal returned a usable value for.
+
+    The dress rehearsal exists to prove the pipeline reaches real data, and an
+    empty report is otherwise ambiguous between "the wire is quiet" and "nothing
+    connected". Counting per signal is the difference. Every signal seen on any
+    player is reported, including the ones that covered nobody — a zero is the
+    most informative number here.
+    """
+    counts: dict[str, int] = {}
+    for player in players:
+        score = index.get(player.key)
+        if score is None:
+            continue
+        for name in score.raw:
+            counts.setdefault(name, 0)
+            if _covered(score, name):
+                counts[name] += 1
+    return counts
 
 
 # --- roster shape ----------------------------------------------------------

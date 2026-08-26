@@ -15,13 +15,15 @@ from typing import Optional, Sequence
 from ..config import Settings
 from ..models import Player, PlayerScore
 from ..pipeline import build_signals
-from ..season import WAIVER_BANNER, is_preseason
+from ..season import (REHEARSAL_BANNER, WAIVER_BANNER, is_preseason,
+                      is_rehearsal_window)
 from ..sources.schedule import ScheduleProvider
 from .base import LeagueViewProvider, pool_players
 from .columns import ColumnFetcher, index_mentions
-from .models import LeagueRules, WaiverBundle
+from .models import LeagueRules, PoolPlayer, WaiverBundle
 from .score import (BYE_HORIZON, bye_gaps, dedupe_players, droppable,
-                    find_stashes, pick_adds, score_positions, team_players)
+                    find_stashes, pick_adds, score_positions,
+                    signal_coverage, team_players)
 from .trades import suggest_trades
 
 #: Margins are computed inside a position's own candidate set, so a 9-point WR
@@ -85,6 +87,25 @@ def _weeks_playing(schedule: ScheduleProvider, week: int,
     return out
 
 
+def _rehearsal_banner(index: dict[str, PlayerScore],
+                      pool: Sequence[PoolPlayer]) -> str:
+    """The rehearsal notice plus what the live signals actually reached.
+
+    The counts are the deliverable, not decoration: without them an empty
+    rehearsal reads exactly like a broken one. They ride in the banner rather
+    than ``notes`` because ``notes`` reach the digest and the dashboard but not
+    the Discord embed, and the Discord message is the thing being rehearsed.
+    """
+    if not pool:
+        return REHEARSAL_BANNER
+    counts = signal_coverage(index, pool_players(pool))
+    if not counts:
+        return REHEARSAL_BANNER
+    covered = ", ".join(f"{name} {counts[name]}/{len(pool)}"
+                        for name in sorted(counts))
+    return f"{REHEARSAL_BANNER} Live coverage: {covered}."
+
+
 def build_bundle(settings: Settings, label: str, provider: LeagueViewProvider,
                  my_players: Sequence[Player], week: int, *,
                  signals: Optional[Sequence] = None,
@@ -93,7 +114,8 @@ def build_bundle(settings: Settings, label: str, provider: LeagueViewProvider,
                  limit: int = 150, max_adds: int = 8, max_trades: int = 5,
                  include_trades: bool = True,
                  include_columns: bool = True,
-                 preseason: Optional[bool] = None) -> WaiverBundle:
+                 preseason: Optional[bool] = None,
+                 rehearse: Optional[bool] = None) -> WaiverBundle:
     """Score one league's waiver wire and build its report.
 
     Before Week 1 the report is **refused**, not filled. ``pipeline.build_signals``
@@ -102,12 +124,23 @@ def build_bundle(settings: Settings, label: str, provider: LeagueViewProvider,
     add and real players to cut, and a banner over an invented drop is still an
     invented drop. So preseason returns an empty bundle carrying the warning —
     before any provider call, so the refusal also costs no requests.
-    ``preseason`` is injectable for tests, mirroring ``build_signals``; ``None``
-    means "detect from today's date".
+
+    A **dress rehearsal** is the third path: still preseason by the calendar, but
+    scored on live rankings, lines and your real free-agent pool rather than the
+    sample fill, so it proves the pipeline instead of demonstrating it. It runs on
+    request (``--rehearse``) or by itself inside ``is_rehearsal_window``. What it
+    can't reach it reports: the banner carries per-signal coverage, because an
+    empty rehearsal must not read the same as a broken one.
+
+    ``preseason`` and ``rehearse`` are injectable for tests, mirroring
+    ``build_signals``; ``None`` means "detect from today's date".
     """
     if preseason is None:
         preseason = is_preseason()
-    if preseason:
+    if rehearse is None:
+        rehearse = is_rehearsal_window()
+    rehearsing = preseason and rehearse
+    if preseason and not rehearsing:
         # No notes: MARGIN_NOTE explains scores that this bundle doesn't carry.
         return WaiverBundle(label=label, scoring=settings.scoring, week=week,
                             banner=WAIVER_BANNER)
@@ -131,8 +164,14 @@ def build_bundle(settings: Settings, label: str, provider: LeagueViewProvider,
         bundle.caveat = "This league returned no players to score."
         return bundle
 
-    signals = list(signals) if signals is not None else build_signals(settings)
+    # preseason=False past the gate: accurate in season, and the point of a
+    # rehearsal — the sample fill is exactly what it exists to avoid.
+    signals = (list(signals) if signals is not None
+               else build_signals(settings, preseason=False))
     _, index = score_positions(settings, candidates, week, signals=signals)
+
+    if rehearsing:
+        bundle.banner = _rehearsal_banner(index, pool)
 
     my_scores = [index[p.key] for p in my_players if p.key in index]
     protected = _lineup_keys(my_scores)

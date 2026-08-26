@@ -12,7 +12,8 @@ from ff_startsit.waivers.models import (ACQ_FAAB, ACQ_PRIORITY, ACQ_UNKNOWN,
                                         LeagueRules, PoolPlayer, WaiverTarget)
 from ff_startsit.waivers.score import (bye_gaps, dedupe_players, droppable,
                                        find_stashes, has_ecr, keep_counts,
-                                       pick_adds, score_positions, suggest_bid)
+                                       pick_adds, score_positions,
+                                       signal_coverage, suggest_bid)
 
 
 def _p(key, name, pos, team="KC"):
@@ -242,3 +243,31 @@ def test_an_unreadable_week_is_skipped_not_treated_as_a_league_wide_bye():
     for every position, every week the schedule endpoint hiccupped."""
     roster = [_p("r1", "A", "RB", team="SF")]
     assert bye_gaps(roster, LeagueRules(roster_slots={"RB": 1}), 9, {}) == []
+
+
+# --- signal coverage (what a dress rehearsal reports) ----------------------
+def test_signal_coverage_counts_only_usable_readings():
+    """A signal that answered "I don't know" for a player didn't cover him, and
+    a rehearsal that can't tell the difference can't prove anything."""
+    from ff_startsit.models import PlayerScore
+
+    a, b = Player("1", "A", "KC", "WR"), Player("2", "B", "SF", "WR")
+    index = {
+        "1": PlayerScore(player=a, raw={"ecr": SignalValue(raw=3.0),
+                                        "vegas": SignalValue(raw=24.5),
+                                        "weather": SignalValue(raw=None,
+                                                               available=False)}),
+        # No ecr *reading* (present but empty), and no weather key at all.
+        "2": PlayerScore(player=b, raw={"ecr": SignalValue(raw=None),
+                                        "vegas": SignalValue(raw=21.0)}),
+    }
+    assert signal_coverage(index, [a, b]) == {"ecr": 1, "vegas": 2, "weather": 0}
+
+
+def test_signal_coverage_skips_players_that_were_never_scored():
+    from ff_startsit.models import PlayerScore
+
+    a = Player("1", "A", "KC", "WR")
+    ghost = Player("9", "Unscored", "SF", "WR")
+    index = {"1": PlayerScore(player=a, raw={"ecr": SignalValue(raw=3.0)})}
+    assert signal_coverage(index, [a, ghost]) == {"ecr": 1}
