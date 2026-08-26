@@ -162,3 +162,100 @@ def test_exact_tie_is_not_a_disagreement_at_zero_threshold():
         close_call_threshold=0.0, min_disagree_weight=0.0,
     )
     assert not any("disagree" in n.lower() for n in rec.notes)
+
+
+# --- the raw-scale dead heat ----------------------------------------------
+# `to_0_100` is min-max within the candidate set, so with two candidates any
+# nonzero difference becomes 0-vs-100. `close_call_threshold` lives in that same
+# normalized space, so it can never see the gap it exists to catch. These cover
+# the third flag condition, which reads the raw values instead.
+RAW_GAPS = {"ecr": 3.0, "vegas": 1.5}
+WEIGHTS = {"ecr": 0.60, "vegas": 0.25, "injury": 0.10, "weather": 0.05}
+
+
+def _two(ecr, vegas, **kw):
+    kw.setdefault("close_call_threshold", 3.0)
+    kw.setdefault("min_disagree_weight", 0.15)
+    kw.setdefault("close_call_raw_gaps", RAW_GAPS)
+    kw.setdefault("weights", WEIGHTS)
+    return blend(
+        week=5, scoring="ppr", players=_players(),
+        signal_values={
+            "ecr": {"1": SignalValue(ecr[0]), "2": SignalValue(ecr[1])},
+            "vegas": {"1": SignalValue(vegas[0]), "2": SignalValue(vegas[1])},
+        },
+        higher_is_better={"ecr": False, "vegas": True},
+        **kw,
+    )
+
+
+def test_a_two_player_dead_heat_is_flagged_despite_a_100_point_blend_gap():
+    """The product's core promise, failing in the case that needs it most.
+
+    ECR 12.0 against 12.1 and a tenth of an implied point is a coin flip by any
+    reading of the inputs. Min-maxed over two candidates it renders as 100 vs 0 —
+    maximum confidence — and the normalized threshold has nothing to catch.
+    """
+    rec = _two((12.0, 12.1), (24.1, 24.0))
+    assert [s.final for s in rec.scores] == [100.0, 0.0]   # the blend still says this
+    assert rec.close_call is True
+    assert "nothing separates" in " ".join(rec.notes)
+
+
+def test_a_real_gap_between_two_players_is_not_flagged():
+    """The flag has to stay rare enough to mean something."""
+    rec = _two((4.0, 30.0), (26.0, 19.0))
+    assert rec.close_call is False
+
+
+def test_one_signal_with_a_real_separation_vetoes_the_dead_heat():
+    """ECR ties them, Vegas puts them five implied points apart. That is an edge,
+    and flagging it would be the false alarm — hence unanimity, not any-of."""
+    rec = _two((12.0, 12.1), (27.0, 22.0))
+    assert rec.close_call is False
+
+
+def test_a_lightly_weighted_signal_gets_no_vote_either_way():
+    """Symmetry with the disagreement floor above: a signal too light to have
+    changed the pick is also too light to certify a separation."""
+    light = dict(WEIGHTS, vegas=0.02, ecr=0.83)
+    # Vegas separates them, but at 2% it cannot veto ECR's dead heat.
+    assert _two((12.0, 12.1), (27.0, 22.0), weights=light).close_call is True
+
+
+def test_no_raw_gaps_configured_leaves_behavior_exactly_as_before():
+    """The mapping defaults to None, so every existing caller is untouched."""
+    assert _two((12.0, 12.1), (24.1, 24.0), close_call_raw_gaps=None).close_call is False
+
+
+def test_a_signal_with_no_configured_gap_cannot_veto():
+    """injury and weather are bucketed statuses with no meaningful raw scale, so
+    they are deliberately absent from the mapping and abstain."""
+    rec = blend(
+        week=5, scoring="ppr", players=_players(),
+        signal_values={
+            "ecr": {"1": SignalValue(12.0), "2": SignalValue(12.1)},
+            "injury": {"1": SignalValue(100.0), "2": SignalValue(20.0)},
+        },
+        higher_is_better={"ecr": False, "injury": True},
+        weights={"ecr": 0.60, "injury": 0.40},
+        close_call_threshold=3.0, min_disagree_weight=0.15,
+        close_call_raw_gaps=RAW_GAPS,
+    )
+    assert rec.close_call is True
+
+
+def test_an_unavailable_raw_value_abstains_rather_than_blocking():
+    rec = blend(
+        week=5, scoring="ppr", players=_players(),
+        signal_values={
+            "ecr": {"1": SignalValue(12.0), "2": SignalValue(12.1)},
+            "vegas": {"1": SignalValue(None, available=False),
+                      "2": SignalValue(None, available=False)},
+        },
+        higher_is_better={"ecr": False, "vegas": True},
+        weights=WEIGHTS,
+        close_call_threshold=3.0, min_disagree_weight=0.15,
+        close_call_raw_gaps=RAW_GAPS,
+    )
+    assert rec.close_call is True

@@ -68,6 +68,19 @@ class Settings:
     # disagreement can flag a close call. Keeps the flag meaningful: a 10%-weight
     # signal flipping the top two is not evidence the pick is a coin-flip.
     min_disagree_weight: float = 0.15
+    # The raw separation, in each signal's own native units, below which the top
+    # two are treated as a dead heat regardless of their blended scores.
+    # `normalize.to_0_100` is min-max *within the candidate set*, so with two
+    # candidates any nonzero difference becomes 0-vs-100 — an ECR of 12.0 vs 12.1
+    # renders as maximum confidence, and `close_call_threshold`, which lives in
+    # that same normalized space, can never trip. These floors read the raw values
+    # instead, which is the only scale that knows a tenth of a rank from twenty.
+    # Signals absent here (injury, weather) are bucketed statuses with no
+    # meaningful continuous scale, and a signal with no floor cannot veto the flag.
+    # Not a blend weight: the "four places" rule does not apply and
+    # `_validate_weights` is untouched.
+    close_call_raw_gaps: dict[str, float] = field(
+        default_factory=lambda: {"ecr": 3.0, "vegas": 1.5})
     injury_enabled: bool = True
     weather_enabled: bool = True
     # Seconds a cached roster stays usable before it is re-fetched. Rosters turn
@@ -343,6 +356,28 @@ def _synthesized_default(roster_source: str, espn_league_id: str, espn_team_id: 
     return LeagueProfile("default", "espn", espn_league_id, espn_team_id)
 
 
+DEFAULT_RAW_GAPS = {"ecr": 3.0, "vegas": 1.5}
+
+
+def _validate_raw_gaps(gaps: dict[str, float]) -> dict[str, float]:
+    """Drop non-finite or negative raw gaps back to their defaults, with a warning.
+
+    Same posture as ``_validate_weights``: fail loud-but-graceful. A negative gap
+    would silently disable the floor for that signal, which is the failure this
+    setting exists to prevent, so it is corrected rather than honored. A gap of
+    exactly 0 is legitimate — it means "only an exact tie counts as a dead heat".
+    """
+    out: dict[str, float] = {}
+    for name, default in DEFAULT_RAW_GAPS.items():
+        value = gaps.get(name, default)
+        if not math.isfinite(value) or value < 0:
+            _warn(f"FF_CLOSE_RAW_GAP_{name.upper()} must be a non-negative number; "
+                  f"using {default} instead.")
+            value = default
+        out[name] = float(value)
+    return out
+
+
 def _warn(message: str) -> None:
     try:
         from rich import print as rprint
@@ -390,6 +425,11 @@ def load_settings(env_file: str | os.PathLike | None = None) -> Settings:
         _warn("FF_MIN_DISAGREE_WEIGHT must be a weight share in [0, 1]; using 0.15.")
         min_disagree = 0.15
 
+    raw_gaps = _validate_raw_gaps({
+        "ecr": _f("FF_CLOSE_RAW_GAP_ECR", 3.0),
+        "vegas": _f("FF_CLOSE_RAW_GAP_VEGAS", 1.5),
+    })
+
     roster_ttl = _f("FF_ROSTER_TTL", 12 * 3600)
     if roster_ttl < 0:
         _warn("FF_ROSTER_TTL is negative; using 43200 (12h) instead.")
@@ -427,6 +467,7 @@ def load_settings(env_file: str | os.PathLike | None = None) -> Settings:
         weights=weights,
         close_call_threshold=threshold,
         min_disagree_weight=min_disagree,
+        close_call_raw_gaps=raw_gaps,
         preferred_experts=os.getenv("FF_PREFERRED_EXPERTS", "").strip(),
         injury_enabled=_b("FF_INJURY", True),
         weather_enabled=_b("FF_WEATHER", True),

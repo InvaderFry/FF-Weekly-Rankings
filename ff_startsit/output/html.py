@@ -278,7 +278,10 @@ def _waiver_adds_table(bundle) -> str:
             f"<tr class='top'><td class='start'>{escape(t.score.player.name)}</td>"
             f"<td>{escape(t.score.player.position)}</td>"
             f"<td class='num'>{t.score.final:.1f}</td>"
-            f"<td>{escape(drop)} <span class='note'>+{t.margin:.1f}</span></td>"
+            # No margin across positions — the two scores were normalized in
+            # separate candidate sets, so their difference isn't a quantity.
+            f"<td>{escape(drop)}" + (f" <span class='note'>+{t.margin:.1f}</span>"
+                                     if t.margin is not None else "") + "</td>"
             f"<td>{escape(t.bid or '—')}</td>"
             f"<td>{escape(why)}</td></tr>"
         )

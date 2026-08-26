@@ -10,6 +10,7 @@ league still reports.
 from __future__ import annotations
 
 import sys
+from dataclasses import replace
 from typing import Optional, Sequence
 
 from ..config import Settings
@@ -21,21 +22,25 @@ from ..sources.schedule import ScheduleProvider
 from .base import LeagueViewProvider, pool_players
 from .columns import ColumnFetcher, index_mentions
 from .models import LeagueRules, PoolPlayer, WaiverBundle
-from .score import (BYE_HORIZON, bye_gaps, dedupe_players, droppable,
-                    find_stashes, pick_adds, score_positions,
-                    signal_coverage, team_players)
+from .score import (BYE_HORIZON, MIN_LEAGUE_TEAMS, bye_gaps, dedupe_players,
+                    droppable, find_stashes, pick_adds, score_positions,
+                    signal_coverage, starting_slots, team_players)
 from .trades import suggest_trades
 
-#: Margins are computed inside a position's own candidate set, so a 9-point WR
-#: gain and a 9-point TE gain are not the same nine points. Said once, in the
-#: report, rather than pretended away by sorting as if they were.
-MARGIN_NOTE = ("Scores are normalized within each position's candidate set, so "
-               "compare an add to the player it replaces — not to an add at "
-               "another position.")
+#: Scores are min-maxed inside a position's own candidate set, so a 9-point WR
+#: gain and a 9-point TE gain are not the same nine points. Adds and drops are
+#: therefore ordered by rank against positional starter demand, and a margin is
+#: printed only where the subtraction is real — between two players at one
+#: position. Said once, in the report, rather than left for the reader to infer.
+MARGIN_NOTE = ("Scores are normalized within each position's candidate set, so a "
+               "margin is shown only when an add and the player he replaces play "
+               "the same position. Everything else is ordered by where a player "
+               "ranks against what the league starts at his position.")
 TRADE_NOTE = ("Trade ideas are built from this week's ensemble scores only — no "
               "rest-of-season projections, strength of schedule, or keeper "
-              "value — and they value starting slots, not FLEX depth. Treat them "
-              "as conversation starters.")
+              "value — and they value starting slots, not FLEX depth. The gain "
+              "figures are within-position points, so compare them to each other "
+              "only inside one idea. Treat them as conversation starters.")
 
 
 def journalist_ranks(settings: Settings, players: Sequence[Player],
@@ -55,20 +60,32 @@ def journalist_ranks(settings: Settings, players: Sequence[Player],
             for rows in view.by_position.values() for row in rows}
 
 
-def _lineup_keys(my_scores: Sequence[PlayerScore]) -> set[str]:
+def _lineup_keys(my_scores: Sequence[PlayerScore], rules: LeagueRules) -> set[str]:
     """Keys of players the lineup builder would start — never drop candidates.
 
     Uses ``report.build_lineup`` rather than a second definition of "starter", so
     the Tuesday report can't propose cutting somebody Sunday's report starts.
+
+    Built from the *league's* slots, not the hardcoded 1QB/2RB/2WR template.
+    ``droppable`` right below already counts surplus against the real slots, so
+    protecting against the template made the two guards disagree: in a superflex
+    league your second quarterback was surplus by one and unprotected by the
+    other, which is a recommendation to cut a starter.
     """
     from ..report import build_lineup
+
+    slots: list[str] = []
+    for pos, count in sorted(starting_slots(rules).items()):
+        slots.extend([pos] * count)
+    slots.append("FLEX")   # neither platform reports flex counts; one, as today
 
     by_pos: dict[str, list[PlayerScore]] = {}
     for s in my_scores:
         by_pos.setdefault(s.player.position, []).append(s)
     for scores in by_pos.values():
         scores.sort(key=lambda s: (s.final is not None, s.final or 0), reverse=True)
-    return {pick.player.key for _, pick in build_lineup(by_pos) if pick is not None}
+    return {pick.player.key
+            for _, pick in build_lineup(by_pos, slots=slots) if pick is not None}
 
 
 def _weeks_playing(schedule: ScheduleProvider, week: int,
@@ -153,6 +170,13 @@ def build_bundle(settings: Settings, label: str, provider: LeagueViewProvider,
     teams = _teams(provider)
     pool = _pool(provider, week, limit)
 
+    # Starter demand per position is ``team_count x starting slots``, and that
+    # denominator is what makes a rank at one position comparable to a rank at
+    # another. The team list is already here, so neither platform parser has to
+    # learn to report it.
+    if len(teams) >= MIN_LEAGUE_TEAMS and rules.team_count is None:
+        rules = replace(rules, team_count=len(teams))
+
     bundle = WaiverBundle(label=label, scoring=settings.scoring, week=week,
                           rules=rules, notes=[MARGIN_NOTE])
 
@@ -178,7 +202,7 @@ def build_bundle(settings: Settings, label: str, provider: LeagueViewProvider,
         bundle.banner = _rehearsal_banner(index, pool)
 
     my_scores = [index[p.key] for p in my_players if p.key in index]
-    protected = _lineup_keys(my_scores)
+    protected = _lineup_keys(my_scores, rules)
     drops = droppable(my_scores, rules, protected=protected)
 
     ranks = journalist_ranks(settings, dedupe_players(pool_players(pool), my_players), week)

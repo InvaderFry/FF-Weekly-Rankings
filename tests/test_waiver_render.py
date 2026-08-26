@@ -276,3 +276,25 @@ def test_the_html_page_makes_the_same_empty_wire_claim_as_the_others():
     quiet = WaiverBundle(label="work", scoring="ppr", week=9)
     assert "Nothing on the wire" in build_waivers_html(9, [quiet],
                                                        generated_on="2026-10-01")
+
+
+def test_a_cross_position_add_renders_without_a_margin():
+    """No margin exists when the add and his drop play different positions — the
+    two scores came from separate candidate sets. Every renderer has to say the
+    drop's name without inventing a number beside it."""
+    b = _bundle(adds=1, trades=0)
+    b.adds[0].margin = None
+    b.adds[0].drop = _ps("d0", "Bench Te", "TE", 50.0)
+    b.adds[0].reasons = ("takes the roster spot from Bench Te (TE), "
+                         "your most droppable player",)
+
+    md = render_waiver_digest(9, [b])
+    assert "Bench Te" in md
+    assert "(+" not in md and "None" not in md
+
+    html = build_waivers_html(9, [b], "2026-08-19")
+    assert "Bench Te" in html
+    assert "+None" not in html and "class='note'>+" not in html
+
+    payload = build_waiver_payload(9, [b])
+    assert "None" not in json.dumps(payload)

@@ -293,3 +293,25 @@ def test_markdown_table_escapes_pipes_and_newlines_in_names():
     assert len(widths) == 1, f"ragged table: {rows}"
     assert r"Bad \| Name" in md
     assert "Line Break" in md
+
+
+def test_build_lineup_honors_a_leagues_own_slots():
+    """`slots` exists so the waiver pass can protect what the *league* starts.
+
+    Left on the hardcoded template, drop protection reserved one quarterback while
+    `droppable` counted surplus against the league's two — so a superflex starter
+    was simultaneously protected by neither guard and surplus to the other, which
+    is a recommendation to cut a starter.
+    """
+    by_pos = {
+        "QB": [_ps("qb1", "QB One", "QB", 90), _ps("qb2", "QB Two", "QB", 80)],
+        "RB": [_ps("rb1", "RB One", "RB", 70)],
+        "WR": [_ps("wr1", "WR One", "WR", 60)],
+    }
+    superflex = report.build_lineup(by_pos, slots=["QB", "QB", "RB", "WR"])
+    started = {pick.player.key for _, pick in superflex if pick}
+    assert "qb2" in started, "the second quarterback is a starter here"
+
+    # Default call is unchanged — one QB, and the spare stays on the bench.
+    assert "qb2" not in {pick.player.key
+                         for _, pick in report.build_lineup(by_pos) if pick}

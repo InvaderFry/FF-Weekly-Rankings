@@ -10,10 +10,11 @@ from ff_startsit.models import Player, SignalValue
 from ff_startsit.sources.base import Signal
 from ff_startsit.waivers.models import (ACQ_FAAB, ACQ_PRIORITY, ACQ_UNKNOWN,
                                         LeagueRules, PoolPlayer, WaiverTarget)
-from ff_startsit.waivers.score import (bye_gaps, dedupe_players, droppable,
-                                       find_stashes, has_ecr, keep_counts,
-                                       pick_adds, score_positions,
-                                       signal_coverage, suggest_bid)
+from ff_startsit.waivers.score import (bye_gaps, dedupe_players, depth_ratio,
+                                       droppable, find_stashes, has_ecr,
+                                       keep_counts, pick_adds, score_positions,
+                                       signal_coverage, starter_demand,
+                                       suggest_bid)
 
 
 def _p(key, name, pos, team="KC"):
@@ -173,40 +174,61 @@ def test_add_reasons_name_the_journalists_and_the_column():
 
 
 # --- bidding --------------------------------------------------------------
-def _target(margin, percent_owned=None):
-    return WaiverTarget(score=None, margin=margin,
+def _target(percent_owned=None):
+    return WaiverTarget(score=None,
                         pool=PoolPlayer(_p("f", "F", "WR"), percent_owned=percent_owned))
 
 
 def test_faab_bid_scales_with_conviction_and_stays_within_the_budget():
     rules = LeagueRules(acquisition_type=ACQ_FAAB, faab_budget=100.0)
-    small = suggest_bid(_target(2.0), rules, 80.0)
-    large = suggest_bid(_target(40.0), rules, 80.0)
+    small = suggest_bid(_target(), rules, 80.0, conviction=0.05)
+    large = suggest_bid(_target(), rules, 80.0, conviction=1.0)
     assert "$" in small and "$" in large
     assert int(small.split("$")[1].split()[0]) < int(large.split("$")[1].split()[0])
     assert int(large.split("$")[1].split()[0]) <= 80
 
 
+def test_the_bid_does_not_depend_on_who_the_drop_happens_to_be():
+    """Conviction comes from the add's own standing, never from a subtraction
+    against the drop.
+
+    It used to be ``margin / MAX_CONVICTION_MARGIN``, and ``margin`` crossed two
+    normalization frames — so the identical free agent was worth a different
+    dollar figure depending on which position sat at the head of your drop list.
+    ``suggest_bid`` can no longer see the drop at all, which is the fix stated as
+    a signature.
+    """
+    rules = LeagueRules(acquisition_type=ACQ_FAAB, faab_budget=100.0)
+    cheap = WaiverTarget(score=None, margin=2.0, pool=PoolPlayer(_p("f", "F", "WR")))
+    rich = WaiverTarget(score=None, margin=40.0, pool=PoolPlayer(_p("f", "F", "WR")))
+    assert (suggest_bid(cheap, rules, 80.0, conviction=0.6)
+            == suggest_bid(rich, rules, 80.0, conviction=0.6))
+    # And a cross-position pair, which carries no margin at all, still bids.
+    none = WaiverTarget(score=None, margin=None, pool=PoolPlayer(_p("f", "F", "WR")))
+    assert "$" in suggest_bid(none, rules, 80.0, conviction=0.6)
+
+
 def test_faab_bid_is_a_share_of_remaining_not_total_budget():
     rules = LeagueRules(acquisition_type=ACQ_FAAB, faab_budget=100.0)
-    assert "$3 left" in suggest_bid(_target(40.0), rules, 3.0)
+    assert "$3 left" in suggest_bid(_target(), rules, 3.0, conviction=1.0)
 
 
 def test_no_faab_left_says_so():
     rules = LeagueRules(acquisition_type=ACQ_FAAB, faab_budget=100.0)
-    assert suggest_bid(_target(40.0), rules, 0.0) == "no FAAB left"
+    assert suggest_bid(_target(), rules, 0.0, conviction=1.0) == "no FAAB left"
 
 
 def test_priority_leagues_get_claim_language_not_dollars():
     rules = LeagueRules(acquisition_type=ACQ_PRIORITY)
-    assert "claim" in suggest_bid(_target(40.0), rules, None)
-    assert "$" not in suggest_bid(_target(40.0), rules, None)
+    assert "claim" in suggest_bid(_target(), rules, None, conviction=1.0)
+    assert "$" not in suggest_bid(_target(), rules, None, conviction=1.0)
 
 
 def test_unknown_acquisition_type_renders_no_bid_at_all():
     """A dollar figure in a priority league, or a claim ranking in a FAAB one,
     is advice for somebody else's league."""
-    assert suggest_bid(_target(40.0), LeagueRules(acquisition_type=ACQ_UNKNOWN), 50.0) == ""
+    assert suggest_bid(_target(), LeagueRules(acquisition_type=ACQ_UNKNOWN), 50.0,
+                       conviction=1.0) == ""
 
 
 # --- stashes & byes -------------------------------------------------------
@@ -271,3 +293,99 @@ def test_signal_coverage_skips_players_that_were_never_scored():
     ghost = Player("9", "Unscored", "SF", "WR")
     index = {"1": PlayerScore(player=a, raw={"ecr": SignalValue(raw=3.0)})}
     assert signal_coverage(index, [a, ghost]) == {"ecr": 1}
+
+
+# --- one scale across positions -------------------------------------------
+# `to_0_100` is min-max *within* a position, so a WR's 78 and a TE's 78 came from
+# different populations and their difference is not a number. These cover the
+# places that used to subtract them anyway.
+_LEAGUE = LeagueRules(roster_slots={"QB": 1, "RB": 2, "WR": 2, "TE": 1, "DEF": 1},
+                      team_count=12)
+
+
+def test_depth_ratio_puts_every_position_on_one_scale():
+    """A rank means nothing until you divide it by what the league starts there."""
+    players = [_p("rb", "Rb", "RB"), _p("qb", "Qb", "QB")]
+    _, index = _score(players, {"rb": 24, "qb": 12})
+    # RB24 in a league starting 24 and QB12 in a league starting 12 are the same
+    # player in the only sense that matters: the last one who'd start anywhere.
+    assert depth_ratio(index["rb"], _LEAGUE) == 1.0
+    assert depth_ratio(index["qb"], _LEAGUE) == 1.0
+    assert starter_demand("RB", _LEAGUE) == 24
+    assert starter_demand("QB", _LEAGUE) == 12
+
+
+def test_a_margin_is_printed_only_when_the_add_and_drop_share_a_position():
+    roster = [_p("r1", "Wr Stud", "WR"), _p("r2", "Wr Bench", "WR"),
+              _p("r5", "Wr Spare", "WR"),
+              _p("r3", "Te Stud", "TE"), _p("r4", "Te Bench", "TE")]
+    pool = [PoolPlayer(_p("f1", "Free Wr", "WR"))]
+    # TE40 where twelve start is deeper than WR60 where twenty-four do.
+    ranks = {"r1": 5, "r2": 44, "r5": 60, "r3": 3, "r4": 40, "f1": 18}
+    _, index = _score(roster + [pool[0].player], ranks)
+    drops = droppable([index[p.key] for p in roster], _LEAGUE)
+
+    # The most-droppable body is the TE, so the pairing crosses positions.
+    assert drops[0].score.player.position == "TE"
+    add = pick_adds(index, pool, drops, _LEAGUE)[0]
+    assert add.drop.player.position != add.score.player.position
+    assert add.margin is None, "a WR score minus a TE score is not a quantity"
+    assert "takes the roster spot" in " ".join(add.reasons)
+
+    # Same position: the subtraction is real, so the number comes back.
+    same = pick_adds(index, pool, [d for d in drops
+                                   if d.score.player.position == "WR"], _LEAGUE)[0]
+    assert same.margin is not None
+    assert "scores" in " ".join(same.reasons)
+
+
+def test_the_best_of_a_bad_pool_no_longer_wins_by_arithmetic():
+    """Min-max hands the best player in any group a 100 whoever he is. With two
+    mediocre defenses on the wire, the better one scored 100 and led the add list
+    ahead of a running back who would actually start somewhere.
+
+    Note what this does *not* claim: depth ratio ranks by starter scarcity, not by
+    points over replacement, so the genuine DEF1 still outranks a fringe RB. It
+    fixes the group being empty, not the two positions being different games.
+    """
+    pool = [PoolPlayer(_p("d1", "Less Bad Def", "DEF")),
+            PoolPlayer(_p("d2", "Worse Def", "DEF")),
+            PoolPlayer(_p("rb", "Startable Rb", "RB"))]
+    roster = [_p("r1", "Rb1", "RB"), _p("r2", "Rb2", "RB"), _p("r3", "Rb3", "RB")]
+    ranks = {"d1": 20, "d2": 28, "rb": 20, "r1": 4, "r2": 9, "r3": 55}
+    _, index = _score(roster + [pp.player for pp in pool], ranks)
+
+    # The old ordering, stated so the regression is visible: the worse player of
+    # the two outscores the better one because his group was shallower.
+    assert index["d1"].final == 100.0 > index["rb"].final
+
+    drops = droppable([index[p.key] for p in roster], _LEAGUE)
+    adds = pick_adds(index, pool, drops, _LEAGUE)
+    assert adds[0].score.player.key == "rb"
+    assert depth_ratio(index["d1"], _LEAGUE) > depth_ratio(index["rb"], _LEAGUE)
+
+
+def test_droppable_orders_by_depth_past_starter_demand_not_by_raw_score():
+    """This list is consumed across positions — its head is what an add is paired
+    with — so ordering it by `final` picked whichever position happened to have the
+    widest score spread."""
+    roster = [_p("w1", "Wr1", "WR"), _p("w2", "Wr2", "WR"), _p("w3", "Wr3", "WR"),
+              _p("q1", "Qb1", "QB"), _p("q2", "Qb2", "QB")]
+    # The spare WR is a fringe starter; the spare QB is nowhere near one. Both are
+    # last in their own group, so both normalize to 0.0 and `final` cannot separate
+    # them at all.
+    ranks = {"w1": 2, "w2": 8, "w3": 26, "q1": 1, "q2": 40}
+    _, index = _score(roster, ranks)
+    drops = droppable([index[p.key] for p in roster], _LEAGUE)
+
+    assert index["w3"].final == index["q2"].final == 0.0
+    assert drops[0].score.player.key == "q2", "QB40 is deeper than WR26"
+
+
+def test_roster_filler_is_not_offered_however_good_his_pool_looks():
+    pool = [PoolPlayer(_p("f1", "Deep Guy", "WR"))]
+    roster = [_p("r1", "Wr1", "WR"), _p("r2", "Wr2", "WR"), _p("r3", "Wr3", "WR")]
+    ranks = {"f1": 90, "r1": 3, "r2": 10, "r3": 30}   # WR90 where 24 start
+    _, index = _score(roster + [pool[0].player], ranks)
+    drops = droppable([index[p.key] for p in roster], _LEAGUE)
+    assert pick_adds(index, pool, drops, _LEAGUE) == []

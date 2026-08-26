@@ -29,10 +29,17 @@ def _adds_table(bundle: WaiverBundle) -> list[str]:
              "|---|---|---:|---|---|---|"]
     for t in bundle.adds:
         drop = t.drop.player.name if t.drop else "—"
+        # A margin only exists when the add and his drop share a position; across
+        # positions the two scores came from different candidate sets and their
+        # difference is not a number to print.
+        if t.margin is not None:
+            drop = f"{md_cell(drop)} (+{t.margin:.1f})"
+        else:
+            drop = md_cell(drop)
         why = "; ".join(t.reasons[1:]) or "—"  # reasons[0] repeats the drop column
         lines.append(
             f"| **{md_cell(t.score.player.name)}** | {md_cell(t.score.player.position)} "
-            f"| {t.score.final:.1f} | {md_cell(drop)} (+{t.margin:.1f}) "
+            f"| {t.score.final:.1f} | {drop} "
             f"| {md_cell(_bid_cell(t))} | {md_cell(why)} |"
         )
     lines.append("")

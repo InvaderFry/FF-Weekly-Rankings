@@ -83,14 +83,32 @@ without touching the pure engine.
   70/30 as 57/25. A signal the file never names goes to 0; one it names with an
   unusable value keeps its default, since that is a corrupt entry, not a verdict.
 - **Close-call flagging is the product**, not decoration. `blend._flag_close_call`
-  flags when the top two finals are within `close_call_threshold` OR when a
-  signal ranks the runner-up above the leader. Preserve both conditions. The
-  disagreement condition is deliberately *qualified*, not unconditional: the
-  signal must carry at least `min_disagree_weight` (`FF_MIN_DISAGREE_WEIGHT`,
-  default 0.15) of total blend weight, and the normalized gap must be at least
-  `close_call_threshold`. Without those floors a 0.10-weight — or 0-weight —
-  signal flips the flag as readily as ECR, and a flag that fires on everything
-  is not a warning.
+  flags on three conditions and all three must be preserved: the top two finals
+  are within `close_call_threshold`; OR a signal ranks the runner-up above the
+  leader; OR nothing that carries weight separates the two in its own **raw**
+  units (`_flag_raw_dead_heat`). The disagreement condition is deliberately
+  *qualified*, not unconditional: the signal must carry at least
+  `min_disagree_weight` (`FF_MIN_DISAGREE_WEIGHT`, default 0.15) of total blend
+  weight, and the normalized gap must be at least `close_call_threshold`. Without
+  those floors a 0.10-weight — or 0-weight — signal flips the flag as readily as
+  ECR, and a flag that fires on everything is not a warning.
+
+  The third condition exists because the first two are blind exactly where the
+  product needs them most. `normalize.to_0_100` is min-max *within* the candidate
+  set and has no minimum-span floor, so with two candidates any nonzero difference
+  becomes 0-vs-100: ECR 12.0 against 12.1 renders as a 100-point blowout, and
+  `close_call_threshold`, living in that same normalized space, can never trip.
+  `compare` is the two-player command. So `close_call_raw_gaps`
+  (`FF_CLOSE_RAW_GAP_ECR` 3.0 ranks, `FF_CLOSE_RAW_GAP_VEGAS` 1.5 implied points)
+  reads the raw values instead — the only scale that knows a tenth of a rank from
+  twenty. It is deliberately **unanimous**, not any-of: a signal with a real
+  separation vetoes the flag, because that is an edge and flagging it would be the
+  false alarm the other floors exist to prevent. Signals absent from the mapping
+  (injury, weather) are bucketed statuses with no meaningful continuous scale and
+  abstain — they can neither flag nor veto. Do *not* "fix" this in
+  `normalize.to_0_100` instead: the calibrator re-blends logged `normalized`
+  values through `weighted_final`, so changing the transform makes every
+  historical row in `results_log.jsonl` unreplayable.
 
 ### The self-calibration loop (#7)
 
@@ -232,6 +250,28 @@ reason a piece of it is shaped the way it is.
   its best player at 100 whoever he is — "he beats your WR4" is only a true
   sentence when both were normalized together. Same trap `rank_pooled` solves for
   FLEX. It is also why `trades.py` needs no scoring pass of its own.
+
+- **Across positions, only `score.depth_ratio` is a number.** That one pass is per
+  *position*, so a WR's 78 and a TE's 78 came from separate min-max populations and
+  subtracting them yields something that looks like points and is not. Ordering all
+  adds by `final`, ordering all drops by `final`, and pricing a FAAB bid off the
+  difference all did exactly that — the best of fifteen defenses scores 100 by
+  arithmetic and led the add list. `depth_ratio` is the scale-free replacement: a
+  player's ECR positional rank over `starter_demand` (`team_count x starting
+  slots`). Below 1.0 is a startable player, above is bench depth, and it reads the
+  same for a QB as for a TE. Add ordering, `droppable` ordering, `_worth_adding`,
+  bid conviction and `trades.FAIRNESS_BAND_FACTOR` all use it. `WaiverTarget.margin`
+  is filled in **only** when an add and his drop share a position, where the
+  subtraction is real; renderers must tolerate `None`. Trade fairness is a
+  *multiple* (`hi / lo`), not a difference — a 0.3 gap separates a league-winner
+  from a starter at ratio 0.1 and two bench bodies at 2.0.
+
+  Two honest limits. `depth_ratio` ranks by starter scarcity, not points over
+  replacement, so a genuine DEF1 still outranks a fringe RB; fixing that needs
+  projections the tool deliberately doesn't have. And `team_count` comes from
+  `len(teams)` in `build_bundle`, floored by `MIN_LEAGUE_TEAMS` (4) — a partial
+  team parse understates every position's demand, which reads the whole wire as
+  filler and empties the report, turning an outage into "nothing worth adding".
 - **A missing ECR is not a bad ECR.** FantasyPros ranks 40-75 per position; most
   of a waiver pool is below that line and a bye-week player falls off it
   entirely. Without ECR the blend runs on injury alone and returns a healthy
@@ -297,6 +337,15 @@ called **without** `protected`: offers are drawn from surplus only, so no
 starting slot can be traded away, and passing a lineup's worth of protected keys
 blocked every idea (surplus depth *is* the FLEX).
 
+`build._lineup_keys` passes the **league's** slots into `build_lineup` (which takes
+an optional `slots`, defaulting to `LINEUP_SLOTS`). Protecting against the
+hardcoded 1QB/2RB/2WR template while `droppable` counted surplus against the real
+`roster_slots` made the two halves of one guard disagree: in a superflex league
+your second quarterback was surplus to one and unprotected by the other, which is
+a recommendation to cut a starter. Neither platform parser maps a FLEX slot id
+(`espn.SLOT_ID_TO_POS` has no 23; `sleeper._KEEP_POSITIONS` excludes
+`FLEX`/`SUPER_FLEX`), so multi-FLEX leagues still get exactly one.
+
 `columns.py` (CBS for Eisenberg/Richard, Yahoo for Boone) inverts the usual
 scrape: it searches the article for names **already in the league's free-agent
 pool**, rather than parsing each site's structure. A layout change costs quotes,
@@ -308,7 +357,10 @@ league in a run and memoizes per `(author, week)`, including failures.
 Both scheduled workflows publish the **whole** `./site` (index.html +
 waivers.html) and share `concurrency: group: ff-startsit-pages`. A Pages deploy
 replaces the site wholesale, so two workflows deploying their own page would each
-silently delete the other's.
+silently delete the other's. The sibling rebuild is `continue-on-error`, which is
+how `./site` ends up with one page in it, so a `Verify the site is complete` step
+gates both the upload and the deploy on *both* files existing — skipping the
+deploy leaves the live site standing, which beats replacing it with half of one.
 
 ### Output & delivery
 

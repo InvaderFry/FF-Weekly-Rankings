@@ -21,9 +21,12 @@ from ff_startsit.waivers.models import (ACQ_FAAB, FantasyTeam, LeagueRules,
 # correct behaviour, but it exercises nothing.
 RANKS = {"m1": 3, "m2": 5, "m3": 8, "m4": 20, "m5": 12, "m6": 30, "m7": 88,
          "m8": 70, "m9": 6, "m10": 4,
-         "t1": 60, "t2": 45, "t3": 10, "t4": 25,
+         "t1": 60, "t2": 45, "t3": 10, "t4": 8,
          "f1": 20, "f2": 75}
-RULES = LeagueRules(acquisition_type=ACQ_FAAB, faab_budget=100.0,
+# team_count is what turns a rank into "would he start anywhere in this league",
+# so it has to be a real league size. The two rosters below stand in for a normal
+# twelve — spelling out ten more would exercise nothing the two already do.
+RULES = LeagueRules(acquisition_type=ACQ_FAAB, faab_budget=100.0, team_count=12,
                     roster_slots={"QB": 1, "RB": 2, "WR": 2, "TE": 1,
                                   "K": 1, "DEF": 1})
 

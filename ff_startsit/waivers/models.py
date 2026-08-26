@@ -56,6 +56,9 @@ class LeagueRules:
     faab_budget: Optional[float] = None
     #: position -> number of starting slots, when the platform tells us.
     roster_slots: dict[str, int] = field(default_factory=dict)
+    #: Teams in the league. With ``roster_slots`` this gives starter demand per
+    #: position, which is what makes a rank comparable between positions.
+    team_count: Optional[int] = None
 
     def faab_remaining(self, spent: Optional[float]) -> Optional[float]:
         """Budget left for a team, or None when we don't know the budget."""
@@ -84,8 +87,12 @@ class WaiverTarget:
     """One recommended add, with the drop it is paired to."""
 
     score: PlayerScore
-    #: 0-100 margin over the roster player this add would replace.
-    margin: float
+    #: Points over the roster player this add would replace — set *only* when the
+    #: two share a position. Scores are min-maxed within a position's own
+    #: candidate set, so a WR's 50 and an RB's 50 are not the same 50 and the
+    #: difference between them is not a number. ``None`` for a cross-position
+    #: swap, which is still a legitimate roster move, just not a subtractable one.
+    margin: Optional[float] = None
     drop: Optional[PlayerScore] = None
     pool: Optional[PoolPlayer] = None
     #: Average FantasyPros rank across the preferred journalists, when ranked.
@@ -114,6 +121,12 @@ class TradeIdea:
     your_gain: float
     their_gain: float
     rationale: str = ""
+    #: How much positional depth the swap converts: the sender's depth ratio over
+    #: the receiver's, so above 1.0 means you receive the shallower player. The one
+    #: figure here comparable *between* ideas — ``your_gain`` is a sum of one
+    #: position's 0-100 scores, so a WR-for-TE idea and an RB-for-QB idea cannot be
+    #: ranked against each other by it.
+    depth_gain: float = 1.0
 
 
 @dataclass(frozen=True)
