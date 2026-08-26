@@ -256,6 +256,18 @@ def _waiver_trade_lines(bundle) -> list[str]:
     return lines
 
 
+def _waiver_roster_lines(bundle) -> list[str]:
+    """The drafted roster, one line per position.
+
+    Names only: the run that carries a roster is the preseason refusal, which
+    scored nothing, so any number beside a name would be invented.
+    """
+    return [f"**{position}** — "
+            + ", ".join(f"{p.name} ({p.team})" if p.team else p.name
+                        for p in players)
+            for position, players in bundle.roster_by_position()]
+
+
 def _build_waiver_embed(bundle) -> dict:
     """One league's waiver embed.
 
@@ -295,6 +307,13 @@ def _build_waiver_embed(bundle) -> dict:
             "name": "✂️ Safe to cut",
             "value": _clip(", ".join(d.score.player.name for d in bundle.drops),
                            _FIELD_VALUE_MAX),
+            "inline": False,
+        })
+    roster = _waiver_roster_lines(bundle)
+    if roster:
+        embed["fields"].append({
+            "name": "🏈 Your team (drafted)",
+            "value": _clip("\n".join(roster), _FIELD_VALUE_MAX),
             "inline": False,
         })
     trades = _waiver_trade_lines(bundle)

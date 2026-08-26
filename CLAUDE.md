@@ -247,7 +247,14 @@ reason a piece of it is shaped the way it is.
   `season.WAIVER_BANNER`, before any provider call, so the refusal also costs no
   requests. `WaiverBundle.banner` is deliberately **not** `caveat`: caveat means
   "here is what this report could not see", and the two must stay
-  distinguishable to a renderer that colors on either.
+  distinguishable to a renderer that colors on either. The refusal does carry one
+  real thing: `WaiverBundle.roster`, your drafted team, listed under the banner by
+  all three renderers. `cli._get_roster` fetched it before `build_bundle` was
+  called, so it costs no request and keeps the zero-request property; it is names
+  only, since the run that shows it is the one that scored nothing. Empty before
+  the draft — which is exactly when there is no team to show — and populated only
+  on the refusal, since an in-season or rehearsal report has real adds and drops
+  and the listing would be noise.
 
   The **dress rehearsal** is the third path through that gate, and the reason
   the switch is "use live signals despite the calendar" rather than "run anyway":
