@@ -16,6 +16,11 @@ on:
         description: "NFL week (blank = auto-detect)"
         required: false
         default: ""
+      rehearse:
+        description: "Preseason dress rehearsal (score live data instead of refusing)"
+        type: boolean
+        required: false
+        default: false
 
 permissions:
   contents: read        # unlike weekly-report.yml, this run writes no decision log
@@ -56,6 +61,7 @@ jobs:
       FF_PREFERRED_EXPERTS: ${{ vars.FF_PREFERRED_EXPERTS }}
       DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
       INPUT_WEEK: ${{ github.event.inputs.week }}
+      INPUT_REHEARSE: ${{ github.event.inputs.rehearse }}
     steps:
       - uses: actions/checkout@v4
 
@@ -73,11 +79,16 @@ jobs:
         run: |
           WEEK_ARG=""
           if [ -n "$INPUT_WEEK" ]; then WEEK_ARG="--week $INPUT_WEEK"; fi
+          # Only the manual run can force a rehearsal. The scheduled run needs no
+          # flag: build_bundle detects the pre-kickoff window itself, so exactly
+          # one cron a season rehearses and the rest stay refusals.
+          REHEARSE_ARG=""
+          if [ "$INPUT_REHEARSE" = "true" ]; then REHEARSE_ARG="--rehearse"; fi
           # Deterministic project Pages URL: Discord fires before the deploy step
           # below finishes, so the link can't come from the deploy's output.
           OWNER="${GITHUB_REPOSITORY%%/*}"; REPO="${GITHUB_REPOSITORY##*/}"
           WAIVERS_URL="https://${OWNER,,}.github.io/${REPO}/waivers.html"
-          python -m ff_startsit waivers $WEEK_ARG --all-leagues \
+          python -m ff_startsit waivers $WEEK_ARG $REHEARSE_ARG --all-leagues \
             --report waivers.md --dashboard ./site/waivers.html \
             --discord --url "$WAIVERS_URL"
           cat waivers.md >> "$GITHUB_STEP_SUMMARY"

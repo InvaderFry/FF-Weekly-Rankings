@@ -345,6 +345,9 @@ def _waiver_lists(bundle) -> str:
 
 def _waiver_body(bundle) -> list[str]:
     body: list[str] = []
+    if bundle.banner:
+        body.append(f"<div class='callout'><strong>{escape(bundle.banner)}"
+                    f"</strong></div>")
     if bundle.caveat:
         body.append(f"<div class='callout'>⚠️ {escape(bundle.caveat)}</div>")
     body.append(_waiver_adds_table(bundle))

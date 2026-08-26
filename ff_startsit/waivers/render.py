@@ -22,7 +22,9 @@ def _bid_cell(target: WaiverTarget) -> str:
 
 def _adds_table(bundle: WaiverBundle) -> list[str]:
     if not bundle.adds:
-        return [_NO_ADDS, ""]
+        # With a banner standing (preseason), _NO_ADDS would claim a comparison
+        # that never ran — the banner already says why the section is empty.
+        return [] if bundle.banner else [_NO_ADDS, ""]
     lines = ["| Add | Pos | Score | Drop for him | Bid | Why |",
              "|---|---|---:|---|---|---|"]
     for t in bundle.adds:
@@ -108,6 +110,8 @@ def render_bundle(bundle: WaiverBundle, heading: str = "###") -> list[str]:
     lines: list[str] = []
     title = f"{heading} {bundle.label}" if bundle.label else f"{heading} Waiver wire"
     lines += [f"{title} · {bundle.scoring.upper()}", ""]
+    if bundle.banner:
+        lines += [f"> **{bundle.banner}**", ""]
     if bundle.caveat:
         lines += [f"> ⚠️ {bundle.caveat}", ""]
     lines += _adds_table(bundle)

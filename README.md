@@ -158,7 +158,22 @@ ffstartsit waivers                                   # your default league
 ffstartsit waivers --all-leagues                     # every configured league
 ffstartsit waivers --all-leagues --report waivers.md --dashboard site/waivers.html --discord
 ffstartsit waivers --no-trades --no-columns          # just adds and drops
+ffstartsit waivers --rehearse                        # preseason dry run, live data
 ```
+
+Before Week 1 the waiver pass **refuses** rather than guessing: there are no
+weekly rankings to score a wire against, and the bundled preseason sample data
+that gives the start/sit table something to show would, dealt to a real roster,
+name real players to claim and real players to cut.
+
+`--rehearse` is the dress rehearsal — still preseason, but scored on live
+rankings, lines and your real free-agent pool instead of the sample fill, so it
+proves the pipeline works before it matters. Its banner reports what each signal
+actually reached (`Live coverage: ecr 61/143, ...`), so an empty rehearsal can't
+be mistaken for a broken one. It also runs by itself once, on the scheduled pass
+inside the final week before kickoff — the point at which Week 1 data exists.
+The workflow exposes it as a checkbox on **Actions → Tuesday waiver wire &
+trades → Run workflow**.
 
 Each league's section gives you:
 

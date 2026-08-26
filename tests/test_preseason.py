@@ -1,6 +1,6 @@
 """Preseason detection, the sample-data fill, and the warning banner."""
 
-from datetime import date
+from datetime import date, timedelta
 
 from ff_startsit import season
 from ff_startsit.config import Settings
@@ -102,6 +102,52 @@ def test_preseason_banner_variants():
     assert (season.preseason_banner(Settings(preseason_fill=False), today=july)
             == season.NODATA_BANNER)
     assert season.preseason_banner(Settings(), today=date(2026, 10, 1)) is None
+
+
+def test_waiver_banner_ignores_the_sample_fill_switch():
+    """The sample fill exists so a preseason start/sit *table* has something to
+    show. The waiver pass refuses either way, so its banner isn't conditional."""
+    august = date(2026, 8, 26)      # preseason week 3 by Sleeper's reckoning
+    assert season.waiver_banner(today=august) == season.WAIVER_BANNER
+    # First Thursday of September 2026 is the 3rd — kickoff day, so Week 1 is
+    # live on it and the day before is the last preseason day.
+    assert season.waiver_banner(today=date(2026, 9, 3)) is None
+
+
+# --- the dress-rehearsal window --------------------------------------------
+def test_the_rehearsal_window_is_the_week_before_kickoff():
+    """Not the first week of preseason: that is late July, when there are no
+    weekly rankings to fetch, so a run then proves the least."""
+    assert season.is_rehearsal_window(date(2026, 7, 17)) is False
+    assert season.is_rehearsal_window(date(2026, 8, 26)) is False   # 8 days out
+    assert season.is_rehearsal_window(date(2026, 8, 27)) is True    # 7 days out
+    assert season.is_rehearsal_window(date(2026, 9, 2)) is True     # the day before
+    assert season.is_rehearsal_window(date(2026, 9, 3)) is False    # kickoff itself
+    assert season.is_rehearsal_window(date(2026, 10, 15)) is False
+
+
+def test_exactly_one_weekly_cron_lands_in_the_window():
+    """waivers.yml fires weekly. A 7-day window means one rehearsal a season —
+    the property that keeps the schedule and the window from drifting apart."""
+    kickoff = season.first_kickoff(2026)
+    # One preseason's worth of days: from March (when season_year rolls over)
+    # to kickoff, so the scan can't wander into the prior season's window.
+    days = [d for n in range(1, 190)
+            if (d := kickoff - timedelta(days=n)) >= date(2026, 3, 1)]
+    for weekday in range(7):                      # whichever day the cron fires
+        hits = [d for d in days
+                if d.weekday() == weekday and season.is_rehearsal_window(d)]
+        assert len(hits) == 1, f"weekday {weekday} matched {hits}"
+
+
+def test_a_rehearsal_replaces_the_refusal_banner():
+    assert (season.waiver_banner(today=date(2026, 8, 27))
+            == season.REHEARSAL_BANNER)
+    # Asked for outside the window, preseason still yields to the request...
+    assert (season.waiver_banner(rehearse=True, today=date(2026, 7, 17))
+            == season.REHEARSAL_BANNER)
+    # ...but once the season is live there is nothing to rehearse.
+    assert season.waiver_banner(rehearse=True, today=date(2026, 10, 15)) is None
 
 
 def test_render_digest_banner():

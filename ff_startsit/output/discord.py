@@ -268,15 +268,25 @@ def _build_waiver_embed(bundle) -> dict:
     title = _clip(f"🔄 Week {bundle.week} waivers — "
                   f"{bundle.scoring.upper()}{label}", _TITLE_MAX)
 
+    banner = bundle.banner
     adds = _waiver_add_lines(bundle)
-    description = "\n".join(adds) if adds else "No add beats anyone you can drop."
+    if adds:
+        description = "\n".join(adds)
+    elif banner:
+        # The banner already says why there is nothing here; "no add beats
+        # anyone you can drop" would claim a comparison that never ran.
+        description = ""
+    else:
+        description = "No add beats anyone you can drop."
     if bundle.caveat:
-        description = f"**{bundle.caveat}**\n\n{description}"
+        description = f"**{bundle.caveat}**\n\n{description}".rstrip()
+    if banner:
+        description = f"**{banner}**\n\n{description}".rstrip()
 
     embed = {
         "title": title,
         "description": _clip(description, 4096),
-        "color": _BANNER_COLOR if bundle.caveat else _WAIVER_COLOR,
+        "color": _BANNER_COLOR if (banner or bundle.caveat) else _WAIVER_COLOR,
         "fields": [],
     }
 

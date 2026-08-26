@@ -19,6 +19,20 @@ SAMPLE_BANNER = ("⚠️ PRESEASON — the NFL season hasn't started, so real ra
 NODATA_BANNER = ("⚠️ PRESEASON — the NFL season hasn't started, so real rankings "
                  "aren't available yet and no picks can be made. Real data begins "
                  "with Week 1 in September. (Sample fill disabled: FF_PRESEASON_FILL=0)")
+#: Shown on the waiver pass, which refuses outright before Week 1.
+WAIVER_BANNER = ("⚠️ PRESEASON — the NFL season hasn't started, so there are no "
+                 "weekly rankings to score a waiver wire against. No adds, drops "
+                 "or trades are suggested until the season kicks off in September.")
+#: Shown on a dress rehearsal: preseason by the calendar, but run against live
+#: data rather than the sample fill.
+REHEARSAL_BANNER = ("🧪 DRESS REHEARSAL — Week 1 hasn't kicked off yet. This ran "
+                    "against live rankings, lines and your real free-agent pool "
+                    "(no sample data), so read it as an early look at Week 1, not "
+                    "as this week's waiver advice.")
+#: How long before kickoff the automatic dress rehearsal runs. Exactly 7 days, so
+#: precisely one of waivers.yml's weekly Wednesday crons lands inside the window —
+#: one rehearsal a season, with no arithmetic to keep in sync with the schedule.
+REHEARSAL_DAYS = 7
 
 
 def season_year(today: Optional[date] = None) -> int:
@@ -65,3 +79,30 @@ def preseason_banner(settings, today: Optional[date] = None) -> Optional[str]:
     if not is_preseason(today):
         return None
     return SAMPLE_BANNER if getattr(settings, "preseason_fill", True) else NODATA_BANNER
+
+
+def is_rehearsal_window(today: Optional[date] = None) -> bool:
+    """True in the final week before kickoff — when Week 1 data actually exists.
+
+    The rehearsal is deliberately *not* the first week of preseason: that is late
+    July, when there are no weekly rankings to fetch and Week 1 lines are thin, so
+    a run then proves the least. A week out, the data is real.
+    """
+    today = today or date.today()
+    delta = first_kickoff(season_year(today)) - today
+    return timedelta(0) < delta <= timedelta(days=REHEARSAL_DAYS)
+
+
+def waiver_banner(rehearse: bool = False,
+                  today: Optional[date] = None) -> Optional[str]:
+    """The waiver pass's whole-run notice: refusal, rehearsal, or nothing.
+
+    Deliberately does not consult ``preseason_fill``: the sample fill exists so a
+    preseason *start/sit table* has something to show, and a labeled-but-invented
+    add/drop is still a roster move somebody might make. A rehearsal isn't an
+    exception to that — it earns its banner by using live data instead.
+    """
+    if not is_preseason(today):
+        return None
+    return (REHEARSAL_BANNER if rehearse or is_rehearsal_window(today)
+            else WAIVER_BANNER)
