@@ -15,6 +15,7 @@ from typing import Optional, Sequence
 from ..config import Settings
 from ..models import Player, PlayerScore
 from ..pipeline import build_signals
+from ..season import WAIVER_BANNER, is_preseason
 from ..sources.schedule import ScheduleProvider
 from .base import LeagueViewProvider, pool_players
 from .columns import ColumnFetcher, index_mentions
@@ -91,8 +92,26 @@ def build_bundle(settings: Settings, label: str, provider: LeagueViewProvider,
                  column_fetcher: Optional[ColumnFetcher] = None,
                  limit: int = 150, max_adds: int = 8, max_trades: int = 5,
                  include_trades: bool = True,
-                 include_columns: bool = True) -> WaiverBundle:
-    """Score one league's waiver wire and build its report."""
+                 include_columns: bool = True,
+                 preseason: Optional[bool] = None) -> WaiverBundle:
+    """Score one league's waiver wire and build its report.
+
+    Before Week 1 the report is **refused**, not filled. ``pipeline.build_signals``
+    swaps in bundled sample values during preseason so a start/sit table has
+    something to demonstrate with; here those values would name real players to
+    add and real players to cut, and a banner over an invented drop is still an
+    invented drop. So preseason returns an empty bundle carrying the warning —
+    before any provider call, so the refusal also costs no requests.
+    ``preseason`` is injectable for tests, mirroring ``build_signals``; ``None``
+    means "detect from today's date".
+    """
+    if preseason is None:
+        preseason = is_preseason()
+    if preseason:
+        # No notes: MARGIN_NOTE explains scores that this bundle doesn't carry.
+        return WaiverBundle(label=label, scoring=settings.scoring, week=week,
+                            banner=WAIVER_BANNER)
+
     rules = _rules(provider)
     teams = _teams(provider)
     pool = _pool(provider, week, limit)

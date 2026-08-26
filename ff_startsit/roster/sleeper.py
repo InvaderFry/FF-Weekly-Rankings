@@ -20,6 +20,7 @@ import requests
 
 from ..data.teams import normalize_team
 from ..models import Player
+from ..season import date_week
 from ..waivers.base import LeagueViewProvider
 from ..waivers.models import (ACQ_FAAB, ACQ_PRIORITY, ACQ_UNKNOWN, FantasyTeam,
                               LeagueRules, PoolPlayer)
@@ -51,8 +52,18 @@ class SleeperClient:
 
     # --- Public API -------------------------------------------------------
     def current_week(self) -> int:
+        """The fantasy week, or the date's best guess when there isn't one yet.
+
+        ``/state/nfl`` counts *preseason* weeks through August — ``season_type:
+        "pre"`` with ``week: 3`` is the third preseason game, not Week 3 of the
+        season — and reporting that as the fantasy week labels a whole report
+        with a number off the wrong calendar. Only a regular-season reading is a
+        real fantasy week; pre/post/off defer to ``season.date_week``, which
+        returns 1 before kickoff and clamps at 18 after.
+        """
         state = self._get("/state/nfl")
-        # Off-season weeks report 0/1; default to 1 so the tool still runs.
+        if str(state.get("season_type", "")).lower() != "regular":
+            return date_week()
         return int(state.get("week") or state.get("display_week") or 1) or 1
 
     def current_season(self) -> str:

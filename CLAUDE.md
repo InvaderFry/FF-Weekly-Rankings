@@ -211,7 +211,7 @@ per-position blend would answer with a number that doesn't mean what it says.
 
 The Tuesday-evening companion to the start/sit pass: `ffstartsit waivers` (and
 `.github/workflows/waivers.yml`) suggests adds, drops, bids, stashes, bye-week
-holes and concrete trades, per league. Four rules hold, each of which is the
+holes and concrete trades, per league. Five rules hold, each of which is the
 reason a piece of it is shaped the way it is.
 
 - **It adds no `Signal`, and therefore no weight.** The "four places" rule above
@@ -238,6 +238,22 @@ reason a piece of it is shaped the way it is.
   anonymous backup looking excellent — which recommended adding him and dropping
   your bye-week RB1. So `score.has_ecr` gates both adds and drops; everything
   else is reported as unranked rather than ranked last.
+- **Preseason is refused, not filled.** `pipeline.build_signals` serves bundled
+  sample values before Week 1 so a start/sit *table* has something to
+  demonstrate with. Dealt to a real roster those values name real players to
+  claim and real players to cut — a Discord message once opened with "Nick Folk
+  (K) — drop Malik Nabers" in August. So `build_bundle` takes a `preseason` flag
+  (injectable like `build_signals`'s) and returns an empty bundle carrying
+  `season.WAIVER_BANNER`, before any provider call, so the refusal also costs no
+  requests. `WaiverBundle.banner` is deliberately **not** `caveat`: caveat means
+  "here is what this report could not see", and the two must stay
+  distinguishable to a renderer that colors on either.
+
+Relatedly, `SleeperClient.current_week` reads `/state/nfl`'s `season_type`
+before its `week`: that endpoint counts *preseason* weeks through August, so
+`week: 3` there is the third preseason game, not Week 3 of the season, and
+reporting it labeled a whole report off the wrong calendar. Only a regular-season
+reading is a fantasy week; everything else defers to `season.date_week`.
 
 `waivers/base.py:LeagueViewProvider` is a **second, optional ABC**, not new
 abstract methods on `RosterProvider` — a manual CSV has no league behind it and

@@ -789,6 +789,10 @@ def cmd_waivers(args, settings: Settings) -> int:
     from .waivers.render import render_waiver_digest
 
     week = _resolve_week(args, settings)
+    banner = season.waiver_preseason_banner()
+    if banner:
+        # Make the Action log say it too, not just the rendered outputs.
+        print(f"warning: {banner}", file=sys.stderr)
     bundles = _waiver_bundles(args, settings, week)
     if not bundles:
         print("No configured league could be scored for waivers.", file=sys.stderr)

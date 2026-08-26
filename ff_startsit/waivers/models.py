@@ -161,4 +161,9 @@ class WaiverBundle:
     #: Surfaced by every renderer, like ``report.Lineup.caveat`` — the honest
     #: "here is what this report could not see this week" line.
     caveat: Optional[str] = None
+    #: Whole-run warning, the analogue of ``report.LeagueBundle.banner``: today,
+    #: the preseason refusal. Kept distinct from ``caveat`` so "the season hasn't
+    #: started" and "this league's free-agent list was unreachable" stay
+    #: distinguishable to every renderer.
+    banner: Optional[str] = None
     notes: list[str] = field(default_factory=list)

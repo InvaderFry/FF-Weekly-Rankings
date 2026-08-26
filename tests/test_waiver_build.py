@@ -104,6 +104,9 @@ def _no_journalists(monkeypatch):
 
 def _build(tmp_path, provider=None, schedule=None, **kw):
     kw.setdefault("include_columns", False)
+    # In-season by default: these cases are about the scoring pass, and
+    # build_bundle refuses outright before Week 1 (see the preseason tests).
+    kw.setdefault("preseason", False)
     return build_bundle(Settings(data_dir=tmp_path), "work",
                         provider or _Provider(), MINE, 9,
                         signals=[_FakeECR()], schedule=schedule or _NoSchedule(), **kw)
@@ -179,7 +182,7 @@ def test_building_a_bundle_writes_no_decision_log(tmp_path):
     """#7 invariant, at the level that actually touches the pipeline."""
     settings = Settings(data_dir=tmp_path)
     build_bundle(settings, "work", _Provider(), MINE, 9, signals=[_FakeECR()],
-                 schedule=_NoSchedule(), include_columns=False)
+                 schedule=_NoSchedule(), include_columns=False, preseason=False)
     assert not settings.results_log_path.exists()
 
 
@@ -201,3 +204,34 @@ def test_column_mentions_are_attached_to_their_add(tmp_path):
     b = _build(tmp_path, include_columns=True, column_fetcher=_Fetcher())
     assert b.adds[0].mentions[0].author == "Dave Richard"
     assert b.sources == [("Dave Richard", "https://cbs.test/x")]
+
+
+# --- preseason -------------------------------------------------------------
+class _ExplodingProvider(_Provider):
+    """Any provider call before Week 1 is a request that should never happen."""
+
+    def get_league_teams(self):
+        raise AssertionError("the preseason refusal must cost no requests")
+
+    def get_free_agents(self, week, limit=150):
+        raise AssertionError("the preseason refusal must cost no requests")
+
+    def get_league_rules(self):
+        raise AssertionError("the preseason refusal must cost no requests")
+
+
+def test_preseason_refuses_instead_of_suggesting_sample_moves(tmp_path):
+    """Before Week 1 ``build_signals`` serves bundled sample values. Dealt to a
+    real roster they name real players to add and real players to cut, so the
+    waiver pass refuses rather than dressing them in a banner."""
+    b = _build(tmp_path, provider=_ExplodingProvider(), preseason=True)
+    assert b.adds == [] and b.drops == [] and b.trades == []
+    assert b.stashes == [] and b.byes == []
+    assert b.banner and "PRESEASON" in b.banner
+    # MARGIN_NOTE explains scores this bundle doesn't carry.
+    assert b.notes == []
+
+
+def test_in_season_is_unaffected_by_the_preseason_guard(tmp_path):
+    b = _build(tmp_path, preseason=False)
+    assert b.banner is None and b.adds

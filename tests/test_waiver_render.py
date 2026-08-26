@@ -166,3 +166,41 @@ def test_a_caveat_flips_the_embed_to_the_warning_colour():
     b = _bundle()
     b.caveat = "No free-agent list was available."
     assert build_waiver_payload(9, [b])["embeds"][0]["color"] == _BANNER_COLOR
+
+
+# --- the preseason banner, in all three renderers --------------------------
+PRESEASON = ("⚠️ PRESEASON — the NFL season hasn't started, so there are no "
+             "weekly rankings to score a waiver wire against.")
+
+
+def _preseason_bundle():
+    """What ``build_bundle`` returns before Week 1: the banner and nothing else."""
+    b = WaiverBundle(label="work", scoring="ppr", week=1)
+    b.banner = PRESEASON
+    return b
+
+
+def test_markdown_leads_with_the_banner():
+    md = render_waiver_digest(1, [_preseason_bundle()])
+    assert PRESEASON in md
+    # The usual empty-wire line would claim a comparison that never ran.
+    assert "Nothing on the wire" not in md
+
+
+def test_html_renders_the_banner_as_a_callout():
+    html = build_waivers_html(1, [_preseason_bundle()], generated_on="2026-08-26")
+    assert "callout" in html and "PRESEASON" in html
+
+
+def test_discord_leads_with_the_banner_and_claims_no_comparison():
+    embed = build_waiver_payload(1, [_preseason_bundle()])["embeds"][0]
+    assert PRESEASON in embed["description"]
+    # The usual empty-adds line would claim a comparison that never ran.
+    assert "No add beats anyone" not in embed["description"]
+
+
+def test_the_banner_flips_the_embed_to_the_warning_colour():
+    from ff_startsit.output.discord import _BANNER_COLOR
+
+    embed = build_waiver_payload(1, [_preseason_bundle()])["embeds"][0]
+    assert embed["color"] == _BANNER_COLOR

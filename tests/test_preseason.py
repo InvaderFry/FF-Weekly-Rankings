@@ -104,6 +104,17 @@ def test_preseason_banner_variants():
     assert season.preseason_banner(Settings(), today=date(2026, 10, 1)) is None
 
 
+def test_waiver_banner_ignores_the_sample_fill_switch():
+    """The sample fill exists so a preseason start/sit *table* has something to
+    show. The waiver pass refuses either way, so its banner isn't conditional."""
+    august = date(2026, 8, 26)      # preseason week 3 by Sleeper's reckoning
+    assert season.waiver_preseason_banner(august) == season.WAIVER_BANNER
+    # First Thursday of September 2026 is the 3rd — kickoff day, so Week 1 is
+    # live on it and the day before is the last preseason day.
+    assert season.waiver_preseason_banner(date(2026, 9, 2)) == season.WAIVER_BANNER
+    assert season.waiver_preseason_banner(date(2026, 9, 3)) is None
+
+
 def test_render_digest_banner():
     digest = render_digest(1, "ppr", {}, banner=season.SAMPLE_BANNER)
     assert "PRESEASON" in digest
