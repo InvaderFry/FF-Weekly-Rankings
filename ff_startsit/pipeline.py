@@ -127,5 +127,6 @@ def recommend(
     )
 
     if log:
-        log_recommendation(rec, settings.results_log_path, command=command)
+        log_recommendation(rec, settings.results_log_path, command=command,
+                           league=settings.league_label)
     return rec

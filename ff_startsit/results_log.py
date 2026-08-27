@@ -17,12 +17,20 @@ from pathlib import Path
 from .models import Recommendation
 
 
-def log_recommendation(rec: Recommendation, path: Path, command: str = "") -> None:
-    """Append one row describing ``rec`` to the JSONL log at ``path``."""
+def log_recommendation(rec: Recommendation, path: Path, command: str = "",
+                       league: str = "") -> None:
+    """Append one row describing ``rec`` to the JSONL log at ``path``.
+
+    ``league`` is provenance, not a filter: the log is append-only, so a field not
+    written today is one no future analysis can recover for this season's rows.
+    A plain string rather than a whole ``Settings`` — this module takes a
+    ``Recommendation`` and a path, and should keep that shape.
+    """
     path.parent.mkdir(parents=True, exist_ok=True)
     row = {
         "ts": datetime.now(timezone.utc).isoformat(),
         "command": command,
+        "league": league,
         "week": rec.week,
         "scoring": rec.scoring,
         "weights": rec.weights,

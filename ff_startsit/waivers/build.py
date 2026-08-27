@@ -198,6 +198,13 @@ def build_bundle(settings: Settings, label: str, provider: LeagueViewProvider,
                else build_signals(settings, preseason=False))
     _, index = score_positions(settings, candidates, week, signals=signals)
 
+    # Every run, not just the rehearsal. An empty adds list is otherwise
+    # indistinguishable from a broken one, and `has_ecr` gates adds and drops
+    # both — so an ECR outage renders as "nothing worth adding" in season, which
+    # is the one thing a waiver report must never say when it cannot see.
+    bundle.pool_size = len(pool)
+    bundle.coverage = signal_coverage(index, pool_players(pool))
+
     if rehearsing:
         bundle.banner = _rehearsal_banner(index, pool)
 

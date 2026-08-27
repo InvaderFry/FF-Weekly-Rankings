@@ -81,6 +81,12 @@ class Settings:
     # `_validate_weights` is untouched.
     close_call_raw_gaps: dict[str, float] = field(
         default_factory=lambda: {"ecr": 3.0, "vegas": 1.5})
+    #: Which league this Settings copy is scoring, written to each logged decision
+    #: so a multi-league corpus stays segmentable later. Set by ``cli`` per league,
+    #: never from the environment. Empty means a row predates the field; the
+    #: synthesized single-league profile is named "default", so the two stay
+    #: distinguishable.
+    league_label: str = ""
     injury_enabled: bool = True
     weather_enabled: bool = True
     # Seconds a cached roster stays usable before it is re-fetched. Rosters turn

@@ -141,6 +141,21 @@ week are one piece of evidence, not two — keeping the latest, since a repeat r
 has fresher injury and weather reads. Both `calibrate` and `backtest` apply it;
 duplicates would otherwise inflate the write gate and the honesty numbers alike.
 
+Rows carry a **`league`** (`Settings.league_label`, written per league by `cli`),
+but it is provenance and deliberately **not** part of that identity tuple. Two
+leagues at the same scoring putting the same players against each other in one
+week saw one slate, one injury report, one weather system — counting them twice
+is the exact inflation dedupe exists to prevent. Season is still inferred from the
+row timestamp (`season_from_ts`); `league` is stored because the log is
+append-only, so a field not written is one no later analysis can recover.
+
+The label reaches the log through the **per-league `Settings` copy**, and that
+copy is now made *unconditionally* in `cli._league_context`, `_league_bundles` and
+`_waiver_bundles`. It used to be `lsettings = settings` unless a league's scoring
+differed from the global — fine while scoring was the only per-league field, and
+wrong the moment a second one rides along: every same-scoring league would share
+one `Settings` object and log whichever label was written last.
+
 **Three kinds of run are never logged**, all for the same reason — the row would
 not mean what it claims, and the log is append-only: preseason sample runs
 (`pipeline.py`), the pooled FLEX pass (`rank_pooled`), and any run where a signal
@@ -278,6 +293,17 @@ reason a piece of it is shaped the way it is.
   anonymous backup looking excellent — which recommended adding him and dropping
   your bye-week RB1. So `score.has_ecr` gates both adds and drops; everything
   else is reported as unranked rather than ranked last.
+
+  That gate is also why an empty adds list is ambiguous, and why
+  **`WaiverBundle.no_adds_reason()`** exists: `has_ecr` gates adds *and* drops, so
+  an ECR outage empties the report, and all three renderers used to answer that
+  with their own wording of "nothing beats anyone you could drop" — a confident
+  claim about a comparison that never ran. The method is the single definition all
+  three now call, the same rule `roster_by_position` follows, and it reads
+  `WaiverBundle.coverage` / `pool_size` (from `score.signal_coverage`, populated on
+  **every** run rather than only the rehearsal) to pick between an outage, a thin
+  read that names its own thinness, and a genuinely quiet wire. `None` means a
+  banner is standing and already explains the silence.
 - **Preseason is refused, not filled.** `pipeline.build_signals` serves bundled
   sample values before Week 1 so a start/sit *table* has something to
   demonstrate with. Dealt to a real roster those values name real players to

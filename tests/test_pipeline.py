@@ -278,3 +278,29 @@ def test_right_week_signal_logs_normally(tmp_path):
               signals=[_WrongWeekECR({"1": 1.0, "2": 8.0}, served_wrong_week=False)])
 
     assert settings.results_log_path.exists()
+
+
+# --- league provenance in the log -----------------------------------------
+def test_the_logged_row_names_the_league_that_produced_it(tmp_path):
+    settings = Settings(weights={"ecr": 1.0}, data_dir=tmp_path,
+                        league_label="dynasty")
+    players = [Player(key="1", name="Alpha", team="KC", position="RB"),
+               Player(key="2", name="Bravo", team="CHI", position="RB")]
+    recommend(settings, players, week=3, signals=[FakeECR({"1": 1.0, "2": 8.0})],
+              command="rank")
+
+    row = json.loads(settings.results_log_path.read_text().strip().splitlines()[-1])
+    assert row["league"] == "dynasty"
+
+
+def test_an_unlabeled_run_writes_an_empty_league_rather_than_omitting_it(tmp_path):
+    """A present-but-empty key and a missing key both parse, but only the first
+    lets a later reader tell "single-league setup" from "row predates the field"."""
+    settings = Settings(weights={"ecr": 1.0}, data_dir=tmp_path)
+    players = [Player(key="1", name="Alpha", team="KC", position="RB"),
+               Player(key="2", name="Bravo", team="CHI", position="RB")]
+    recommend(settings, players, week=3, signals=[FakeECR({"1": 1.0, "2": 8.0})],
+              command="rank")
+
+    row = json.loads(settings.results_log_path.read_text().strip().splitlines()[-1])
+    assert row["league"] == ""
