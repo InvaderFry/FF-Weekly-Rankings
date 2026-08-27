@@ -295,6 +295,33 @@ def test_markdown_table_escapes_pipes_and_newlines_in_names():
     assert "Line Break" in md
 
 
+def test_a_super_flex_slot_accepts_a_quarterback_and_an_ordinary_flex_does_not():
+    by_pos = {
+        "QB": [_ps("qb1", "QB One", "QB", 95), _ps("qb2", "QB Two", "QB", 90)],
+        "RB": [_ps("rb1", "RB One", "RB", 70), _ps("rb2", "RB Two", "RB", 40)],
+    }
+    sflex = dict(report.build_lineup(by_pos, slots=["QB", "RB", "SUPER_FLEX"]).slots)
+    assert sflex["SUPER_FLEX"].player.key == "qb2", "the best body left is the QB"
+
+    # The plain FLEX is RB/WR/TE, so the spare quarterback is not eligible for it.
+    flex = dict(report.build_lineup(by_pos, slots=["QB", "RB", "FLEX"]).slots)
+    assert flex["FLEX"].player.key == "rb2"
+
+
+def test_the_pooled_flex_ranking_never_fills_a_super_flex_slot():
+    """`flex_pool` is FantasyPros' cross-position RB/WR/TE list, which does not
+    rank quarterbacks. Drawing a superflex pick from it would answer with the best
+    player on a list its best candidate isn't on."""
+    by_pos = {
+        "QB": [_ps("qb1", "QB One", "QB", 95), _ps("qb2", "QB Two", "QB", 90)],
+        "RB": [_ps("rb1", "RB One", "RB", 70), _ps("rb2", "RB Two", "RB", 40)],
+    }
+    pool = [_ps("rb2", "RB Two", "RB", 88)]     # pooled scores are their own scale
+    lineup = report.build_lineup(by_pos, flex_pool=pool,
+                                 slots=["QB", "RB", "SUPER_FLEX"])
+    assert dict(lineup.slots)["SUPER_FLEX"].player.key == "qb2"
+
+
 def test_build_lineup_honors_a_leagues_own_slots():
     """`slots` exists so the waiver pass can protect what the *league* starts.
 

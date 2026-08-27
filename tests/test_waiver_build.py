@@ -12,7 +12,7 @@ from ff_startsit.models import Player, SignalValue
 from ff_startsit.sources.base import Signal
 from ff_startsit.sources.schedule import ScheduleProvider
 from ff_startsit.waivers.base import LeagueViewProvider
-from ff_startsit.waivers.build import build_bundle
+from ff_startsit.waivers.build import _lineup_keys, build_bundle
 from ff_startsit.waivers.models import (ACQ_FAAB, FantasyTeam, LeagueRules,
                                         PoolPlayer)
 
@@ -346,6 +346,80 @@ def test_coverage_is_recorded_in_season_not_only_when_rehearsing(tmp_path):
     b = _build(tmp_path)
     assert b.pool_size == len(POOL)
     assert b.coverage.get("ecr") == len([p for p in POOL if p.player.key in RANKS])
+
+
+def _wr_score(key, name, pos, final):
+    from ff_startsit.models import PlayerScore
+    ps = PlayerScore(player=Player(key=key, name=name, team="KC", position=pos))
+    ps.final = final
+    return ps
+
+
+def test_a_superflex_starter_is_protected_from_the_drop_list():
+    """The reported bug, end to end: with the superflex slot discarded, QB2 was
+    surplus to `droppable`'s count *and* absent from `protected`, because the one
+    hardcoded FLEX takes RB/WR/TE only. Both halves of the guard agreed to cut a
+    weekly starter.
+    """
+    from ff_startsit.waivers.score import droppable
+
+    scores = [_wr_score("q1", "Qb One", "QB", 95),
+              _wr_score("q2", "Qb Two", "QB", 60),
+              _wr_score("r1", "Rb One", "RB", 90),
+              _wr_score("r2", "Rb Two", "RB", 50)]
+    for s_ in scores:                      # both are ranked, so has_ecr passes
+        s_.raw["ecr"] = SignalValue(raw=float(10), available=True)
+
+    superflex = LeagueRules(roster_slots={"QB": 1, "RB": 2},
+                            flex_slots={"SUPER_FLEX": 1}, team_count=12)
+    protected = _lineup_keys(scores, superflex)
+    assert "q2" in protected, "the superflex slot starts him"
+    assert "q2" not in {d.score.player.key
+                        for d in droppable(scores, superflex, protected=protected)}
+
+    # Same roster in a plain-FLEX league: the spare quarterback really is bench
+    # depth there, so nothing has been over-protected.
+    plain = LeagueRules(roster_slots={"QB": 1, "RB": 2},
+                        flex_slots={"FLEX": 1}, team_count=12)
+    assert "q2" not in _lineup_keys(scores, plain)
+    assert "q2" in {d.score.player.key
+                    for d in droppable(scores, plain,
+                                       protected=_lineup_keys(scores, plain))}
+
+
+def test_a_league_with_two_flex_slots_protects_two_flex_bodies():
+    from ff_startsit.waivers.score import droppable
+
+    scores = [_wr_score("w1", "Wr One", "WR", 95),
+              _wr_score("w2", "Wr Two", "WR", 80),
+              _wr_score("w3", "Wr Three", "WR", 70),
+              _wr_score("w4", "Wr Four", "WR", 60),
+              _wr_score("w5", "Wr Five", "WR", 20)]
+    for s_ in scores:
+        s_.raw["ecr"] = SignalValue(raw=float(10), available=True)
+
+    rules = LeagueRules(roster_slots={"WR": 2}, flex_slots={"FLEX": 2},
+                        team_count=12)
+    protected = _lineup_keys(scores, rules)
+    assert {"w1", "w2", "w3", "w4"} <= protected
+    assert {d.score.player.key
+            for d in droppable(scores, rules, protected=protected)} == {"w5"}
+
+
+def test_an_unreachable_pool_does_not_also_claim_the_wire_was_quiet(tmp_path):
+    """The caveat and the no-adds reason went into one Discord description.
+
+    A failed pool fetch leaves ``pool_size`` at zero, which fell past both outage
+    guards and landed on "Nothing on the wire beats anyone you could drop this
+    week" — printed directly under "No free-agent list was available for this
+    league". A caveat already says why the section is empty; a second sentence
+    asserting a comparison that never ran contradicts it.
+    """
+    b = _build(tmp_path, provider=_Provider(boom={"pool"}))
+    assert b.adds == []
+    assert b.pool_size == 0
+    assert "No free-agent list was available" in b.caveat
+    assert b.no_adds_reason() is None
 
 
 def test_an_ecr_outage_is_reported_as_one_rather_than_as_a_quiet_wire(tmp_path):

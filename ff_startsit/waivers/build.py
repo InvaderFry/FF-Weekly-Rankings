@@ -66,18 +66,25 @@ def _lineup_keys(my_scores: Sequence[PlayerScore], rules: LeagueRules) -> set[st
     Uses ``report.build_lineup`` rather than a second definition of "starter", so
     the Tuesday report can't propose cutting somebody Sunday's report starts.
 
-    Built from the *league's* slots, not the hardcoded 1QB/2RB/2WR template.
-    ``droppable`` right below already counts surplus against the real slots, so
-    protecting against the template made the two guards disagree: in a superflex
-    league your second quarterback was surplus by one and unprotected by the
-    other, which is a recommendation to cut a starter.
+    Built from the *league's* slots, not the hardcoded 1QB/2RB/2WR template, and
+    that includes its flex slots. ``droppable`` right below counts surplus against
+    ``roster_slots`` alone, which has no entry a flex body could occupy — so every
+    flex starter is surplus by that count and ``protected`` is the only thing
+    standing between him and the drop list. Passing one hardcoded ``FLEX`` instead
+    left a SUPER_FLEX league's second quarterback unprotected (an ordinary FLEX
+    takes RB/WR/TE only) and a two-flex league's second flex body likewise, which
+    is a recommendation to cut a starter.
     """
     from ..report import build_lineup
 
     slots: list[str] = []
     for pos, count in sorted(starting_slots(rules).items()):
         slots.extend([pos] * count)
-    slots.append("FLEX")   # neither platform reports flex counts; one, as today
+    # Flex last, so the position slots claim their own players first.
+    for name, count in sorted(rules.flex_slots.items()):
+        slots.extend([name] * count)
+    if not rules.flex_slots:
+        slots.append("FLEX")   # platform told us nothing; one, as before
 
     by_pos: dict[str, list[PlayerScore]] = {}
     for s in my_scores:

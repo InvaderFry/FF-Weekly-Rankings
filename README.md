@@ -347,6 +347,13 @@ Instead of posting an empty lineup, runs during the preseason:
 Set `FF_PRESEASON_FILL=0` to disable the sample fill and show the warning with
 empty slots instead.
 
+"Preseason" is decided by Week 1's kickoff date, which the tool knows for the
+seasons it has been told about (2026 opens **Wednesday Sept 9**, not the first
+Thursday of September) and otherwise guesses as the first Thursday. If an opener
+moves and your copy is out of date, set `FF_SEASON_KICKOFF=YYYY-MM-DD` rather
+than waiting for a release — that date also anchors the week number whenever
+Sleeper's `/state/nfl` can't be reached.
+
 ### One-time setup
 
 > Detailed click-by-click instructions: [docs/SETUP.md](docs/SETUP.md#6-github-actions-setup-the-twice-weekly-runs).

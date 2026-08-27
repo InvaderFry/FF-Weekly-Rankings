@@ -45,6 +45,10 @@ _UA = {"User-Agent": "Mozilla/5.0 (ff-startsit)"}
 #: reading starting-slot counts out of ``mSettings``. Flex/bench/IR slots are
 #: deliberately absent: they don't name a position.
 SLOT_ID_TO_POS = {0: "QB", 2: "RB", 4: "WR", 6: "TE", 16: "DEF", 17: "K"}
+#: Flex lineup slots, deliberately *not* in SLOT_ID_TO_POS: that map also drives
+#: FREE_AGENT_SLOT_IDS and roster parsing, and no player's position is "FLEX".
+#: 23 is FLEX (RB/WR/TE); 7 is ESPN's "OP", the superflex slot that takes a QB.
+FLEX_SLOT_ID_TO_NAME = {23: "FLEX", 7: "SUPER_FLEX"}
 
 #: The slots we ask the free-agent endpoint for — the positions this app ranks.
 FREE_AGENT_SLOT_IDS = sorted(SLOT_ID_TO_POS)
@@ -197,14 +201,23 @@ def parse_league_rules(payload: dict) -> LeagueRules:
         acq_type = ACQ_PRIORITY
 
     slots: dict[str, int] = {}
+    flex: dict[str, int] = {}
     counts = ((settings.get("rosterSettings") or {}).get("lineupSlotCounts")) or {}
     for slot_id, count in counts.items():
-        pos = SLOT_ID_TO_POS.get(int(slot_id)) if str(slot_id).lstrip("-").isdigit() else None
-        if pos and count:
+        if not str(slot_id).lstrip("-").isdigit() or not count:
+            continue
+        slot_id = int(slot_id)
+        pos = SLOT_ID_TO_POS.get(slot_id)
+        if pos:
             slots[pos] = slots.get(pos, 0) + int(count)
+            continue
+        # Flex slots are counted separately — see FLEX_SLOT_ID_TO_NAME above.
+        name = FLEX_SLOT_ID_TO_NAME.get(slot_id)
+        if name:
+            flex[name] = flex.get(name, 0) + int(count)
 
     return LeagueRules(acquisition_type=acq_type, faab_budget=budget,
-                       roster_slots=slots)
+                       roster_slots=slots, flex_slots=flex)
 
 
 def parse_free_agents(payload: dict) -> list[PoolPlayer]:

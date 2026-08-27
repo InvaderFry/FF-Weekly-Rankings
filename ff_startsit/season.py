@@ -8,6 +8,8 @@ deterministic.
 
 from __future__ import annotations
 
+import os
+import sys
 from datetime import date, timedelta
 from typing import Optional
 
@@ -41,14 +43,55 @@ def season_year(today: Optional[date] = None) -> int:
     return today.year if today.month >= 3 else today.year - 1
 
 
+#: Env override for a kickoff we got wrong, as ``YYYY-MM-DD``. The escape hatch
+#: the table below needs: a year nobody has filled in yet, or a date the league
+#: moves, is correctable without a release.
+KICKOFF_ENV = "FF_SEASON_KICKOFF"
+
+#: Kickoffs that are *not* the first Thursday of September, which is otherwise a
+#: good guess (2024 opened Sept 5, 2025 opened Sept 4 — both first Thursdays).
+#: 2026 opens on a **Wednesday**, six days later than the guess, and that gap is
+#: not cosmetic: it read Sept 3-8 as regular season with no preseason warning,
+#: and put every ``date_week`` from Sept 10 onward a full week ahead.
+KNOWN_KICKOFFS: dict[int, date] = {
+    2025: date(2025, 9, 4),
+    2026: date(2026, 9, 9),
+}
+
+
+def _kickoff_override(year: int) -> Optional[date]:
+    """``FF_SEASON_KICKOFF`` as a date, when it names ``year``.
+
+    Fail loud-but-graceful, like ``config._validate_weights``: a malformed value
+    warns and falls through to the table rather than crashing a scheduled run or
+    silently standing in for a date nobody checked.
+    """
+    raw = (os.environ.get(KICKOFF_ENV) or "").strip()
+    if not raw:
+        return None
+    try:
+        parsed = date.fromisoformat(raw)
+    except ValueError:
+        print(f"warning: {KICKOFF_ENV}={raw!r} is not YYYY-MM-DD; ignoring it",
+              file=sys.stderr)
+        return None
+    return parsed if parsed.year == year else None
+
+
 def first_kickoff(year: int) -> date:
-    """Week 1 kicks off around the first Thursday of September."""
+    """Week 1's kickoff: an env override, a known date, then the Thursday guess."""
+    override = _kickoff_override(year)
+    if override is not None:
+        return override
+    known = KNOWN_KICKOFFS.get(year)
+    if known is not None:
+        return known
     sept1 = date(year, 9, 1)
     return sept1 + timedelta(days=(3 - sept1.weekday()) % 7)
 
 
 def is_preseason(today: Optional[date] = None) -> bool:
-    """True between March and the season's first Thursday-of-September kickoff.
+    """True between March and the season's Week 1 kickoff.
 
     January/February resolve to the *prior* season's kickoff (playoffs are in
     season), so this is only True in the spring/summer dead zone.

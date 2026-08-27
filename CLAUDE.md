@@ -364,13 +364,28 @@ starting slot can be traded away, and passing a lineup's worth of protected keys
 blocked every idea (surplus depth *is* the FLEX).
 
 `build._lineup_keys` passes the **league's** slots into `build_lineup` (which takes
-an optional `slots`, defaulting to `LINEUP_SLOTS`). Protecting against the
-hardcoded 1QB/2RB/2WR template while `droppable` counted surplus against the real
-`roster_slots` made the two halves of one guard disagree: in a superflex league
-your second quarterback was surplus to one and unprotected by the other, which is
-a recommendation to cut a starter. Neither platform parser maps a FLEX slot id
-(`espn.SLOT_ID_TO_POS` has no 23; `sleeper._KEEP_POSITIONS` excludes
-`FLEX`/`SUPER_FLEX`), so multi-FLEX leagues still get exactly one.
+an optional `slots`, defaulting to `LINEUP_SLOTS`), **flex slots included**.
+Protecting against the hardcoded 1QB/2RB/2WR template while `droppable` counted
+surplus against the real `roster_slots` made the two halves of one guard disagree.
+The template went first; the hardcoded single `FLEX` beside it went next, because
+it left the same starter unprotected by a different route. `droppable` counts
+surplus against `roster_slots` alone, which has no entry a flex body can occupy —
+so every flex starter is surplus by that count and `protected` is the only thing
+between him and the drop list. One ordinary `FLEX` takes RB/WR/TE, so a superflex
+league's second quarterback fell through it, and a two-flex league's second flex
+body did too: a recommendation to cut a starter either way.
+
+So `LeagueRules.flex_slots` (`{"FLEX": 2}`, `{"SUPER_FLEX": 1}`) is parsed by both
+platforms — `espn.FLEX_SLOT_ID_TO_NAME` maps 23/7, `sleeper._FLEX_SLOTS` matches
+the names — and kept deliberately **out of** `roster_slots`: nobody plays "FLEX",
+and `starter_demand` divides a rank by a position's demand, which a flex slot has
+none of. `report.SLOT_POSITIONS` says what each accepts. Two consequences worth
+keeping: the pooled FantasyPros ranking fills `FLEX` and **only** `FLEX`, since it
+is an RB/WR/TE list that doesn't rank quarterbacks and a `SUPER_FLEX` pick drawn
+from it would come off a list its best candidate isn't on; and `starter_demand`
+still ignores flex slots, so a superflex league's QB depth ratios read against a
+one-QB field. Splitting a FLEX across RB/WR/TE to fix that would invent exactly
+the kind of number the `depth_ratio` change removed.
 
 `columns.py` (CBS for Eisenberg/Richard, Yahoo for Boone) inverts the usual
 scrape: it searches the article for names **already in the league's free-agent
