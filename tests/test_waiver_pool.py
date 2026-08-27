@@ -154,6 +154,20 @@ def test_faab_league_is_detected_with_its_budget():
     assert rules.acquisition_type == ACQ_FAAB
     assert rules.faab_budget == 100.0
     assert rules.roster_slots == {"QB": 1, "RB": 2, "WR": 2, "TE": 1, "DEF": 1, "K": 1}
+    assert rules.flex_slots == {"FLEX": 1}      # slot 23, kept out of roster_slots
+
+
+def test_espn_records_its_superflex_slot_without_inventing_a_position():
+    """Slot 7 is ESPN's "OP". Dropped on the floor, the second quarterback it
+    starts read as bench depth to every guard that decides drops."""
+    payload = {"settings": {"rosterSettings": {"lineupSlotCounts": {
+        "0": 1, "2": 2, "4": 2, "6": 1, "16": 1, "17": 1,
+        "7": 1, "23": 2, "20": 6,
+    }}}}
+    rules = parse_league_rules(payload)
+    assert rules.flex_slots == {"SUPER_FLEX": 1, "FLEX": 2}
+    assert rules.roster_slots["QB"] == 1
+    assert "SUPER_FLEX" not in rules.roster_slots and "FLEX" not in rules.roster_slots
 
 
 def test_priority_league_is_detected_without_a_budget():

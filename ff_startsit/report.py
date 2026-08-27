@@ -24,6 +24,16 @@ LINEUP_SLOTS = ["QB", "RB", "RB", "WR", "WR", "TE", "FLEX", "K", "DEF"]
 # for strings varies per process under hash randomization — which made the FLEX
 # pick differ between runs on identical data.
 FLEX_POSITIONS: tuple[str, ...] = ("RB", "WR", "TE")
+# A superflex ("OP" on ESPN) slot takes a quarterback too, which is the whole
+# point of it — and why it cannot be spelled "FLEX" anywhere: the pooled FantasyPros
+# flex ranking below is an RB/WR/TE list and does not rank quarterbacks at all.
+SUPER_FLEX_POSITIONS: tuple[str, ...] = ("QB",) + FLEX_POSITIONS
+# Which positions each flex slot will accept. A slot absent from here is an
+# ordinary position slot and only accepts itself.
+SLOT_POSITIONS: dict[str, tuple[str, ...]] = {
+    "FLEX": FLEX_POSITIONS,
+    "SUPER_FLEX": SUPER_FLEX_POSITIONS,
+}
 # Order positions appear in the digest.
 POSITION_ORDER = ["QB", "RB", "WR", "TE", "K", "DEF"]
 # Position precedence for FLEX tie-breaks. Arbitrary but fixed, and derived from
@@ -237,7 +247,7 @@ def _slot_sort_key(s: PlayerScore) -> tuple:
 
 def _best_for_slot(slot: str, by_pos: dict[str, list[PlayerScore]],
                    used: set[str]) -> Optional[PlayerScore]:
-    positions = FLEX_POSITIONS if slot == "FLEX" else (slot,)
+    positions = SLOT_POSITIONS.get(slot, (slot,))
     candidates = []
     for pos in positions:
         for s in by_pos.get(pos, []):
@@ -273,6 +283,12 @@ def build_lineup(by_pos: dict[str, list[PlayerScore]],
     decide what counts as surplus, and computing drop protection from the hardcoded
     template instead left a superflex league's second quarterback both unprotected
     *and* surplus — the two halves of one guard disagreeing about who starts.
+
+    ``flex_pool`` fills ``FLEX`` and **only** ``FLEX``. It is FantasyPros'
+    cross-position RB/WR/TE ranking, which does not rank quarterbacks, so a
+    ``SUPER_FLEX`` slot falls through to ``_best_for_slot`` and compares
+    per-position scores — a real limitation, and a better one than drawing a
+    superflex pick from a list its best candidate isn't on.
     """
     used: set[str] = set()
     out: list[tuple[str, Optional[PlayerScore]]] = []

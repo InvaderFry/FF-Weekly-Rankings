@@ -71,6 +71,22 @@ def test_waiver_type_two_is_faab():
     assert rules.acquisition_type == ACQ_FAAB
     assert rules.faab_budget == 100.0
     assert rules.roster_slots == {"QB": 1, "RB": 2, "WR": 2, "TE": 1, "K": 1, "DEF": 1}
+    # The flex slot is recorded, and kept out of roster_slots: nobody plays "FLEX"
+    # and it has no starter demand of its own to divide a rank by.
+    assert rules.flex_slots == {"FLEX": 1}
+
+
+def test_a_superflex_slot_is_recorded_rather_than_discarded():
+    """It decides who starts, which is what drop protection turns on. Dropped, a
+    superflex league's second quarterback was surplus to the waiver pass's count
+    and unprotected by the lineup builder at once."""
+    league = {"settings": {"waiver_type": 2, "waiver_budget": 100},
+              "roster_positions": ["QB", "SUPER_FLEX", "RB", "RB", "WR", "WR",
+                                   "TE", "FLEX", "FLEX", "K", "DEF", "BN"]}
+    rules = parse_league_rules(league)
+    assert rules.flex_slots == {"SUPER_FLEX": 1, "FLEX": 2}
+    assert "SUPER_FLEX" not in rules.roster_slots
+    assert rules.roster_slots["QB"] == 1     # the superflex is not a second QB slot
 
 
 def test_rolling_waiver_type_is_priority():

@@ -59,6 +59,14 @@ class LeagueRules:
     #: Teams in the league. With ``roster_slots`` this gives starter demand per
     #: position, which is what makes a rank comparable between positions.
     team_count: Optional[int] = None
+    #: flex slot name -> count, e.g. ``{"FLEX": 2}`` or ``{"SUPER_FLEX": 1}``.
+    #: Kept out of ``roster_slots`` because a flex slot is not a position: nobody
+    #: plays "FLEX", and it has no starter demand of its own to divide a rank by.
+    #: It still decides who *starts*, which is what drop protection turns on — a
+    #: superflex league's second quarterback is a weekly starter, and with no slot
+    #: recording that he was surplus to ``keep_counts`` and unprotected by the
+    #: lineup builder at once.
+    flex_slots: dict[str, int] = field(default_factory=dict)
 
     def faab_remaining(self, spent: Optional[float]) -> Optional[float]:
         """Budget left for a team, or None when we don't know the budget."""

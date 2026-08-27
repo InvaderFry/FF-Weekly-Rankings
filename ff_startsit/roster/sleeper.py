@@ -31,6 +31,10 @@ PLAYERS_CACHE_TTL = 24 * 3600  # seconds
 
 # Fantasy-relevant positions we keep.
 _KEEP_POSITIONS = {"QB", "RB", "WR", "TE", "K", "DEF"}
+#: Sleeper's flex slot names, kept apart from ``_KEEP_POSITIONS`` because that
+#: set also filters real players (a player's position is never "FLEX").
+#: ``report.SLOT_POSITIONS`` decides what each one accepts.
+_FLEX_SLOTS = {"FLEX", "SUPER_FLEX"}
 
 
 class SleeperError(RuntimeError):
@@ -190,12 +194,21 @@ def parse_league_rules(league: dict) -> LeagueRules:
         acq = ACQ_UNKNOWN
 
     slots: dict[str, int] = {}
+    flex: dict[str, int] = {}
     for pos in (league or {}).get("roster_positions") or []:
         pos = str(pos).upper()
         if pos in _KEEP_POSITIONS:
             slots[pos] = slots.get(pos, 0) + 1
+        elif pos in _FLEX_SLOTS:
+            # Not folded into ``slots``: nobody plays "FLEX", and a flex slot has
+            # no starter demand of its own to divide a rank by. It is recorded
+            # anyway because it decides who *starts* — a SUPER_FLEX quarterback
+            # dropped here was surplus by the waiver pass's count and unprotected
+            # by the lineup builder at once, which is advice to cut a starter.
+            flex[pos] = flex.get(pos, 0) + 1
 
-    return LeagueRules(acquisition_type=acq, faab_budget=budget, roster_slots=slots)
+    return LeagueRules(acquisition_type=acq, faab_budget=budget,
+                       roster_slots=slots, flex_slots=flex)
 
 
 def build_league_teams(rosters: list[dict], names: dict[str, str], meta: dict,
