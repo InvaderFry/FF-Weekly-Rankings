@@ -276,3 +276,76 @@ def test_the_html_page_makes_the_same_empty_wire_claim_as_the_others():
     quiet = WaiverBundle(label="work", scoring="ppr", week=9)
     assert "Nothing on the wire" in build_waivers_html(9, [quiet],
                                                        generated_on="2026-10-01")
+
+
+def test_a_cross_position_add_renders_without_a_margin():
+    """No margin exists when the add and his drop play different positions — the
+    two scores came from separate candidate sets. Every renderer has to say the
+    drop's name without inventing a number beside it."""
+    b = _bundle(adds=1, trades=0)
+    b.adds[0].margin = None
+    b.adds[0].drop = _ps("d0", "Bench Te", "TE", 50.0)
+    b.adds[0].reasons = ("takes the roster spot from Bench Te (TE), "
+                         "your most droppable player",)
+
+    md = render_waiver_digest(9, [b])
+    assert "Bench Te" in md
+    assert "(+" not in md and "None" not in md
+
+    html = build_waivers_html(9, [b], "2026-08-19")
+    assert "Bench Te" in html
+    assert "+None" not in html and "class='note'>+" not in html
+
+    payload = build_waiver_payload(9, [b])
+    assert "None" not in json.dumps(payload)
+
+
+# --- empty vs. broken ------------------------------------------------------
+# `score.has_ecr` gates adds *and* drops, so an ECR outage empties the adds list.
+# All three renderers used to answer that with their own wording of "nothing beats
+# anyone you could drop" — a confident claim about a comparison that never ran.
+def _empty(**kw):
+    b = WaiverBundle(label="work", scoring="ppr", week=9, **kw)
+    return b
+
+
+def _render_all(b):
+    return (render_waiver_digest(9, [b]),
+            build_waivers_html(9, [b], "2026-10-01"),
+            json.dumps(build_waiver_payload(9, [b])))
+
+
+def test_an_ecr_outage_says_outage_in_every_renderer():
+    for out in _render_all(_empty(pool_size=12, coverage={"ecr": 0, "injury": 12})):
+        assert "data outage" in out
+        assert "beats anyone you could drop" not in out
+
+
+def test_a_pool_that_never_reached_the_index_reads_as_the_same_outage():
+    """`signal_coverage` returns {} when no pooled player is in the scoring index —
+    the same failure seen one step earlier, not a quiet wire."""
+    for out in _render_all(_empty(pool_size=12, coverage={})):
+        assert "data outage" in out
+
+
+def test_a_thin_read_says_how_thin_without_crying_outage():
+    for out in _render_all(_empty(pool_size=12, coverage={"ecr": 3})):
+        assert "beats anyone you could drop" in out
+        assert "3 of 12" in out
+        assert "outage" not in out
+
+
+def test_a_genuinely_quiet_wire_reads_exactly_as_it_always_did():
+    for out in _render_all(_empty(pool_size=12, coverage={"ecr": 12})):
+        assert "Nothing on the wire beats anyone you could drop this week" in out
+        assert "outage" not in out and "of 12" not in out
+
+
+def test_a_standing_banner_still_suppresses_the_line_everywhere():
+    """A preseason refusal must not discuss a comparison that never ran — the rule
+    all three already followed, now in one place."""
+    b = _empty(pool_size=12, coverage={"ecr": 0}, banner="PRESEASON — no live data.")
+    for out in _render_all(b):
+        assert "beats anyone you could drop" not in out
+        assert "data outage" not in out
+        assert "PRESEASON" in out

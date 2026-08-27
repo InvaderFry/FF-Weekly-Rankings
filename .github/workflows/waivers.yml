@@ -120,11 +120,34 @@ jobs:
             gh issue create --title "$TITLE" --body-file waivers.md
           fi
 
+      # A Pages deploy replaces the whole site, so uploading a directory that is
+      # missing a page silently deletes that page from the live site. The sibling
+      # rebuild above is `continue-on-error`, which is exactly how ./site ends up
+      # incomplete. Skipping the deploy leaves the current site — both pages —
+      # standing, which is strictly better than replacing it with half of one.
+      - name: Verify the site is complete
+        id: site
+        run: |
+          if [ -s ./site/index.html ] && [ -s ./site/waivers.html ]; then
+            echo "complete=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "complete=false" >> "$GITHUB_OUTPUT"
+            ls -l ./site || true
+            {
+              echo "### Pages deploy skipped"
+              echo
+              echo "\`./site\` is missing a page, so deploying would have deleted the"
+              echo "live copy of it. The previously deployed site is left untouched."
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
+
       - name: Upload Pages artifact
+        if: steps.site.outputs.complete == 'true'
         uses: actions/upload-pages-artifact@v3
         with:
           path: ./site
 
       - name: Deploy to GitHub Pages
+        if: steps.site.outputs.complete == 'true'
         id: deployment
         uses: actions/deploy-pages@v4

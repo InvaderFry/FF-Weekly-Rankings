@@ -13,7 +13,6 @@ from typing import Optional, Sequence
 from ..output.render import md_cell
 from .models import WaiverBundle, WaiverTarget
 
-_NO_ADDS = "_Nothing on the wire beats anyone you could drop this week._"
 
 
 def _bid_cell(target: WaiverTarget) -> str:
@@ -22,17 +21,26 @@ def _bid_cell(target: WaiverTarget) -> str:
 
 def _adds_table(bundle: WaiverBundle) -> list[str]:
     if not bundle.adds:
-        # With a banner standing (preseason), _NO_ADDS would claim a comparison
-        # that never ran — the banner already says why the section is empty.
-        return [] if bundle.banner else [_NO_ADDS, ""]
+        # The bundle decides what an empty section means — outage, thin read, or
+        # a genuinely quiet wire — so all three renderers say the same thing.
+        # None means a banner is standing and already explains it.
+        reason = bundle.no_adds_reason()
+        return [f"_{reason}_", ""] if reason else []
     lines = ["| Add | Pos | Score | Drop for him | Bid | Why |",
              "|---|---|---:|---|---|---|"]
     for t in bundle.adds:
         drop = t.drop.player.name if t.drop else "—"
+        # A margin only exists when the add and his drop share a position; across
+        # positions the two scores came from different candidate sets and their
+        # difference is not a number to print.
+        if t.margin is not None:
+            drop = f"{md_cell(drop)} (+{t.margin:.1f})"
+        else:
+            drop = md_cell(drop)
         why = "; ".join(t.reasons[1:]) or "—"  # reasons[0] repeats the drop column
         lines.append(
             f"| **{md_cell(t.score.player.name)}** | {md_cell(t.score.player.position)} "
-            f"| {t.score.final:.1f} | {md_cell(drop)} (+{t.margin:.1f}) "
+            f"| {t.score.final:.1f} | {drop} "
             f"| {md_cell(_bid_cell(t))} | {md_cell(why)} |"
         )
     lines.append("")

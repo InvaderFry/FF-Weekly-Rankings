@@ -284,12 +284,11 @@ def _build_waiver_embed(bundle) -> dict:
     adds = _waiver_add_lines(bundle)
     if adds:
         description = "\n".join(adds)
-    elif banner:
-        # The banner already says why there is nothing here; "no add beats
-        # anyone you can drop" would claim a comparison that never ran.
-        description = ""
     else:
-        description = "No add beats anyone you can drop."
+        # One shared definition of what an empty section means — an outage reads
+        # differently from a quiet wire, and this embed is the copy most people
+        # actually read. None means the banner below already explains it.
+        description = bundle.no_adds_reason() or ""
     if bundle.caveat:
         description = f"**{bundle.caveat}**\n\n{description}".rstrip()
     if banner:

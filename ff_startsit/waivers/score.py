@@ -11,10 +11,24 @@ your WR4" can be a true sentence is if the free agent and your WR4 were
 normalized *together*.
 
 So every position is scored **once**, over one candidate set containing your
-roster, every other team's roster, and the free-agent pool. Adds, drops and
-trade values then all read off the same 0-100 scale, and the trade half needs no
-scoring pass of its own. This is the same trap ``report.rank_pooled`` exists to
-solve for the FLEX slot, and the same fix.
+roster, every other team's roster, and the free-agent pool. This is the same trap
+``report.rank_pooled`` exists to solve for the FLEX slot.
+
+It is only half the fix, though, and the other half is what ``depth_ratio`` below
+is for. Scoring a position in one pass makes a free agent comparable to *your WR4*.
+It does nothing to make a WR's 78 comparable to a TE's 78 — those came from
+separate min-max populations, so subtracting one from the other yields a number
+that looks like points and is not. Ordering all adds by ``final``, ordering all
+drops by ``final``, and pricing a FAAB bid off the difference all did exactly that:
+the best of fifteen defenses scores 100 by arithmetic and outranked every real
+running back on the wire.
+
+``depth_ratio`` is the scale-free replacement — a player's ECR rank at his position
+over what the league actually starts there. Below 1.0 is a starter, above is bench
+depth, and it means the same thing for a QB as for a TE. Ordering, bid conviction
+and trade fairness all read it. The 0-100 ``final`` is still shown, and a margin is
+still printed when an add and its drop share a position, because there the
+subtraction is real.
 
 The second idea: **a missing ECR is not a bad ECR.** FantasyPros ranks 40-75
 players per position; most of a waiver pool is below that line, and a player on
@@ -48,8 +62,28 @@ DEFAULT_SLOTS = {"QB": 1, "RB": 2, "WR": 2, "TE": 1, "K": 1, "DEF": 1}
 # ``report.build_lineup``'s actual FLEX pick, which is the same guard done once
 # and done accurately.
 
-#: A 0-100 margin at or above this is treated as maximum conviction for bidding.
-MAX_CONVICTION_MARGIN = 25.0
+#: Teams assumed when the platform won't say, for turning a rank into a ratio.
+#: The wrong count skews every position identically, so the *ordering* survives it.
+DEFAULT_TEAM_COUNT = 12
+
+#: Below this many teams the list is a partial parse, not a small league, and the
+#: default is used instead. The error is not symmetric: too *few* teams shrinks
+#: every position's starter demand, which reads every free agent as roster filler
+#: and empties the report — an outage rendered as "nothing worth adding", which is
+#: the one failure mode a waiver report must never have.
+MIN_LEAGUE_TEAMS = 4
+
+#: The deepest a free agent can rank, as a multiple of his position's starter
+#: demand, and still be worth a roster spot at all. Twice the starter field — the
+#: RB48 in a league that starts 24 — is where a name stops being a bye-week fill
+#: and becomes filler. This is only the outer bound; whether an add is actually an
+#: upgrade is ``_worth_adding``'s question, and it is the stricter of the two.
+MAX_ADD_DEPTH_RATIO = 2.0
+
+#: A depth ratio at or below this — a player who would start somewhere in the
+#: league — is maximum bid conviction. Conviction falls to zero at
+#: ``MAX_ADD_DEPTH_RATIO``.
+FULL_CONVICTION_DEPTH_RATIO = 1.0
 #: Never advise blowing more than this share of the remaining budget on one bid.
 MAX_BID_SHARE = 0.40
 MIN_BID_SHARE = 0.02
@@ -151,6 +185,33 @@ def starting_slots(rules: LeagueRules) -> dict[str, int]:
     return dict(rules.roster_slots) if rules.roster_slots else dict(DEFAULT_SLOTS)
 
 
+def starter_demand(position: str, rules: LeagueRules) -> int:
+    """How many of ``position`` the whole league starts in a week."""
+    return (rules.team_count or DEFAULT_TEAM_COUNT) * max(
+        1, starting_slots(rules).get(position, 1))
+
+
+def depth_ratio(score: PlayerScore, rules: LeagueRules) -> Optional[float]:
+    """A player's ECR rank over what his league actually starts at his position.
+
+    The one quantity in this module that means the same thing at every position.
+    ECR's raw value *is* the positional rank (``sources/ecr.py``:
+    ``higher_is_better = False``), so this costs no extra fetch — it just divides
+    that rank by ``team_count x starting slots``. RB30 in a 12-team league starting
+    two is 30/24 = 1.25; QB13 in the same league starting one is 13/12 = 1.08. The
+    second is the more useful player to roster, and no comparison of their 0-100
+    scores could have told you that, because those came from different populations.
+
+    ``None`` when ECR did not cover the player — which ``has_ecr`` already prevents
+    on both the add and the drop path, since an unranked player is usually on bye
+    rather than bad.
+    """
+    value = score.raw.get("ecr")
+    if value is None or not value.available or value.raw is None or value.raw <= 0:
+        return None
+    return float(value.raw) / starter_demand(score.player.position, rules)
+
+
 def keep_counts(rules: LeagueRules) -> dict[str, int]:
     """How many players at each position must survive any drop suggestion.
 
@@ -171,6 +232,12 @@ def droppable(my_scores: Sequence[PlayerScore], rules: LeagueRules,
     a player the lineup builder starts is never droppable; a position is never
     cut below its starting requirement; and a player with no ECR is left alone
     entirely, because "unranked" on a Tuesday usually means "on bye", not "bad".
+
+    "Worst" is measured by ``depth_ratio``, not by ``final``. Within a position the
+    two agree; across positions only the ratio means anything, and this list is
+    consumed across positions — the head of it is what an add gets paired with.
+    Sorting by ``final`` made the most-droppable player whichever position happened
+    to have the widest score spread.
     """
     protected = protected or set()
     by_pos: dict[str, list[PlayerScore]] = {}
@@ -195,7 +262,7 @@ def droppable(my_scores: Sequence[PlayerScore], rules: LeagueRules,
                       if not status else f"{status}; {pos} depth")
             out.append(DropCandidate(score=s, reason=reason))
 
-    out.sort(key=lambda d: d.score.final)
+    out.sort(key=lambda d: (depth_ratio(d.score, rules) or 0.0), reverse=True)
     return out
 
 
@@ -218,35 +285,46 @@ def pick_adds(index: dict[str, PlayerScore], pool: Sequence[PoolPlayer],
               max_adds: int = 8) -> list[WaiverTarget]:
     """Pair the best free agents with the worst droppable roster players.
 
-    An add is only an add if it beats somebody you can actually cut, so each
-    target is matched to a distinct drop and the margin is measured against that
-    drop — a ranking with no roster to compare against would just be a list of
-    free agents, which is what every other site already gives you.
+    An add is only an add if there is a body to cut for him, so each target is
+    matched to a distinct drop — a ranking with no roster to compare against would
+    just be a list of free agents, which is what every other site already gives you.
+
+    Ordering and the worth-it test both read ``depth_ratio``, not ``final``.
+    Dropping a WR to add an RB is an ordinary roster move, but ``rb.final -
+    wr.final`` is not a quantity: those two came from separate min-max populations.
+    So the pairing stays, the *arithmetic* goes — ``margin`` is filled in only when
+    the add and his drop share a position, and whether an add is worth making is
+    decided by where he ranks against his own position's starter demand.
     """
     journalist_ranks = journalist_ranks or {}
     mentions = mentions or {}
     pool_by_key = {pp.player.key: pp for pp in pool}
 
-    candidates: list[PlayerScore] = []
+    candidates: list[tuple[float, PlayerScore]] = []
     for key in pool_by_key:
         score = index.get(key)
         if score is None or score.final is None or not has_ecr(score):
             continue
-        candidates.append(score)
-    candidates.sort(key=lambda s: s.final, reverse=True)
+        ratio = depth_ratio(score, rules)
+        if ratio is None or ratio > MAX_ADD_DEPTH_RATIO:
+            continue  # too deep at his position to be worth a roster spot
+        candidates.append((ratio, score))
+    # Shallowest first; ``final`` only breaks ties, where both are at one position
+    # and it is a real comparison again.
+    candidates.sort(key=lambda c: (c[0], -c[1].final))
 
     available_drops = list(drops)
     targets: list[WaiverTarget] = []
-    for score in candidates:
+    for ratio, score in candidates:
         if len(targets) >= max_adds or not available_drops:
             break
         drop = available_drops[0]
-        if drop.score.final is None or score.final <= drop.score.final:
-            # The best remaining free agent can't beat the worst player you can
-            # cut — nothing below him will either.
-            break
+        if not _worth_adding(score, drop.score, rules):
+            continue
         available_drops.pop(0)
-        margin = score.final - drop.score.final
+        margin = None
+        if drop.score.player.position == score.player.position:
+            margin = score.final - drop.score.final
         pp = pool_by_key.get(score.player.key)
         target = WaiverTarget(
             score=score,
@@ -256,19 +334,69 @@ def pick_adds(index: dict[str, PlayerScore], pool: Sequence[PoolPlayer],
             journalist_avg=journalist_ranks.get(score.player.key),
             mentions=tuple(mentions.get(score.player.key, ())),
         )
-        target.bid = suggest_bid(target, rules, faab_remaining)
-        target.reasons = tuple(add_reasons(target))
+        target.bid = suggest_bid(target, rules, faab_remaining,
+                                 conviction=_conviction(ratio))
+        target.reasons = tuple(add_reasons(target, rules))
         targets.append(target)
     return targets
 
 
-def add_reasons(target: WaiverTarget) -> list[str]:
+def _worth_adding(add: PlayerScore, drop: PlayerScore, rules: LeagueRules) -> bool:
+    """Whether ``add`` is an upgrade on ``drop``, judged on a shared scale.
+
+    Same position: compare the ECR ranks directly, which is what "better" means
+    there. Different positions: the depth ratios, since that is the only reading
+    the two share. Either way the old ``add.final > drop.final`` is gone — it
+    compared two numbers that were never on one scale, and the deepest position
+    on the roster won by default.
+    """
+    if add.player.position == drop.player.position:
+        a, b = add.raw.get("ecr"), drop.raw.get("ecr")
+        if a is None or b is None or a.raw is None or b.raw is None:
+            return False
+        return a.raw < b.raw
+    add_ratio = depth_ratio(add, rules)
+    drop_ratio = depth_ratio(drop, rules)
+    if add_ratio is None or drop_ratio is None:
+        return False
+    return add_ratio < drop_ratio
+
+
+def _conviction(ratio: float) -> float:
+    """0-1 read on how strongly a free agent's own standing argues for the claim.
+
+    Full conviction for anyone who would start somewhere in the league, falling to
+    nothing at twice the starter field. Scale-free by construction, so the same
+    player is worth the same bid whoever ends up at the head of the drop list —
+    which the old ``margin / MAX_CONVICTION_MARGIN`` could not promise.
+    """
+    span = MAX_ADD_DEPTH_RATIO - FULL_CONVICTION_DEPTH_RATIO
+    return min(1.0, max(0.0, (MAX_ADD_DEPTH_RATIO - ratio) / span))
+
+
+def add_reasons(target: WaiverTarget, rules: LeagueRules) -> list[str]:
     """Short human "why" lines — the part a ranking alone doesn't tell you."""
     reasons: list[str] = []
     if target.drop is not None:
+        if target.margin is not None:
+            reasons.append(
+                f"scores {target.margin:.1f} above {target.drop.player.name}, "
+                f"your most droppable {target.drop.player.position}"
+            )
+        else:
+            # No margin across positions: the two scores were normalized in
+            # different candidate sets, so their difference isn't a number. The
+            # move is still real — say what it is instead of pricing it.
+            reasons.append(
+                f"takes the roster spot from {target.drop.player.name} "
+                f"({target.drop.player.position}), your most droppable player"
+            )
+    ecr = target.score.raw.get("ecr")
+    if ecr is not None and ecr.available and ecr.raw is not None:
+        pos = target.score.player.position
         reasons.append(
-            f"scores {target.margin:.1f} above {target.drop.player.name}, "
-            f"your most droppable {target.drop.player.position}"
+            f"ranks {pos}{ecr.raw:g} where the league starts "
+            f"{starter_demand(pos, rules)}"
         )
     if target.journalist_avg is not None:
         reasons.append(f"preferred journalists average him {target.journalist_avg:.1f}")
@@ -284,14 +412,19 @@ def add_reasons(target: WaiverTarget) -> list[str]:
 
 
 def suggest_bid(target: WaiverTarget, rules: LeagueRules,
-                faab_remaining: Optional[float]) -> str:
+                faab_remaining: Optional[float], conviction: float = 0.0) -> str:
     """Bid advice matched to how the league actually acquires players.
 
     Deliberately silent when ``acquisition_type`` is unknown: a dollar figure
     printed for a rolling-priority league, or a claim ranking printed for a FAAB
     one, is worse than no advice — it is advice for somebody else's league.
+
+    ``conviction`` is supplied by the caller from the add's own depth ratio rather
+    than derived here from ``target.margin``. It used to be the latter, which made
+    three quarters of a real dollar figure out of a subtraction across two
+    normalization frames: the same player was worth a different bid depending on
+    which position happened to sit at the head of your drop list.
     """
-    conviction = min(1.0, max(0.0, target.margin / MAX_CONVICTION_MARGIN))
     demand = _demand(target.pool)
 
     if rules.acquisition_type == ACQ_FAAB:

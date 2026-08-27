@@ -123,8 +123,10 @@ def recommend(
         weights=settings.weights,
         close_call_threshold=settings.close_call_threshold,
         min_disagree_weight=settings.min_disagree_weight,
+        close_call_raw_gaps=settings.close_call_raw_gaps,
     )
 
     if log:
-        log_recommendation(rec, settings.results_log_path, command=command)
+        log_recommendation(rec, settings.results_log_path, command=command,
+                           league=settings.league_label)
     return rec

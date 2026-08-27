@@ -261,12 +261,11 @@ def build_multi_dashboard_html(week: int, bundles: Sequence["LeagueBundle"],
 # --- waiver wire & trades page --------------------------------------------
 def _waiver_adds_table(bundle) -> str:
     if not bundle.adds:
-        # With a banner standing (preseason), this would claim a comparison that
-        # never ran — the banner already says why the section is empty. Same rule
-        # the markdown digest and the Discord embed follow.
-        if bundle.banner:
-            return ""
-        return "<p class='note'>Nothing on the wire beats anyone you could drop.</p>"
+        # One shared definition of what an empty section means, so this page and
+        # the digest and the Discord embed cannot disagree. None means a banner is
+        # standing and already says why there is nothing here.
+        reason = bundle.no_adds_reason()
+        return f"<p class='note'>{escape(reason)}</p>" if reason else ""
     rows = [
         "<table><thead><tr><th>Add</th><th>Pos</th><th class='num'>Score</th>"
         "<th>Drop for him</th><th>Bid</th><th>Why</th></tr></thead><tbody>"
@@ -278,7 +277,10 @@ def _waiver_adds_table(bundle) -> str:
             f"<tr class='top'><td class='start'>{escape(t.score.player.name)}</td>"
             f"<td>{escape(t.score.player.position)}</td>"
             f"<td class='num'>{t.score.final:.1f}</td>"
-            f"<td>{escape(drop)} <span class='note'>+{t.margin:.1f}</span></td>"
+            # No margin across positions — the two scores were normalized in
+            # separate candidate sets, so their difference isn't a quantity.
+            f"<td>{escape(drop)}" + (f" <span class='note'>+{t.margin:.1f}</span>"
+                                     if t.margin is not None else "") + "</td>"
             f"<td>{escape(t.bid or '—')}</td>"
             f"<td>{escape(why)}</td></tr>"
         )

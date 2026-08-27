@@ -35,11 +35,15 @@ from typing import Optional, Sequence
 
 from ..models import PlayerScore
 from .models import FantasyTeam, LeagueRules, TradeIdea
-from .score import starting_slots
+from .score import depth_ratio, starting_slots
 
 #: Two sides' totals must land within this many 0-100 points for the offer to
 #: read as fair rather than as a lowball nobody answers.
-FAIRNESS_BAND = 12.0
+#: How far apart two players' depth ratios may be, as a multiple, before the offer
+#: reads as a lowball. A *multiple* rather than a difference on purpose: a gap of
+#: 0.3 separates a league-winner from a starter down at ratio 0.1, and two pieces
+#: of bench filler up at 2.0. The factor means the same thing at every depth.
+FAIRNESS_BAND_FACTOR = 1.6
 #: Below this, a "gain" is inside the noise of the blend and not worth a message.
 MIN_GAIN = 2.0
 
@@ -147,12 +151,23 @@ def suggest_trades(teams: Sequence[FantasyTeam], index: dict[str, PlayerScore],
                     for get in their_shape.surplus:
                         if get.final is None:
                             continue
-                        if abs(send.final - get.final) > FAIRNESS_BAND:
+                        # Fairness on depth ratio, never on ``final``. The loop
+                        # above skips same-position pairs outright, so *every*
+                        # comparison reached here crosses two normalization
+                        # frames — ``abs(send.final - get.final)`` was not once a
+                        # valid subtraction, it just looked like one.
+                        send_ratio = depth_ratio(send, rules)
+                        get_ratio = depth_ratio(get, rules)
+                        if send_ratio is None or get_ratio is None:
+                            continue
+                        lo, hi = sorted((send_ratio, get_ratio))
+                        if lo <= 0 or hi / lo > FAIRNESS_BAND_FACTOR:
                             continue
                         your_gain, their_gain = _pair_gain(mine, theirs, send, get)
                         if your_gain < MIN_GAIN or their_gain < MIN_GAIN:
                             continue
                         ideas.append(TradeIdea(
+                            depth_gain=send_ratio / get_ratio,
                             partner=other.name,
                             you_send=(send,),
                             you_get=(get,),
@@ -165,9 +180,12 @@ def suggest_trades(teams: Sequence[FantasyTeam], index: dict[str, PlayerScore],
                             ),
                         ))
 
-    # Rank by your gain, then by theirs — an offer that's great for you and
-    # barely moves them is the one that goes unanswered.
-    ideas.sort(key=lambda i: (i.your_gain, i.their_gain), reverse=True)
+    # Rank by how much positional depth you trade away for depth you lack, then
+    # by your gain. ``your_gain`` alone cannot order the list: each gain is a sum
+    # of one position's 0-100 scores, so a 9-point WR gain and a 9-point TE gain
+    # are not the same nine points and sorting them together ranks by whichever
+    # position's candidate set happened to be widest.
+    ideas.sort(key=lambda i: (i.depth_gain, i.your_gain), reverse=True)
     return _dedupe(ideas)[:max_ideas]
 
 

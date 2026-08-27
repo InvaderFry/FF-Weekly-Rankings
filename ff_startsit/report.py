@@ -258,19 +258,26 @@ def _best_from_pool(pool: Sequence[PlayerScore], used: set[str]) -> Optional[Pla
 
 def build_lineup(by_pos: dict[str, list[PlayerScore]],
                  flex_pool: Optional[Sequence[PlayerScore]] = None,
-                 flex_note: Optional[str] = None) -> Lineup:
-    """Greedily fill the standard slots.
+                 flex_note: Optional[str] = None,
+                 slots: Optional[Sequence[str]] = None) -> Lineup:
+    """Greedily fill the starting slots.
 
     Non-FLEX slots come from ``by_pos``, whose scores are normalized within each
     position group. FLEX comes from ``flex_pool`` when one is supplied — a single
     ranking over all flex-eligible candidates, which is the only way its scores
     are comparable across positions. Without a pool the FLEX slot falls back to
     comparing per-position scores and says so via ``Lineup.caveat``.
+
+    ``slots`` overrides ``LINEUP_SLOTS`` for callers that know the league's real
+    shape. The waiver pass is one: it reads starting slots off ESPN and Sleeper to
+    decide what counts as surplus, and computing drop protection from the hardcoded
+    template instead left a superflex league's second quarterback both unprotected
+    *and* surplus — the two halves of one guard disagreeing about who starts.
     """
     used: set[str] = set()
     out: list[tuple[str, Optional[PlayerScore]]] = []
     pooled = bool(flex_pool)
-    for slot in LINEUP_SLOTS:
+    for slot in (slots if slots is not None else LINEUP_SLOTS):
         if slot == "FLEX" and pooled:
             pick = _best_from_pool(flex_pool, used)
         else:

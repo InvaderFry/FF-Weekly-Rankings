@@ -660,9 +660,11 @@ def _league_bundles(args, settings: Settings, week: int) -> list:
 
     bundles: list = []
     for profile in settings.leagues:
-        lsettings = settings
-        if profile.scoring and profile.scoring != settings.scoring:
-            lsettings = replace(settings, scoring=profile.scoring)
+        # Unconditional copy — see `_league_context`. Same-scoring leagues used to
+        # share one Settings object, which is fine for scoring and wrong for a
+        # per-league label written into the decision log.
+        lsettings = replace(settings, scoring=profile.scoring or settings.scoring,
+                            league_label=profile.name)
         try:
             players = _get_roster(args, lsettings, profile)
             ws = report.score_week(lsettings, players, week,
@@ -748,9 +750,8 @@ def _waiver_bundles(args, settings: Settings, week: int) -> list:
 
     bundles: list = []
     for profile in profiles:
-        lsettings = settings
-        if profile.scoring and profile.scoring != settings.scoring:
-            lsettings = replace(settings, scoring=profile.scoring)
+        lsettings = replace(settings, scoring=profile.scoring or settings.scoring,
+                            league_label=profile.name)
         try:
             provider = build_roster_provider(lsettings, args.source, args.league,
                                              args.team, profile=profile)
@@ -1096,8 +1097,11 @@ def _league_context(args, settings: Settings) -> tuple[Settings, LeagueProfile]:
     from dataclasses import replace
 
     profile = resolve_league(settings, getattr(args, "league_name", None))
-    if profile.scoring and profile.scoring != settings.scoring:
-        settings = replace(settings, scoring=profile.scoring)
+    # Unconditional: the label has to ride along even when the scoring matches.
+    # Copying it inside the scoring check would leave same-scoring leagues sharing
+    # one Settings object and logging whichever label was set last.
+    scoring = profile.scoring if profile.scoring else settings.scoring
+    settings = replace(settings, scoring=scoring, league_label=profile.name)
     return settings, profile
 
 

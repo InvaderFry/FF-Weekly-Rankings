@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "ff-startsit"
 version = "0.1.0"
-description = "Weekly fantasy football start/sit tool blending FantasyPros ECR with Vegas implied team totals."
+description = "Weekly fantasy football start/sit tool blending FantasyPros ECR, Vegas implied team totals, injury status and game-day weather — and flagging the close calls."
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [

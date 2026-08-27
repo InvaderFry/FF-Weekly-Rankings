@@ -5,10 +5,11 @@ from ff_startsit.models import Player, SignalValue
 from ff_startsit.sources.base import Signal
 from ff_startsit.waivers.models import FantasyTeam, LeagueRules
 from ff_startsit.waivers.score import score_positions
-from ff_startsit.waivers.trades import (FAIRNESS_BAND, suggest_trades,
+from ff_startsit.waivers.score import depth_ratio
+from ff_startsit.waivers.trades import (FAIRNESS_BAND_FACTOR, suggest_trades,
                                         team_shape, upgrade_value)
 
-RULES = LeagueRules(roster_slots={"QB": 1, "RB": 2, "WR": 2, "TE": 1})
+RULES = LeagueRules(roster_slots={"QB": 1, "RB": 2, "WR": 2, "TE": 1}, team_count=12)
 
 
 def _p(key, name, pos, team="KC"):
@@ -117,6 +118,32 @@ def test_same_position_swaps_are_not_proposed():
 
 
 def test_fairness_band_is_a_real_constraint_not_a_formality():
-    for idea in suggest_trades(_teams(), _index(), RULES):
-        gap = abs(idea.you_send[0].final - idea.you_get[0].final)
-        assert gap <= FAIRNESS_BAND
+    index = _index()
+    for idea in suggest_trades(_teams(), index, RULES):
+        lo, hi = sorted((depth_ratio(idea.you_send[0], RULES),
+                         depth_ratio(idea.you_get[0], RULES)))
+        assert hi / lo <= FAIRNESS_BAND_FACTOR
+
+
+def test_fairness_never_subtracts_two_normalization_frames():
+    """Every pair reaching the fairness gate crosses positions — the loop skips
+    same-position swaps — so ``final`` differences there were never a quantity.
+
+    ``to_0_100`` is min-max *within* a position, so the worst player in any group
+    normalizes to 0 however good he actually is. Here my RB3 is the third-best
+    running back alive and their WR3 is the 100th-best receiver; both are last in
+    their own group, both score 0.0, and the old band read the gap as zero and
+    called it a perfectly fair swap. Ranked against what the league starts at each
+    position, they are four starter-fields apart.
+    """
+    mine = [_p("a1", "Stud Rb1", "RB"), _p("a2", "Stud Rb2", "RB"),
+            _p("a3", "Stud Rb3", "RB")]
+    theirs = [_p("b1", "Scrub Wr1", "WR"), _p("b2", "Scrub Wr2", "WR"),
+              _p("b3", "Scrub Wr3", "WR")]
+    ranks = {"a1": 1, "a2": 2, "a3": 3, "b1": 80, "b2": 90, "b3": 100}
+    index = _index(ranks, mine + theirs)
+
+    send, get = index["a3"], index["b3"]
+    assert abs(send.final - get.final) == 0.0        # the old band: "perfectly fair"
+    assert (depth_ratio(get, RULES) / depth_ratio(send, RULES)) > FAIRNESS_BAND_FACTOR
+    assert suggest_trades(_teams(mine, theirs), index, RULES) == []

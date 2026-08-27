@@ -21,9 +21,12 @@ from ff_startsit.waivers.models import (ACQ_FAAB, FantasyTeam, LeagueRules,
 # correct behaviour, but it exercises nothing.
 RANKS = {"m1": 3, "m2": 5, "m3": 8, "m4": 20, "m5": 12, "m6": 30, "m7": 88,
          "m8": 70, "m9": 6, "m10": 4,
-         "t1": 60, "t2": 45, "t3": 10, "t4": 25,
+         "t1": 60, "t2": 45, "t3": 10, "t4": 8,
          "f1": 20, "f2": 75}
-RULES = LeagueRules(acquisition_type=ACQ_FAAB, faab_budget=100.0,
+# team_count is what turns a rank into "would he start anywhere in this league",
+# so it has to be a real league size. The two rosters below stand in for a normal
+# twelve — spelling out ten more would exercise nothing the two already do.
+RULES = LeagueRules(acquisition_type=ACQ_FAAB, faab_budget=100.0, team_count=12,
                     roster_slots={"QB": 1, "RB": 2, "WR": 2, "TE": 1,
                                   "K": 1, "DEF": 1})
 
@@ -108,9 +111,10 @@ def _build(tmp_path, provider=None, schedule=None, **kw):
     # build_bundle refuses outright before Week 1 (see the preseason tests).
     kw.setdefault("preseason", False)
     kw.setdefault("rehearse", False)
+    kw.setdefault("signals", [_FakeECR()])
     return build_bundle(Settings(data_dir=tmp_path), "work",
                         provider or _Provider(), MINE, 9,
-                        signals=[_FakeECR()], schedule=schedule or _NoSchedule(), **kw)
+                        schedule=schedule or _NoSchedule(), **kw)
 
 
 def test_a_full_league_produces_adds_drops_and_trades(tmp_path):
@@ -331,3 +335,25 @@ def test_an_unexpected_position_is_listed_not_dropped(tmp_path):
     b = build_bundle(Settings(data_dir=tmp_path), "work", _ExplodingProvider(),
                      odd, 1, include_columns=False, preseason=True, rehearse=False)
     assert dict(b.roster_by_position())["P"][0].name == "Odd Slot"
+
+
+def test_coverage_is_recorded_in_season_not_only_when_rehearsing(tmp_path):
+    """The rehearsal banner needed these counts; so does every in-season run.
+
+    Without them an ECR outage empties the adds list and the report answers
+    "nothing worth adding" — an outage rendered as advice.
+    """
+    b = _build(tmp_path)
+    assert b.pool_size == len(POOL)
+    assert b.coverage.get("ecr") == len([p for p in POOL if p.player.key in RANKS])
+
+
+def test_an_ecr_outage_is_reported_as_one_rather_than_as_a_quiet_wire(tmp_path):
+    class _DeadECR(_FakeECR):
+        def fetch(self, week, players):
+            raise RuntimeError("FantasyPros unreachable")
+
+    b = _build(tmp_path, signals=[_DeadECR()])
+    assert b.adds == []
+    assert b.coverage.get("ecr", 0) == 0
+    assert "data outage" in b.no_adds_reason()

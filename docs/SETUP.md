@@ -27,7 +27,7 @@ set it in both places.
 | `DISCORD_WEBHOOK_URL` | Discord notifications (optional) | Discord webhook ([steps](#5-discord-optional)) |
 | `SLEEPER_USERNAME`, `SLEEPER_LEAGUE_ID` | Sleeper roster (alternative to ESPN) | Your Sleeper account |
 | `FF_WAIVER_LIMIT`, `FF_WAIVER_MAX_ADDS`, `FF_TRADE_SUGGESTIONS`, `FF_MAX_TRADE_IDEAS`, `FF_COLUMN_SCRAPE` | Waiver/trade report (optional) | Sensible defaults baked in ([steps](#7-waiver-wire--trades)) |
-| `FF_SCORING`, `FF_WEIGHT_*`, `FF_INJURY`, `FF_WEATHER`, `FF_CLOSE_CALL_THRESHOLD`, `FF_PRESEASON_FILL` | Tuning (all optional) | Sensible defaults baked in — see `.env.example` |
+| `FF_SCORING`, `FF_WEIGHT_*`, `FF_INJURY`, `FF_WEATHER`, `FF_CLOSE_CALL_THRESHOLD`, `FF_CLOSE_RAW_GAP_*`, `FF_PRESEASON_FILL` | Tuning (all optional) | Sensible defaults baked in — see `.env.example` |
 
 ## 1. Local setup (`.env`)
 

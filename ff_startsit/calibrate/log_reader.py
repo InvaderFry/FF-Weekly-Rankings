@@ -43,6 +43,10 @@ class Decision:
     candidates: list[Candidate]
     weights: dict[str, float] = field(default_factory=dict)
     close_call: bool = False
+    #: Which league produced the decision. Provenance only — deliberately *not*
+    #: part of ``dedupe_decisions``' identity; see the note there. Empty for rows
+    #: written before the field existed.
+    league: str = ""
 
 
 def season_from_ts(ts: str) -> Optional[str]:
@@ -96,6 +100,13 @@ def dedupe_decisions(decisions: Sequence[Decision]) -> list[Decision]:
     Identity is ``(season, week, scoring)`` plus the candidate key set: same
     contest, same players. The *last* row wins, since a repeat run reflects the
     freshest signals. Order is otherwise preserved.
+
+    ``league`` is deliberately **not** in the identity, though rows carry it. Two
+    leagues at the same scoring that put the same players up against each other in
+    the same week genuinely are one piece of evidence — one slate, one injury
+    report, one weather system. Adding league here would let that correlated pair
+    count twice toward the ``--write`` floors, which is the exact inflation this
+    function exists to prevent.
     """
     by_identity: dict[tuple, int] = {}
     kept: list[Optional[Decision]] = []
@@ -143,4 +154,5 @@ def _parse_row(row, season: Optional[str], week: Optional[int]) -> Optional[Deci
         candidates=candidates,
         weights=weights,
         close_call=bool(row.get("close_call", False)),
+        league=str(row.get("league", "") or ""),
     )

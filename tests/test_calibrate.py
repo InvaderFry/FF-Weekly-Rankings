@@ -270,3 +270,58 @@ def test_dedupe_keeps_the_freshest_run_of_a_repeat(tmp_path):
     deduped = dedupe_decisions(load_decisions(log))
     assert len(deduped) == 1
     assert deduped[0].candidates[0].normalized["ecr"] == 42.0
+
+
+# --- league provenance -----------------------------------------------------
+def _row(league=None, keys=("a", "b"), week=3, scoring="ppr"):
+    row = {
+        "ts": "2026-10-01T12:00:00+00:00", "command": "rank --pos RB",
+        "week": week, "scoring": scoring, "weights": {"ecr": 0.6, "vegas": 0.4},
+        "close_call": False, "notes": [], "pick": "A",
+        "candidates": [{"key": k, "name": k.upper(), "team": "KC", "position": "RB",
+                        "final": 50.0, "normalized": {"ecr": 50.0}, "raw": {},
+                        "flags": []} for k in keys],
+    }
+    if league is not None:
+        row["league"] = league
+    return row
+
+
+def _load(tmp_path, rows):
+    path = tmp_path / "log.jsonl"
+    path.write_text("\n".join(json.dumps(r) for r in rows))
+    return load_decisions(path)
+
+
+def test_a_row_written_before_the_league_field_still_parses(tmp_path):
+    """The log is append-only and never rewritten, so old rows outlive the schema.
+    Same contract `weights` and `close_call` were added under."""
+    decisions = _load(tmp_path, [_row()])
+    assert len(decisions) == 1
+    assert decisions[0].league == ""
+
+
+def test_the_league_is_read_back_when_present(tmp_path):
+    assert _load(tmp_path, [_row(league="dynasty")])[0].league == "dynasty"
+
+
+def test_two_leagues_asking_the_same_question_are_still_one_piece_of_evidence(tmp_path):
+    """`league` is provenance, not identity.
+
+    Two leagues at the same scoring putting the same players against each other in
+    the same week saw one slate, one injury report, one weather system. Counting
+    that pair twice would inflate the `--write` floors with correlated evidence —
+    the exact thing dedupe exists to stop — so league must stay out of the identity
+    tuple even though the rows now carry it.
+    """
+    decisions = _load(tmp_path, [_row(league="work"), _row(league="dynasty")])
+    assert len(decisions) == 2                      # both rows parse
+    assert len(dedupe_decisions(decisions)) == 1    # ...and collapse to one
+    assert dedupe_decisions(decisions)[0].league == "dynasty"   # latest wins
+
+
+def test_different_scoring_still_separates_them(tmp_path):
+    """The guard that *is* in the identity: half-PPR is a different contest."""
+    decisions = _load(tmp_path, [_row(league="work"),
+                                 _row(league="dynasty", scoring="half")])
+    assert len(dedupe_decisions(decisions)) == 2

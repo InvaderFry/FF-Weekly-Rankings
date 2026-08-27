@@ -1,7 +1,7 @@
 # FF Weekly Start/Sit
 
 A command-line tool that tells you **who to start and who to sit** each week. It
-blends three signals:
+blends four signals:
 
 - **ECR (#4)** — FantasyPros Expert Consensus Rankings, the robust "wisdom of the
   crowd" backbone.

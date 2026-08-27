@@ -72,9 +72,21 @@ def parse_manual_csv(text: str, warn=lambda msg: print(msg, file=sys.stderr)) ->
     return players
 
 
-def write_template(path: Path) -> None:
+def write_template(path: Path) -> bool:
+    """Write the starter CSV to ``path``, unless something is already there.
+
+    Returns whether it wrote. The guard is here rather than at the call site so
+    every future caller inherits it: this runs on a *failure* path, and a failure
+    path must not destroy data. The file it targets is one the user maintains —
+    the repo ships a filled-in example, and a user who copied and edited it in
+    place has their edits in exactly this file. Truncating that to re-offer a
+    template they already have is a strictly worse trade than saying it's there.
+    """
     path.parent.mkdir(parents=True, exist_ok=True)
+    if path.exists():
+        return False
     path.write_text(TEMPLATE)
+    return True
 
 
 class ManualProvider(RosterProvider):
@@ -86,9 +98,11 @@ class ManualProvider(RosterProvider):
     def get_roster_players(self) -> list[Player]:
         if not self.path.exists():
             example = self.path.with_suffix(self.path.suffix + ".example")
-            write_template(example)
+            wrote = write_template(example)
+            found = ("A template was written to" if wrote
+                     else "There is already a template at")
             raise RosterError(
                 f"Manual roster file not found: {self.path}. "
-                f"A template was written to {example} — copy it and fill it in."
+                f"{found} {example} — copy it and fill it in."
             )
         return parse_manual_csv(self.path.read_text())
