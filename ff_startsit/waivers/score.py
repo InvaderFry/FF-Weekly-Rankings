@@ -233,9 +233,12 @@ def droppable(my_scores: Sequence[PlayerScore], rules: LeagueRules,
     cut below its starting requirement; and a player with no ECR is left alone
     entirely, because "unranked" on a Tuesday usually means "on bye", not "bad".
 
-    "Worst" is measured by ``depth_ratio``, not by ``final``. Within a position the
-    two agree; across positions only the ratio means anything, and this list is
-    consumed across positions — the head of it is what an add gets paired with.
+    "Worst" is measured by ``depth_ratio``, not by ``final``. Across positions only
+    the ratio means anything, and this list is consumed across positions — the head
+    of it is what an add gets paired with. (Within a position the two can still
+    disagree, since ``final`` carries injury, Vegas and weather and the ratio does
+    not; ordering by rank is the deliberate choice here, and ``_worth_adding`` asks
+    the blend before any of these is actually cut.)
     Sorting by ``final`` made the most-droppable player whichever position happened
     to have the widest score spread.
     """
@@ -344,17 +347,23 @@ def pick_adds(index: dict[str, PlayerScore], pool: Sequence[PoolPlayer],
 def _worth_adding(add: PlayerScore, drop: PlayerScore, rules: LeagueRules) -> bool:
     """Whether ``add`` is an upgrade on ``drop``, judged on a shared scale.
 
-    Same position: compare the ECR ranks directly, which is what "better" means
-    there. Different positions: the depth ratios, since that is the only reading
-    the two share. Either way the old ``add.final > drop.final`` is gone — it
-    compared two numbers that were never on one scale, and the deepest position
-    on the roster won by default.
+    Same position: the blended ``final``. ``score_positions`` runs **one** pass per
+    position over your roster, every other roster and the pool together, so two
+    same-position finals came out of one normalization frame and their comparison
+    is real — this is the case ``add.final > drop.final`` was always right about.
+    Reading ECR alone here instead threw away injury, Vegas and weather, which is
+    the entire ensemble; it recommended a free agent the blend scored *below* the
+    man he replaced, and ``pick_adds`` then printed that as "scores -20.0 above".
+
+    Different positions: the depth ratios, since that is the only reading the two
+    share. That is where ``add.final > drop.final`` genuinely had to go — those
+    finals came from separate min-max populations, and the deepest position on the
+    roster won by default.
     """
     if add.player.position == drop.player.position:
-        a, b = add.raw.get("ecr"), drop.raw.get("ecr")
-        if a is None or b is None or a.raw is None or b.raw is None:
+        if add.final is None or drop.final is None:
             return False
-        return a.raw < b.raw
+        return add.final > drop.final
     add_ratio = depth_ratio(add, rules)
     drop_ratio = depth_ratio(drop, rules)
     if add_ratio is None or drop_ratio is None:

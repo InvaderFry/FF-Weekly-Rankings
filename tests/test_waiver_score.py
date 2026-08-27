@@ -382,6 +382,68 @@ def test_droppable_orders_by_depth_past_starter_demand_not_by_raw_score():
     assert drops[0].score.player.key == "q2", "QB40 is deeper than WR26"
 
 
+class _FakeInjury(Signal):
+    """Injury with a fixed 0-100 table; anyone absent is uncovered."""
+
+    name = "injury"
+    higher_is_better = True
+
+    def __init__(self, scores):
+        self.scores = scores
+
+    def is_available(self):
+        return True
+
+    def fetch(self, week, players):
+        return {p.key: SignalValue(raw=float(self.scores[p.key])
+                                   if p.key in self.scores else None,
+                                   available=p.key in self.scores)
+                for p in players}
+
+
+def _score_blended(players, ranks, injuries, settings=None):
+    settings = settings or Settings()
+    return score_positions(settings, players, 9,
+                           signals=[_FakeECR(ranks), _FakeInjury(injuries)])
+
+
+def test_a_same_position_add_must_beat_the_drop_on_the_blend_not_on_ecr_alone():
+    """Same-position scores share one normalization frame, so the blend decides.
+
+    Ranking the two on ECR alone threw away injury, Vegas and weather — the whole
+    ensemble — and recommended a free agent the blend scored *below* the man he
+    would replace. ``pick_adds`` then printed that as "scores -20.0 above".
+    """
+    roster = [_p("r1", "Wr1", "WR"), _p("r2", "Wr2", "WR"), _p("r3", "Wr3", "WR")]
+    pool = [PoolPlayer(_p("f1", "Hurt Free Wr", "WR"))]
+    ranks = {"r1": 2, "r2": 8, "r3": 30, "f1": 25}     # the add is ranked better
+    injuries = {"r1": 100, "r2": 100, "r3": 100, "f1": 0}   # ...and is hurt
+    _, index = _score_blended(roster + [pool[0].player], ranks, injuries)
+    drops = droppable([index[p.key] for p in roster], _LEAGUE)
+
+    # The premise: ECR prefers the free agent, the ensemble does not.
+    assert index["f1"].raw["ecr"].raw < index["r3"].raw["ecr"].raw
+    assert index["f1"].final < index["r3"].final
+
+    assert pick_adds(index, pool, drops, _LEAGUE) == []
+
+
+def test_a_same_position_add_better_on_the_blend_is_still_recommended():
+    """The other half: the gate reads the blend, it doesn't refuse everything."""
+    roster = [_p("r1", "Wr1", "WR"), _p("r2", "Wr2", "WR"), _p("r3", "Wr3", "WR")]
+    pool = [PoolPlayer(_p("f1", "Free Wr", "WR"))]
+    ranks = {"r1": 2, "r2": 8, "r3": 30, "f1": 25}
+    injuries = {"r1": 100, "r2": 100, "r3": 100, "f1": 100}
+    _, index = _score_blended(roster + [pool[0].player], ranks, injuries)
+    drops = droppable([index[p.key] for p in roster], _LEAGUE)
+
+    adds = pick_adds(index, pool, drops, _LEAGUE)
+    assert [a.score.player.key for a in adds] == ["f1"]
+    # And the printed margin now reads the way the sentence around it claims.
+    assert adds[0].margin > 0
+    assert "scores" in " ".join(adds[0].reasons)
+
+
 def test_roster_filler_is_not_offered_however_good_his_pool_looks():
     pool = [PoolPlayer(_p("f1", "Deep Guy", "WR"))]
     roster = [_p("r1", "Wr1", "WR"), _p("r2", "Wr2", "WR"), _p("r3", "Wr3", "WR")]
