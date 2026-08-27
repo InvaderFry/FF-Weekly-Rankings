@@ -213,10 +213,15 @@ class WaiverBundle:
         gates adds *and* drops, so an ECR outage produced exactly that sentence in
         all three. It is a confident claim about a comparison that never ran.
 
-        ``None`` means render nothing at all: a banner is standing (the preseason
-        refusal), which already says why the section is empty.
+        ``None`` means render nothing at all, because something else already says
+        why the section is empty: the preseason banner, or a caveat naming what
+        this report could not see. A pool fetch that failed leaves ``pool_size``
+        at zero, which used to fall past both guards below and land on the quiet-
+        wire sentence — so the Discord embed printed "No free-agent list was
+        available for this league" and "Nothing on the wire beats anyone you could
+        drop this week" in the same description.
         """
-        if self.banner:
+        if self.banner or self.caveat:
             return None
         ranked = self.coverage.get("ecr", 0)
         if self.pool_size and not ranked:

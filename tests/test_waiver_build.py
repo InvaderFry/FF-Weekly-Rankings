@@ -348,6 +348,22 @@ def test_coverage_is_recorded_in_season_not_only_when_rehearsing(tmp_path):
     assert b.coverage.get("ecr") == len([p for p in POOL if p.player.key in RANKS])
 
 
+def test_an_unreachable_pool_does_not_also_claim_the_wire_was_quiet(tmp_path):
+    """The caveat and the no-adds reason went into one Discord description.
+
+    A failed pool fetch leaves ``pool_size`` at zero, which fell past both outage
+    guards and landed on "Nothing on the wire beats anyone you could drop this
+    week" — printed directly under "No free-agent list was available for this
+    league". A caveat already says why the section is empty; a second sentence
+    asserting a comparison that never ran contradicts it.
+    """
+    b = _build(tmp_path, provider=_Provider(boom={"pool"}))
+    assert b.adds == []
+    assert b.pool_size == 0
+    assert "No free-agent list was available" in b.caveat
+    assert b.no_adds_reason() is None
+
+
 def test_an_ecr_outage_is_reported_as_one_rather_than_as_a_quiet_wire(tmp_path):
     class _DeadECR(_FakeECR):
         def fetch(self, week, players):
