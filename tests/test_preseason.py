@@ -38,18 +38,43 @@ def test_is_preseason_false_in_season_and_playoffs():
 
 
 def test_is_preseason_kickoff_boundary():
-    # 2026: Sept 1 is a Tuesday, so the first Thursday is Sept 3.
+    # 2026 opens on a *Wednesday*, Sept 9 — not the first Thursday (Sept 3), which
+    # is why the known-kickoff table exists at all.
     kickoff = season.first_kickoff(2026)
-    assert kickoff == date(2026, 9, 3)
+    assert kickoff == date(2026, 9, 9)
     assert season.is_preseason(kickoff - date.resolution) is True
     assert season.is_preseason(kickoff) is False
+    # The six days the first-Thursday guess used to hand to the regular season.
+    assert season.is_preseason(date(2026, 9, 3)) is True
+    assert season.is_preseason(date(2026, 9, 8)) is True
 
 
-def test_date_week_matches_old_fallback():
+def test_the_thursday_guess_still_covers_years_the_table_doesnt_name():
+    assert 2024 not in season.KNOWN_KICKOFFS
+    assert season.first_kickoff(2024) == date(2024, 9, 5)
+    assert season.first_kickoff(2025) == date(2025, 9, 4)   # table and guess agree
+
+
+def test_date_week_counts_from_the_real_kickoff():
     assert season.date_week(date(2026, 7, 17)) == 1
-    assert season.date_week(date(2026, 9, 3)) == 1
-    assert season.date_week(date(2026, 9, 10)) == 2
+    assert season.date_week(date(2026, 9, 3)) == 1          # still preseason
+    assert season.date_week(date(2026, 9, 9)) == 1          # kickoff
+    assert season.date_week(date(2026, 9, 13)) == 1         # Week 1 Sunday
+    assert season.date_week(date(2026, 9, 16)) == 2
     assert season.date_week(date(2027, 2, 1)) == 18  # clamped
+
+
+def test_env_override_beats_the_table_for_its_own_year(monkeypatch):
+    monkeypatch.setenv(season.KICKOFF_ENV, "2026-09-10")
+    assert season.first_kickoff(2026) == date(2026, 9, 10)
+    # It names 2026, so it says nothing about any other season.
+    assert season.first_kickoff(2025) == date(2025, 9, 4)
+
+
+def test_a_malformed_env_override_warns_and_falls_back(monkeypatch, capsys):
+    monkeypatch.setenv(season.KICKOFF_ENV, "week one")
+    assert season.first_kickoff(2026) == date(2026, 9, 9)
+    assert "FF_SEASON_KICKOFF" in capsys.readouterr().err
 
 
 # --- sample signals --------------------------------------------------------
@@ -107,11 +132,11 @@ def test_preseason_banner_variants():
 def test_waiver_banner_ignores_the_sample_fill_switch():
     """The sample fill exists so a preseason start/sit *table* has something to
     show. The waiver pass refuses either way, so its banner isn't conditional."""
-    august = date(2026, 8, 26)      # preseason week 3 by Sleeper's reckoning
+    august = date(2026, 8, 20)      # preseason week 3 by Sleeper's reckoning
     assert season.waiver_banner(today=august) == season.WAIVER_BANNER
-    # First Thursday of September 2026 is the 3rd — kickoff day, so Week 1 is
-    # live on it and the day before is the last preseason day.
-    assert season.waiver_banner(today=date(2026, 9, 3)) is None
+    # 2026 kicks off Wednesday Sept 9, so Week 1 is live on it and Sept 8 is the
+    # last preseason day.
+    assert season.waiver_banner(today=date(2026, 9, 9)) is None
 
 
 # --- the dress-rehearsal window --------------------------------------------
@@ -119,10 +144,10 @@ def test_the_rehearsal_window_is_the_week_before_kickoff():
     """Not the first week of preseason: that is late July, when there are no
     weekly rankings to fetch, so a run then proves the least."""
     assert season.is_rehearsal_window(date(2026, 7, 17)) is False
-    assert season.is_rehearsal_window(date(2026, 8, 26)) is False   # 8 days out
-    assert season.is_rehearsal_window(date(2026, 8, 27)) is True    # 7 days out
-    assert season.is_rehearsal_window(date(2026, 9, 2)) is True     # the day before
-    assert season.is_rehearsal_window(date(2026, 9, 3)) is False    # kickoff itself
+    assert season.is_rehearsal_window(date(2026, 9, 1)) is False    # 8 days out
+    assert season.is_rehearsal_window(date(2026, 9, 2)) is True     # 7 days out
+    assert season.is_rehearsal_window(date(2026, 9, 8)) is True     # the day before
+    assert season.is_rehearsal_window(date(2026, 9, 9)) is False    # kickoff itself
     assert season.is_rehearsal_window(date(2026, 10, 15)) is False
 
 
@@ -141,7 +166,7 @@ def test_exactly_one_weekly_cron_lands_in_the_window():
 
 
 def test_a_rehearsal_replaces_the_refusal_banner():
-    assert (season.waiver_banner(today=date(2026, 8, 27))
+    assert (season.waiver_banner(today=date(2026, 9, 2))
             == season.REHEARSAL_BANNER)
     # Asked for outside the window, preseason still yields to the request...
     assert (season.waiver_banner(rehearse=True, today=date(2026, 7, 17))
