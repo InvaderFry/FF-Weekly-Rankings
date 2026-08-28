@@ -70,6 +70,19 @@ without touching the pure engine.
   is not penalized. `pipeline.recommend` catches any signal `fetch` exception and
   marks it unavailable rather than failing the run. `publish`/`notify` likewise
   warn-and-continue on Discord failure.
+- **Every disk cache goes through `cache.py`, both directions.** A cache is an
+  optimization, so no cache operation may be what fails a run — and the two ways
+  it can be are easy to hand-roll wrong, which is why the helpers exist rather
+  than the four-line idiom at each call site. `atomic_write_text` names its temp
+  file with `mkstemp` **per process**: the obvious `path.name + ".tmp"` gives
+  every writer the same path, so two commands sharing one `FF_DATA_DIR` race and
+  the loser raises `FileNotFoundError` out of an otherwise valid command.
+  `read_json_or_none` treats a corrupt file as a miss, because a write
+  interrupted by Ctrl-C or a full disk leaves a truncated file, and an unguarded
+  `json.loads` then raises on *every* later run until someone finds and deletes
+  it by hand — a transient interruption turned into an outage that outlives its
+  own TTL (the Sleeper players blob caches for 24h). Don't reintroduce a bare
+  `write_text`/`json.loads` pair for cached data.
 - **Fail loud-but-graceful on bad config.** Invalid weights (negative / all-zero),
   bad thresholds, and corrupt learned-weights files fall back to defaults with a
   warning (`config._validate_weights`, `_warn`) — they never silently produce an

@@ -10,7 +10,6 @@ tested against a small fixture.
 
 from __future__ import annotations
 
-import json
 import sys
 import time
 from pathlib import Path
@@ -18,6 +17,7 @@ from typing import Optional
 
 import requests
 
+from .. import cache
 from ..data.teams import normalize_team
 from ..models import Player
 from ..season import date_week
@@ -132,12 +132,13 @@ class SleeperClient:
 
     def load_player_metadata(self) -> dict:
         """Return the Sleeper player metadata blob, caching it on disk."""
-        cache = self.data_dir / "sleeper_players.json"
-        if cache.exists() and (time.time() - cache.stat().st_mtime) < PLAYERS_CACHE_TTL:
-            return json.loads(cache.read_text())
+        path = self.data_dir / "sleeper_players.json"
+        if path.exists() and (time.time() - path.stat().st_mtime) < PLAYERS_CACHE_TTL:
+            blob = cache.read_json_or_none(path)
+            if blob is not None:
+                return blob          # else: a truncated blob is a miss, not a crash
         data = self._get("/players/nfl")
-        cache.parent.mkdir(parents=True, exist_ok=True)
-        cache.write_text(json.dumps(data))
+        cache.write_json(path, data)
         return data
 
     def get_roster_players(self, username: str, league_id: str = "") -> list[Player]:

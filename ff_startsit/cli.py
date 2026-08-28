@@ -22,7 +22,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
 import sys
 import time
 from pathlib import Path
@@ -30,7 +29,7 @@ from typing import Iterable, Optional, Sequence
 
 import requests
 
-from . import report, season
+from . import cache, report, season
 from .config import LeagueProfile, Settings, load_settings
 from .data.matching import normalize_name
 from .models import Player
@@ -342,7 +341,6 @@ def cmd_lineup(args, settings: Settings) -> int:
     _print_preseason_banner(settings, md=args.md)
 
     ws = report.score_week(settings, players, week)
-    recs = ws.recs
     lineup = report.lineup_from(ws)
 
     label = _league_label(profile)
@@ -1184,13 +1182,13 @@ def _roster_path(settings: Settings, provider: RosterProvider) -> Path:
 
 def _save_roster(settings: Settings, provider: RosterProvider,
                  players: Sequence[Player]) -> Path:
-    """Write the roster cache atomically, so an interrupted run can't corrupt it."""
+    """Write the roster cache atomically, so no run can corrupt it.
+
+    Via ``cache.write_json``, which is also what keeps two commands sharing one
+    ``FF_DATA_DIR`` from racing on a temp file — see ``ff_startsit/cache.py``.
+    """
     path = _roster_path(settings, provider)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_name(path.name + ".tmp")
-    tmp.write_text(json.dumps([p.__dict__ for p in players], indent=2))
-    os.replace(tmp, path)
-    return path
+    return cache.write_json(path, [p.__dict__ for p in players], indent=2)
 
 
 def _print_preseason_banner(settings: Settings, md: bool = False) -> None:

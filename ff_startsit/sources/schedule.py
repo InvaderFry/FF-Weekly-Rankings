@@ -21,7 +21,6 @@ empty index rather than an exception, and callers degrade from there.
 
 from __future__ import annotations
 
-import json
 import sys
 import time
 from datetime import datetime, timedelta, timezone
@@ -30,6 +29,7 @@ from typing import Iterable, Optional
 
 import requests
 
+from .. import cache
 from ..data.stadiums import STADIUMS, Stadium, neutral_venue
 from ..data.teams import normalize_team
 from ..models import GameContext
@@ -213,17 +213,13 @@ class ScheduleProvider:
         path = self._cache_path(week)
         if path is not None and path.exists():
             if (time.time() - path.stat().st_mtime) < SCHEDULE_CACHE_TTL:
-                try:
-                    return json.loads(path.read_text())
-                except ValueError:
-                    pass  # unreadable cache -> refetch
+                blob = cache.read_json_or_none(path)
+                if blob is not None:
+                    return blob      # else: unreadable cache -> refetch
         blob = self._fetch(week)
         if path is not None:
             try:
-                path.parent.mkdir(parents=True, exist_ok=True)
-                tmp = path.with_name(path.name + ".tmp")
-                tmp.write_text(json.dumps(blob))
-                tmp.replace(path)
+                cache.write_json(path, blob)
             except OSError:
                 pass  # caching is an optimization, never a hard requirement
         return blob

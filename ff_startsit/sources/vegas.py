@@ -16,7 +16,6 @@ Parsing is separated from HTTP so it can be tested against a saved API fixture.
 
 from __future__ import annotations
 
-from datetime import datetime
 from statistics import mean
 from typing import Iterable, Mapping, Optional
 

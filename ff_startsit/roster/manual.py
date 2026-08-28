@@ -11,7 +11,6 @@ from __future__ import annotations
 import csv
 import sys
 from pathlib import Path
-from typing import Optional
 
 from ..data.matching import normalize_name
 from ..data.teams import normalize_team

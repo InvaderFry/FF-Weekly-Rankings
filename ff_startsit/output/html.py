@@ -12,10 +12,13 @@ returns a string, so it is unit-testable offline.
 from __future__ import annotations
 
 from html import escape
-from typing import Optional, Sequence
+from typing import TYPE_CHECKING, Optional, Sequence
 
 from ..models import PlayerScore, Recommendation
 from ..sources.journalists import JournalistView
+
+if TYPE_CHECKING:                    # the duck-typed bundle, named for the reader
+    from ..report import LeagueBundle
 
 # Order positions appear on the dashboard (mirrors report.POSITION_ORDER).
 POSITION_ORDER = ["QB", "RB", "WR", "TE", "K", "DEF"]
@@ -81,7 +84,6 @@ def _lineup_table(lineup: Sequence[tuple[str, Optional[PlayerScore]]]) -> str:
 
 def _position_table(rec: Recommendation) -> str:
     signal_names = _signal_names(rec)
-    head = ["#", "Player", "Pos", "Team", "Score", *[n.upper() for n in signal_names], "Flags"]
     cells = ["<th class='num'>#</th>", "<th>Player</th>", "<th>Pos</th>", "<th>Team</th>",
              "<th class='num'>Score</th>"]
     cells += [f"<th class='num'>{escape(n)}</th>" for n in [h.upper() for h in signal_names]]
