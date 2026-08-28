@@ -11,11 +11,14 @@ offline against an injected session, matching the rest of the codebase.
 
 from __future__ import annotations
 
-from typing import Optional, Sequence
+from typing import TYPE_CHECKING, Optional, Sequence
 
 import requests
 
 from ..models import PlayerScore, Recommendation
+
+if TYPE_CHECKING:                    # the duck-typed bundle, named for the reader
+    from ..report import LeagueBundle
 
 # Discord limits we stay safely under.
 _FIELD_VALUE_MAX = 1024

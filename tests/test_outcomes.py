@@ -4,6 +4,7 @@ import pytest
 
 from ff_startsit.calibrate.log_reader import season_from_ts
 from ff_startsit.calibrate.outcomes import (
+    SleeperStatsClient,
     build_outcome_lookup,
     parse_stats,
     points_field,
@@ -61,3 +62,53 @@ def test_season_inferred_from_timestamp():
     # January games belong to the previous NFL season.
     assert season_from_ts("2025-01-05T18:00:00Z") == "2024"
     assert season_from_ts("not-a-date") is None
+
+
+# --- disk cache: a corrupt file must never brick the command ---------------
+
+class _StubSession:
+    """A session that counts requests and returns one canned stats blob."""
+
+    def __init__(self, blob):
+        self.blob = blob
+        self.calls = 0
+
+    def get(self, url, timeout=None):
+        self.calls += 1
+        return _StubResponse(self.blob)
+
+
+class _StubResponse:
+    def __init__(self, blob):
+        self._blob = blob
+
+    def raise_for_status(self):
+        return None
+
+    def json(self):
+        return self._blob
+
+
+def test_weekly_stats_caches_on_disk(tmp_path):
+    session = _StubSession({"100": {"pts_ppr": 22.5}})
+    client = SleeperStatsClient(data_dir=tmp_path, session=session)
+
+    assert client.weekly_stats("2024", 5) == {"100": {"pts_ppr": 22.5}}
+    assert client.weekly_stats("2024", 5) == {"100": {"pts_ppr": 22.5}}
+    assert session.calls == 1          # second read came off disk
+
+
+def test_weekly_stats_refetches_past_a_truncated_cache(tmp_path):
+    """A write interrupted mid-flight used to raise JSONDecodeError on every
+    later run until the user deleted the file by hand. It is a miss now."""
+    session = _StubSession({"100": {"pts_ppr": 22.5}})
+    client = SleeperStatsClient(data_dir=tmp_path, session=session)
+    path = client._cache_path("2024", 5)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text('{"100": {"pts_pp')          # truncated write
+
+    assert client.weekly_stats("2024", 5) == {"100": {"pts_ppr": 22.5}}
+    assert session.calls == 1
+    # The refetch also repaired the cache, so the next run reads clean.
+    assert client.weekly_stats("2024", 5) == {"100": {"pts_ppr": 22.5}}
+    assert session.calls == 1

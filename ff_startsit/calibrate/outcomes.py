@@ -15,13 +15,13 @@ test offline against a small fixture.
 
 from __future__ import annotations
 
-import json
 import time
 from pathlib import Path
 from typing import Mapping, Optional
 
 import requests
 
+from .. import cache
 from ..data.matching import player_match_key
 
 BASE = "https://api.sleeper.app/v1"
@@ -112,15 +112,16 @@ class SleeperStatsClient:
 
     def weekly_stats(self, season, week) -> dict:
         """Raw stats blob for ``season``/``week``, cached on disk."""
-        cache = self._cache_path(season, week)
-        if cache.exists() and (time.time() - cache.stat().st_mtime) < STATS_CACHE_TTL:
-            return json.loads(cache.read_text())
+        path = self._cache_path(season, week)
+        if path.exists() and (time.time() - path.stat().st_mtime) < STATS_CACHE_TTL:
+            blob = cache.read_json_or_none(path)
+            if blob is not None:
+                return blob          # else: a truncated cache is a miss, not a crash
         resp = self.session.get(
             f"{BASE}/stats/nfl/regular/{season}/{week}", timeout=self.timeout)
         resp.raise_for_status()
         data = resp.json() or {}
-        cache.parent.mkdir(parents=True, exist_ok=True)
-        cache.write_text(json.dumps(data))
+        cache.write_json(path, data)
         return data
 
     def weekly_points(self, season, week, scoring: str) -> dict[str, float]:
