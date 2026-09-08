@@ -412,7 +412,11 @@ Find it by hand (one analyst at a time — that's what makes the id unambiguous)
   2. Click "Pick Experts", deselect everyone, select ONLY that analyst, Apply.
   3. The URL now ends with &filters=NNNN — NNNN is their id.
   4. Repeat per analyst, then set:
-     FF_PREFERRED_EXPERTS=1234:Justin Boone,120:Jamey Eisenberg,125:Dave Richard
+     FF_PREFERRED_EXPERTS=1234:Some Analyst,120:Another Analyst
+
+Note the ranks themselves only come back with FANTASYPROS_API_KEY set — the
+public page applies this filter in the browser and serves the same consensus to
+every request. `ffstartsit experts --list` shows who can be picked at all.
 """
 
 

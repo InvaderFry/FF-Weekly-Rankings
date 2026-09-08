@@ -170,7 +170,7 @@ true for the section to appear at all:
 
 - **The analyst must be one FantasyPros publishes weekly NFL ranks for.** Not
   every writer is. `ffstartsit experts --list` prints the current directory
-  (83 experts as of the 2026 season); anyone absent from it has no usable id, and
+  (~80 experts in the 2026 season); anyone absent from it has no usable id, and
   no amount of re-deriving will produce one. Notably **CBS analysts — including
   Jamey Eisenberg and Dave Richard — are not in it**, so they cannot feed this
   section. Their Tuesday *waiver columns* are scraped separately
@@ -215,11 +215,11 @@ which is what makes the id unambiguous:
    later; the app just omits the section until then.)*
 2. Click **Pick Experts**, **deselect everyone**, then select **only** Justin
    Boone. Apply.
-3. The URL now ends with `&filters=`**`1234`** — that number is his id.
-4. Repeat for Jamey Eisenberg and Dave Richard, then write the pairs out:
+3. The URL now ends with `&filters=`**`317`** — that number is his id.
+4. Repeat for anyone else you want, then write the pairs out:
 
    ```bash
-   FF_PREFERRED_EXPERTS=1234:Justin Boone,120:Jamey Eisenberg,125:Dave Richard
+   FF_PREFERRED_EXPERTS=317:Justin Boone,120:Another Analyst
    ```
 
 Selecting all three at once gives `filters=A:B:C`, which is faster but doesn't

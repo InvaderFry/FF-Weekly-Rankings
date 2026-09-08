@@ -230,8 +230,9 @@ whether the directory vouched for the id, and the *remedy* the command prints
 keys off that rather than off the mere fact of failure.
 
 Two live findings worth not rediscovering: as of the 2026 season FantasyPros
-lists 83 weekly NFL rankers, Justin Boone is 317, and **no CBS analyst is in the
-list at all** — Jamey Eisenberg and Dave Richard cannot feed this section by any
+lists ~80 weekly NFL rankers (the count moves week to week, which is why the
+directory is read rather than pinned), Justin Boone is 317, and **no CBS analyst
+is in the list at all** — Jamey Eisenberg and Dave Richard cannot feed this section by any
 id. Their Tuesday waiver *columns* come from `waivers/columns.py`, a different
 scrape entirely, and are unaffected.
 
