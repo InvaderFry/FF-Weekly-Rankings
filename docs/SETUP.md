@@ -290,7 +290,7 @@ They read their configuration from your repository's Actions settings:
 
 ### Variables (non-sensitive values)
 
-`FF_PREFERRED_EXPERTS` isn't secret, so it goes on the **Variables** tab
+`FF_PREFERRED_EXPERTS` isn't secret, so prefer the **Variables** tab
 (easier to view and edit later):
 
 1. Same page (**Settings → Secrets and variables → Actions**), switch to the

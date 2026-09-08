@@ -293,7 +293,7 @@ def _waiver_adds_table(bundle) -> str:
 def _waiver_drops_table(bundle) -> str:
     if not bundle.drops:
         return ""
-    rows = ["<h3>Safe to cut</h3>",
+    rows = ["<h3>Conditional drop candidates</h3>",
             "<table><thead><tr><th>Player</th><th>Pos</th>"
             "<th class='num'>Score</th><th>Why</th></tr></thead><tbody>"]
     for d in bundle.drops:

@@ -283,3 +283,18 @@ def test_wrong_week_warns_once_per_week_but_stays_flagged(monkeypatch, capsys):
 
     assert sig.served_wrong_week is True
     assert capsys.readouterr().err.count("not week-5 rankings") == 1
+def test_scrape_does_not_attribute_unfiltered_consensus_to_one_expert():
+    from ff_startsit.sources.ecr import fetch_scrape_rows
+
+    class Response:
+        text = 'var ecrData = {"filters":"101,102","players":[{"player_name":"Test Back","player_position_id":"RB","rank_ecr":1}]};'
+
+        def raise_for_status(self):
+            pass
+
+    class Session:
+        def get(self, url, **kwargs):
+            return Response()
+
+    assert fetch_scrape_rows(Session(), "half", "RB", filters="101") == []
+    assert len(fetch_scrape_rows(Session(), "half", "RB")) == 1

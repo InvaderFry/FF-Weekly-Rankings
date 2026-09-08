@@ -13,7 +13,7 @@ from .config import Settings
 from .engine.blend import blend
 from .models import Player, Recommendation
 from .results_log import log_recommendation
-from .season import is_preseason
+from .season import is_preseason, is_rehearsal_window
 from .sources.base import Signal
 from .sources.ecr import ECRSignal
 from .sources.injury import InjurySignal
@@ -32,7 +32,7 @@ def build_signals(settings: Settings, season: Optional[int] = None,
     ``None`` means "detect from today's date".
     """
     if preseason is None:
-        preseason = is_preseason()
+        preseason = is_preseason() and not is_rehearsal_window()
     if preseason and settings.preseason_fill:
         from .sources.sample import build_sample_signals
         return build_sample_signals()

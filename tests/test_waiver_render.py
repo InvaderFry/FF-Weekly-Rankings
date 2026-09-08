@@ -133,7 +133,7 @@ def test_discord_payload_has_the_adds_and_the_trades():
     embed = payload["embeds"][0]
     assert "Free Agent 0" in embed["description"]
     assert any("Trade ideas" in f["name"] for f in embed["fields"])
-    assert any("Safe to cut" in f["name"] for f in embed["fields"])
+    assert any("Conditional drop candidates" in f["name"] for f in embed["fields"])
 
 
 def test_discord_waiver_colour_differs_from_the_startsit_post():

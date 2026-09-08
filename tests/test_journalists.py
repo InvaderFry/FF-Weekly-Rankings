@@ -121,7 +121,7 @@ def test_identical_ranks_warns_filter_may_be_ignored(capsys):
     payload = _payload("ecr_api_rb_expert1.json")
     session = _FakeSession({"101": payload, "102": payload})
     view = _fetcher(session).build_view(PLAYERS, week=3)
-    assert view is not None
+    assert view is None  # never publish consensus under individual names
     assert "filter may be ignored" in capsys.readouterr().err
 
 

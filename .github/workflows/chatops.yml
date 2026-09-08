@@ -45,6 +45,7 @@ jobs:
           # `/report league-name dynasty` form can only ever error, because
           # resolve_league sees nothing but the synthesized "default" profile.
           FF_LEAGUES: ${{ secrets.FF_LEAGUES }}
+          FF_LEAGUE_SCORING: ${{ vars.FF_LEAGUE_SCORING }}
           ESPN_LEAGUE_ID: ${{ secrets.ESPN_LEAGUE_ID }}
           ESPN_TEAM_ID: ${{ secrets.ESPN_TEAM_ID }}
           ESPN_S2: ${{ secrets.ESPN_S2 }}
@@ -57,7 +58,7 @@ jobs:
           FANTASYPROS_API_KEY: ${{ secrets.FANTASYPROS_API_KEY }}
           # Repository variable (not secret) — powers /report's Preferred
           # journalists section; unset just omits it. See docs/SETUP.md.
-          FF_PREFERRED_EXPERTS: ${{ vars.FF_PREFERRED_EXPERTS }}
+          FF_PREFERRED_EXPERTS: ${{ vars.FF_PREFERRED_EXPERTS || secrets.FF_PREFERRED_EXPERTS }}
         run: |
           python - <<'PY'
           import contextlib, io, os

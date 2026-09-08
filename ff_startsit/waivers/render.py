@@ -50,7 +50,7 @@ def _adds_table(bundle: WaiverBundle) -> list[str]:
 def _drops_table(bundle: WaiverBundle) -> list[str]:
     if not bundle.drops:
         return []
-    lines = ["**Safe to cut** (lineup starters excluded)", "",
+    lines = ["**Conditional drop candidates** (only for a verified upgrade)", "",
              "| Player | Pos | Score | Why |", "|---|---|---:|---|"]
     for d in bundle.drops:
         lines.append(f"| {md_cell(d.score.player.name)} | {md_cell(d.score.player.position)} "

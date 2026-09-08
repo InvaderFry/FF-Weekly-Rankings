@@ -47,6 +47,7 @@ jobs:
       # declared here with its own source, e.g.
       # "work=espn:111111:3,dynasty=sleeper:999999:".
       FF_LEAGUES: ${{ secrets.FF_LEAGUES }}
+      FF_LEAGUE_SCORING: ${{ vars.FF_LEAGUE_SCORING }}
       ESPN_LEAGUE_ID: ${{ secrets.ESPN_LEAGUE_ID }}
       ESPN_TEAM_ID: ${{ secrets.ESPN_TEAM_ID }}
       ESPN_S2: ${{ secrets.ESPN_S2 }}
@@ -58,7 +59,7 @@ jobs:
       # Repository *variable*, not a secret. These are the FantasyPros expert ids
       # for your preferred journalists (Boone / Eisenberg / Richard); their ranks
       # are what the waiver report scores adds against. See docs/SETUP.md.
-      FF_PREFERRED_EXPERTS: ${{ vars.FF_PREFERRED_EXPERTS }}
+      FF_PREFERRED_EXPERTS: ${{ vars.FF_PREFERRED_EXPERTS || secrets.FF_PREFERRED_EXPERTS }}
       DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
       INPUT_WEEK: ${{ github.event.inputs.week }}
       INPUT_REHEARSE: ${{ github.event.inputs.rehearse }}

@@ -43,7 +43,10 @@ class _FakeECR(Signal):
 
 def _score(players, ranks, settings=None):
     settings = settings or Settings()
-    return score_positions(settings, players, 9, signals=[_FakeECR(ranks)])
+    recs, index = score_positions(settings, players, 9, signals=[_FakeECR(ranks)])
+    for key, score in index.items():
+        score.season_rank = ranks.get(key)
+    return recs, index
 
 
 # --- the one candidate set ------------------------------------------------
@@ -155,6 +158,31 @@ def test_each_add_is_paired_with_a_distinct_drop():
     drops = droppable([index[p.key] for p in roster], rules)
     adds = pick_adds(index, pool, drops, rules)
     assert len(adds) == 1
+
+
+def test_kicker_cannot_replace_evans_and_uses_existing_kicker_instead():
+    from ff_startsit.waivers.models import DropCandidate
+    players = [_p("evans", "Mike Evans", "WR"), _p("k", "Current Kicker", "K"),
+               _p("new", "Evan McPherson", "K")]
+    _, index = _score(players, {"evans": 25, "k": 20, "new": 6})
+    rules = LeagueRules(team_count=12, acquisition_type=ACQ_FAAB, faab_budget=100)
+    drops = [DropCandidate(index["evans"], "bench"), DropCandidate(index["k"], "stream")]
+    adds = pick_adds(index, [PoolPlayer(players[2])], drops, rules, faab_remaining=100)
+    assert len(adds) == 1 and adds[0].drop.player.key == "k"
+    assert "~$2" in adds[0].bid
+    assert pick_adds(index, [PoolPlayer(players[2])], drops[:1], rules) == []
+
+
+def test_weekly_upgrade_cannot_cost_better_or_unknown_season_value():
+    from ff_startsit.waivers.models import DropCandidate
+    players = [_p("bench", "Valuable Bench", "WR"), _p("new", "One Week Wonder", "WR")]
+    _, index = _score(players, {"bench": 30, "new": 15})
+    drops = [DropCandidate(index["bench"], "bench")]
+    pool = [PoolPlayer(players[1])]
+    index["bench"].season_rank, index["new"].season_rank = 35, 150
+    assert pick_adds(index, pool, drops, LeagueRules()) == []
+    index["bench"].season_rank = None
+    assert pick_adds(index, pool, drops, LeagueRules()) == []
 
 
 def test_add_reasons_name_the_journalists_and_the_column():
@@ -403,8 +431,11 @@ class _FakeInjury(Signal):
 
 def _score_blended(players, ranks, injuries, settings=None):
     settings = settings or Settings()
-    return score_positions(settings, players, 9,
-                           signals=[_FakeECR(ranks), _FakeInjury(injuries)])
+    recs, index = score_positions(settings, players, 9,
+                                  signals=[_FakeECR(ranks), _FakeInjury(injuries)])
+    for key, score in index.items():
+        score.season_rank = ranks.get(key)
+    return recs, index
 
 
 def test_a_same_position_add_must_beat_the_drop_on_the_blend_not_on_ecr_alone():

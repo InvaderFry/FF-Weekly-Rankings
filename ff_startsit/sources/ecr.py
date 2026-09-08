@@ -110,7 +110,16 @@ def fetch_api_rows(session: requests.Session, api_key: str, season: int, scoring
         timeout=timeout,
     )
     resp.raise_for_status()
-    return parse_api_response(resp.json())
+    payload = resp.json()
+    if filters and "filters" in payload and not _matches_filters(payload, filters):
+        return []
+    return parse_api_response(payload)
+
+
+def _matches_filters(payload: dict, filters: str) -> bool:
+    expected = set(re.split(r"[:,]", filters))
+    served = set(re.split(r"[:,]", str(payload.get("filters", ""))))
+    return expected == served
 
 
 def fetch_scrape_rows(session: requests.Session, scoring: str, position: str,
@@ -129,6 +138,18 @@ def fetch_scrape_rows(session: requests.Session, scoring: str, position: str,
         timeout=timeout,
     )
     resp.raise_for_status()
+    if filters:
+        # The modern page loads filtered ranks in JavaScript. Its embedded
+        # ecrData often remains *unfiltered*, even with a valid filters query.
+        match = _ECR_DATA_RE.search(resp.text)
+        if not match:
+            return []
+        try:
+            payload = json.loads(match.group(1))
+        except ValueError:
+            return []
+        if not _matches_filters(payload, filters):
+            return []
     return parse_scrape_html(resp.text)
 
 

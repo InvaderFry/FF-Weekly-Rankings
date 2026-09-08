@@ -306,7 +306,7 @@ def _build_waiver_embed(bundle) -> dict:
 
     if bundle.drops:
         embed["fields"].append({
-            "name": "✂️ Safe to cut",
+            "name": "✂️ Conditional drop candidates",
             "value": _clip(", ".join(d.score.player.name for d in bundle.drops),
                            _FIELD_VALUE_MAX),
             "inline": False,

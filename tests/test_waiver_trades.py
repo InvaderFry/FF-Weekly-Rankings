@@ -39,12 +39,16 @@ THEIRS = [_p("t1", "Their Rb1", "RB"), _p("t2", "Their Rb2", "RB"),
           _p("t3", "Their Wr1", "WR"), _p("t4", "Their Wr2", "WR"),
           _p("t5", "Their Wr3", "WR")]
 RANKS = {"m1": 2, "m2": 6, "m3": 9, "m4": 40, "m5": 55,
-         "t1": 30, "t2": 48, "t3": 4, "t4": 7, "t5": 11}
+         "t1": 30, "t2": 48, "t3": 4, "t4": 7, "t5": 11, "m6": 7, "t6": 8}
+MINE.append(_p("m6", "My Flex", "RB"))
+THEIRS.append(_p("t6", "Their Flex", "WR"))
 
 
 def _index(ranks=RANKS, players=None):
     players = players or (MINE + THEIRS)
     _, index = score_positions(Settings(), players, 9, signals=[_FakeECR(ranks)])
+    for score in index.values():
+        score.season_rank = 60  # equal season-long value; weekly fit varies below
     return index
 
 
@@ -60,6 +64,34 @@ def test_complementary_rosters_produce_a_trade():
     assert idea.partner == "Rival FC"
     assert idea.you_send[0].player.position == "RB"
     assert idea.you_get[0].player.position == "WR"
+
+
+def test_similar_weekly_ranks_cannot_hide_lopsided_season_value():
+    index = _index()
+    for p in MINE:
+        index[p.key].season_rank = 20
+    for p in THEIRS:
+        index[p.key].season_rank = 120
+    assert suggest_trades(_teams(), index, RULES) == []
+
+
+def test_trade_offers_protect_both_teams_flex_starters():
+    from ff_startsit.waivers.build import _lineup_keys
+    index = _index()
+    teams = _teams()
+    ideas = suggest_trades(teams, index, RULES)
+    assert ideas
+    mine = _lineup_keys([index[p.key] for p in MINE], RULES)
+    theirs = _lineup_keys([index[p.key] for p in THEIRS], RULES)
+    assert all(i.you_send[0].player.key not in mine for i in ideas)
+    assert all(i.you_get[0].player.key not in theirs for i in ideas)
+
+
+def test_defenses_are_never_trade_targets_for_receivers():
+    from dataclasses import replace
+    theirs = [replace(p, position="DEF") if p.position == "WR" else p for p in THEIRS]
+    index = _index(players=MINE + theirs)
+    assert suggest_trades(_teams(theirs=theirs), index, RULES) == []
 
 
 def test_both_sides_gain_or_it_is_not_proposed():

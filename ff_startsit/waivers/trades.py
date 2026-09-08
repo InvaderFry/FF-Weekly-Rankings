@@ -11,11 +11,10 @@ those numbers.
 What this is honest about
 -------------------------
 
-The scores are **this week's** ensemble reads. There is no rest-of-season
-projection, no strength of schedule, no keeper or dynasty value in this app, and
-a trade is a season-long decision made on those things. So these are framed as
-conversation starters — "these two rosters fit" — not as valuations. The
-renderers say so, and ``rationale`` says why each pairing was surfaced.
+The gains are this week's ensemble reads. Offers also require similar overall
+rest-of-season ranks, which are ordinal guards rather than prices. Keeper and
+dynasty value are not modeled. Both teams' full starting lineups, including
+FLEX, are protected, and kickers/defenses are never trade assets.
 
 The surplus model
 -----------------
@@ -36,6 +35,7 @@ from typing import Optional, Sequence
 from ..models import PlayerScore
 from .models import FantasyTeam, LeagueRules, TradeIdea
 from .score import depth_ratio, starting_slots
+from .season_values import comparable_trade
 
 #: Two sides' totals must land within this many 0-100 points for the offer to
 #: read as fair rather than as a lowball nobody answers.
@@ -123,15 +123,22 @@ def suggest_trades(teams: Sequence[FantasyTeam], index: dict[str, PlayerScore],
     Only 1-for-1s: a 2-for-1 needs a roster-size model to know the other side can
     absorb the extra body, and proposing one they cannot accept wastes the pitch.
 
-    ``protected`` exists for callers who want to pin specific players, but it is
-    normally left empty: offers are drawn from *surplus* only, so by construction
-    no starting slot is ever traded away. Passing a lineup's worth of protected
-    keys blocks everything, because surplus depth is what the FLEX is made of.
+    ``protected`` lets callers pin extra players beyond the full starting
+    lineups protected here. Positional surplus alone does not protect FLEX.
     """
     protected = protected or set()
     mine_team = next((t for t in teams if t.is_mine), None)
     if mine_team is None:
         return []
+    # This feed is for ordinary redraft leagues, not superflex or two-QB values.
+    if rules.flex_slots.get("SUPER_FLEX") or rules.roster_slots.get("QB", 1) > 1:
+        return []
+    # Resolve at call time to reuse the same full-lineup protection as waivers.
+    from .build import _lineup_keys
+    starting = {team.team_id: _lineup_keys(
+        [index[p.key] for p in team.players if p.key in index], rules)
+        for team in teams}
+    protected = protected | starting.get(mine_team.team_id, set())
 
     mine = team_shape(mine_team, index, rules)
     ideas: list[TradeIdea] = []
@@ -142,14 +149,18 @@ def suggest_trades(teams: Sequence[FantasyTeam], index: dict[str, PlayerScore],
         theirs = team_shape(other, index, rules)
 
         for my_pos, my_shape in mine.items():
+            if my_pos in {"K", "DEF"}:
+                continue
             for send in my_shape.surplus:
                 if send.player.key in protected or send.final is None:
                     continue
                 for their_pos, their_shape in theirs.items():
-                    if their_pos == my_pos:
+                    if their_pos == my_pos or their_pos in {"K", "DEF"}:
                         continue  # swapping RB for RB rarely fixes either roster
                     for get in their_shape.surplus:
-                        if get.final is None:
+                        if get.final is None or get.player.key in starting.get(other.team_id, set()):
+                            continue
+                        if not comparable_trade(send.season_rank, get.season_rank):
                             continue
                         # Fairness on depth ratio, never on ``final``. The loop
                         # above skips same-position pairs outright, so *every*
@@ -177,6 +188,8 @@ def suggest_trades(teams: Sequence[FantasyTeam], index: dict[str, PlayerScore],
                                 f"You start {their_pos} thinner than {my_pos}; "
                                 f"they start {my_pos} thinner than {their_pos}. "
                                 f"Both lineups get better this week."
+                                f" Overall ROS ranks: {send.season_rank:g} and "
+                                f"{get.season_rank:g}; similar ranks are not trade prices."
                             ),
                         ))
 
