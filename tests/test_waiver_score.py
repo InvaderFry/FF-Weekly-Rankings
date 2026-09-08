@@ -482,3 +482,48 @@ def test_roster_filler_is_not_offered_however_good_his_pool_looks():
     _, index = _score(roster + [pool[0].player], ranks)
     drops = droppable([index[p.key] for p in roster], _LEAGUE)
     assert pick_adds(index, pool, drops, _LEAGUE) == []
+
+
+def test_streamers_are_listed_after_skill_players():
+    """The failure this fixes, in the shape it actually appeared.
+
+    A league starts one defense and one kicker, so ``depth_ratio`` reads DEF2 as
+    2/8 = 0.25 while a genuinely useful TE17 reads 17/12 = 1.42. Scarcity is the
+    right axis inside a position and the wrong one across this boundary, and
+    every league's waiver table opened with a defense and a kicker above the
+    skill players who decide a week.
+    """
+    roster = [_p("r1", "TE Starter", "TE"), _p("r2", "TE Bench", "TE"),
+              _p("r3", "My DEF", "DEF"), _p("r4", "Spare DEF", "DEF"),
+              _p("r5", "My K", "K"), _p("r6", "Spare K", "K")]
+    pool = [PoolPlayer(_p("f1", "Free DEF", "DEF")),
+            PoolPlayer(_p("f2", "Free K", "K")),
+            PoolPlayer(_p("f3", "Free TE", "TE"))]
+    # The defense and kicker rank far shallower against their one-slot demand
+    # than the tight end does against his.
+    ranks = {"r1": 4, "r2": 80, "r3": 40, "r4": 90, "r5": 40, "r6": 90,
+             "f1": 2, "f2": 2, "f3": 17}
+    _, index = _score(roster + [pp.player for pp in pool], ranks)
+    rules = LeagueRules(roster_slots={"TE": 1, "DEF": 1, "K": 1}, team_count=12)
+    drops = droppable([index[p.key] for p in roster], rules)
+    adds = pick_adds(index, pool, drops, rules)
+
+    ordered = [a.score.player.key for a in adds]
+    assert ordered[0] == "f3", f"skill player must lead, got {ordered}"
+    assert set(ordered[1:]) <= {"f1", "f2"}
+    # Ordering only — the streamers are still offered, not filtered out.
+    assert {"f1", "f2"} <= set(ordered)
+
+
+def test_streamer_ordering_does_not_reorder_skill_players_among_themselves():
+    """Depth ratio still decides the part of the list it is right about."""
+    roster = [_p("r1", "RB1", "RB"), _p("r2", "RB Bench", "RB"),
+              _p("r3", "WR1", "WR"), _p("r4", "WR Bench", "WR")]
+    pool = [PoolPlayer(_p("f1", "Deep WR", "WR")),
+            PoolPlayer(_p("f2", "Shallow RB", "RB"))]
+    ranks = {"r1": 5, "r2": 95, "r3": 5, "r4": 95, "f1": 20, "f2": 8}
+    _, index = _score(roster + [pp.player for pp in pool], ranks)
+    rules = LeagueRules(roster_slots={"RB": 1, "WR": 1}, team_count=12)
+    drops = droppable([index[p.key] for p in roster], rules)
+    adds = pick_adds(index, pool, drops, rules)
+    assert [a.score.player.key for a in adds] == ["f2", "f1"]

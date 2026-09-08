@@ -165,7 +165,25 @@ per player, plus their average) *and* the Tuesday waiver report, where those
 ranks annotate every suggested add. It's display-only — it never changes the
 blended score.
 
-You need each analyst's FantasyPros **expert id**.
+You need each analyst's FantasyPros **expert id**, and two things have to be
+true for the section to appear at all:
+
+- **The analyst must be one FantasyPros publishes weekly NFL ranks for.** Not
+  every writer is. `ffstartsit experts --list` prints the current directory
+  (~80 experts in the 2026 season); anyone absent from it has no usable id, and
+  no amount of re-deriving will produce one. Notably **CBS analysts — including
+  Jamey Eisenberg and Dave Richard — are not in it**, so they cannot feed this
+  section. Their Tuesday *waiver columns* are scraped separately
+  ([section 6](#6-waiver-columns)) and are unaffected.
+- **`FANTASYPROS_API_KEY` must be set.** Single-expert ranks only come back from
+  the API. The public rankings page applies its expert filter in the browser and
+  serves the same consensus to every request, so the scrape fallback that backs
+  ordinary ECR cannot narrow to one analyst. Rather than publish consensus under
+  a journalist's byline, the app returns nothing and omits the section.
+
+Run `ffstartsit experts --verify` at any time; it tells these two cases apart
+(and a third: an id that belongs to a different analyst than the name you filed
+it under).
 
 ### The quick way
 
@@ -173,31 +191,35 @@ You need each analyst's FantasyPros **expert id**.
 ffstartsit experts "Justin Boone" "Jamey Eisenberg" "Dave Richard"
 ```
 
-It looks each analyst up and prints a paste-ready line:
+It reads the rankings page's own expert directory and prints a paste-ready line
+containing the names it could resolve:
 
 ```
-FF_PREFERRED_EXPERTS=1234:Justin Boone,120:Jamey Eisenberg,125:Dave Richard
+FF_PREFERRED_EXPERTS=317:Justin Boone
 ```
 
-Put that in `.env`. `ffstartsit experts --list` dumps every expert it can find,
-if you want somebody not named above.
+Names it could not resolve are reported with the reason. "Not one of the N
+experts FantasyPros currently publishes weekly NFL ranks for" is a settled
+answer — drop that analyst rather than hunting for an id. Put the line in `.env`.
+`ffstartsit experts --list` dumps the whole directory if you want somebody else.
 
 ### The manual way (always works)
 
-Do this if the lookup can't resolve a name — FantasyPros changes its markup from
-time to time, and the browser never lies. **One analyst at a time**, which is
-what makes the id unambiguous:
+Do this if the lookup says it *couldn't look* — FantasyPros changes its markup
+from time to time, and the browser never lies. (If it says the analyst isn't in
+the directory, skip this: there is no id to find.) **One analyst at a time**,
+which is what makes the id unambiguous:
 
 1. Open <https://www.fantasypros.com/nfl/rankings/ppr-rb.php>.
    *(Weekly pages only exist once the season is near — before that, come back
    later; the app just omits the section until then.)*
 2. Click **Pick Experts**, **deselect everyone**, then select **only** Justin
    Boone. Apply.
-3. The URL now ends with `&filters=`**`1234`** — that number is his id.
-4. Repeat for Jamey Eisenberg and Dave Richard, then write the pairs out:
+3. The URL now ends with `&filters=`**`317`** — that number is his id.
+4. Repeat for anyone else you want, then write the pairs out:
 
    ```bash
-   FF_PREFERRED_EXPERTS=1234:Justin Boone,120:Jamey Eisenberg,125:Dave Richard
+   FF_PREFERRED_EXPERTS=317:Justin Boone,120:Another Analyst
    ```
 
 Selecting all three at once gives `filters=A:B:C`, which is faster but doesn't

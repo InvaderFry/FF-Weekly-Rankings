@@ -22,14 +22,42 @@ def test_scoring_override_preserves_secret_identifiers(tmp_path, monkeypatch):
         ("workTG", "111", "3", "half"), ("AaronRun", "222", "7", "ppr")]
 
 
-def test_bad_scoring_override_cannot_silently_publish_wrong_scoring(monkeypatch):
-    import pytest
+def test_bad_scoring_override_cannot_silently_publish_wrong_scoring(monkeypatch, capsys):
+    """A bad override is ignored — never applied, and never fatal.
+
+    The scoring a league already declared stands, so nothing is published under
+    a format nobody chose. What must *not* happen is a raise: this variable is
+    edited apart from the secret carrying the league ids, so a rename or a typo
+    on one side is ordinary drift, and it used to take every command in every
+    workflow down on a traceback before a single ranking was read.
+    """
     _clear(monkeypatch)
     monkeypatch.setenv("FF_LEAGUES", "AaronRun=espn:222:7:half")
-    for value in ("AaronRun=full", "typo=ppr", "AaronRun"):
+    for value in ("AaronRun=full", "typo=ppr", "AaronRun", "AaronRun="):
         monkeypatch.setenv("FF_LEAGUE_SCORING", value)
-        with pytest.raises(ValueError, match="FF_LEAGUE_SCORING"):
-            load_settings()
+        profiles = load_settings().leagues
+        assert [(p.name, p.scoring) for p in profiles] == [("AaronRun", "half")]
+        assert "FF_LEAGUE_SCORING" in capsys.readouterr().out
+
+
+def test_scoring_override_warning_names_the_configured_leagues(monkeypatch, capsys):
+    """"Not configured" is only actionable if it says what *is* configured."""
+    _clear(monkeypatch)
+    monkeypatch.setenv("FF_LEAGUES", "workTG=espn:111:3:half,AaronRun=espn:222:7:ppr")
+    monkeypatch.setenv("FF_LEAGUE_SCORING", "Renamed=ppr")
+    load_settings()
+    out = capsys.readouterr().out
+    assert "Renamed" in out and "workTG" in out and "AaronRun" in out
+
+
+def test_one_bad_scoring_override_does_not_discard_the_good_ones(monkeypatch):
+    """Entries are independent: a typo costs its own league, not the others."""
+    _clear(monkeypatch)
+    monkeypatch.setenv("FF_LEAGUES", "workTG=espn:111:3,AaronRun=espn:222:7,AndyLOT=espn:333:5")
+    monkeypatch.setenv("FF_LEAGUE_SCORING", "workTG=half,Renamed=ppr,AndyLOT=std")
+    profiles = load_settings().leagues
+    assert [(p.name, p.scoring) for p in profiles] == [
+        ("workTG", "half"), ("AaronRun", None), ("AndyLOT", "std")]
 
 
 def test_parse_leagues_basic_and_scoring():

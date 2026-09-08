@@ -392,6 +392,45 @@ def _warn(message: str) -> None:
         print(f"warning: {message}")
 
 
+def _apply_scoring_overrides(leagues: list[LeagueProfile], spec: str) -> None:
+    """Apply ``FF_LEAGUE_SCORING`` (``"name=half,other=ppr"``) onto the profiles.
+
+    Warn-and-degrade, never raise. This override exists precisely so the
+    non-sensitive half of a league's config can be edited without touching the
+    secret that carries its ids — in the scheduled workflows one is a repository
+    *variable* and the other a *secret*, edited on different screens. Drift
+    between them is therefore the expected state, not the exception, and a
+    rename or a typo on the variable side used to raise straight out of
+    ``load_settings``: every command in every workflow died on a traceback
+    before it read a single ranking. A league whose override cannot be applied
+    keeps the scoring it already had, which is the same trade
+    ``_validate_weights`` and ``parse_leagues`` make for bad input.
+    """
+    profiles = {league.name.lower(): league for league in leagues}
+    for entry in spec.split(","):
+        if not entry.strip():
+            continue
+        name, sep, value = entry.partition("=")
+        name, value = name.strip(), value.strip().lower()
+        if not sep or not value:
+            _warn(f"FF_LEAGUE_SCORING entry {entry.strip()!r} is not name=scoring; "
+                  "ignoring it.")
+            continue
+        if value not in SCORING_CODES:
+            _warn(f"FF_LEAGUE_SCORING: unknown scoring {value!r} for league "
+                  f"{name!r}; expected one of {', '.join(sorted(SCORING_CODES))}. "
+                  "Leaving that league's scoring unchanged.")
+            continue
+        profile = profiles.get(name.lower())
+        if profile is None:
+            known = ", ".join(sorted(p.name for p in leagues)) or "none"
+            _warn(f"FF_LEAGUE_SCORING names league {name!r}, which is not "
+                  f"configured (known leagues: {known}). Ignoring that entry — "
+                  "check it against FF_LEAGUES.")
+            continue
+        profile.scoring = value
+
+
 def load_settings(env_file: str | os.PathLike | None = None) -> Settings:
     """Load settings from .env (if present) and the process environment."""
     load_dotenv(dotenv_path=env_file, override=False)
@@ -454,19 +493,7 @@ def load_settings(env_file: str | os.PathLike | None = None) -> Settings:
     if not leagues:
         leagues = [_synthesized_default(roster_source, espn_league_id, espn_team_id,
                                         sleeper_league_id)]
-    # Non-sensitive overrides can be maintained without retrieving/replacing the
-    # secret that contains league IDs. Match names case-insensitively as elsewhere.
-    profiles = {league.name.lower(): league for league in leagues}
-    for entry in os.getenv("FF_LEAGUE_SCORING", "").split(","):
-        if not entry.strip():
-            continue
-        name, sep, value = entry.partition("=")
-        profile = profiles.get(name.strip().lower())
-        value = value.strip().lower()
-        if not sep or profile is None or value not in SCORING_CODES:
-            raise ValueError("Invalid FF_LEAGUE_SCORING override; use a configured "
-                             "league name and ppr, half, or std.")
-        profile.scoring = value
+    _apply_scoring_overrides(leagues, os.getenv("FF_LEAGUE_SCORING", ""))
     default_league = os.getenv("FF_DEFAULT_LEAGUE", "").strip() or leagues[0].name
 
     return Settings(

@@ -20,7 +20,8 @@ import requests
 from ff_startsit import cli
 from ff_startsit.config import Settings
 from ff_startsit.data.matching import ExternalRow
-from ff_startsit.sources.experts import (EXPERT_PAGE_URL, ExpertFinder,
+from ff_startsit.sources.experts import (EXPERT_PAGE_URL, RANKINGS_PAGE_URL,
+                                         ExpertFinder,
                                          expert_slug, format_env_line,
                                          parse_expert_directory,
                                          parse_expert_id, verify_experts)
@@ -58,6 +59,13 @@ class _FakeSession:
 
 def _page(name: str) -> str:
     return EXPERT_PAGE_URL.format(slug=expert_slug(name))
+
+
+def _directory_session(extra: dict = None) -> _FakeSession:
+    """A session serving the rankings page that carries the expert directory."""
+    pages = {RANKINGS_PAGE_URL: _fx("fantasypros_rankings_directory.html")}
+    pages.update(extra or {})
+    return _FakeSession(pages)
 
 
 # --- slugs ----------------------------------------------------------------
@@ -111,10 +119,67 @@ def test_directory_on_an_unrecognized_page_is_empty():
 
 # --- the finder -----------------------------------------------------------
 def test_find_resolves_a_name_to_an_id():
+    """One request to the rankings page answers the whole question."""
+    session = _directory_session()
+    found = ExpertFinder(session=session).find("Justin Boone")
+    assert found == Expert(id="317", name="Justin Boone")
+    assert session.calls == [RANKINGS_PAGE_URL]
+
+
+def test_find_falls_back_to_the_per_expert_page_without_a_directory():
+    """A directory we cannot read must not become a directory saying "no"."""
     session = _FakeSession({_page("Justin Boone"): _fx("fantasypros_expert_page.html")})
     found = ExpertFinder(session=session).find("Justin Boone")
     assert found == Expert(id="1234", name="Justin Boone")
-    assert session.calls == [_page("Justin Boone")]
+    assert session.calls == [RANKINGS_PAGE_URL, _page("Justin Boone")]
+
+
+def test_a_name_absent_from_a_readable_directory_is_not_retried_elsewhere():
+    """Settled, not merely unresolved.
+
+    If the rankings page lists every expert it can serve and this analyst is not
+    among them, no id exists that would work — so we say which question was
+    actually answered, and we don't spend a request on their profile page.
+    """
+    session = _directory_session()
+    finder = ExpertFinder(session=session)
+    assert finder.find("Jamey Eisenberg") is None
+    assert session.calls == [RANKINGS_PAGE_URL]
+    assert "3 experts" in finder.notes["Jamey Eisenberg"]
+
+
+def test_one_directory_fetch_serves_every_name():
+    session = _directory_session()
+    finder = ExpertFinder(session=session)
+    found, missing = finder.find_all(["Justin Boone", "Andy Behrens", "Nobody Here"])
+    assert [(e.id, e.name) for e in found] == [("317", "Justin Boone"),
+                                               ("9", "Andy Behrens")]
+    assert missing == ["Nobody Here"]
+    assert session.calls == [RANKINGS_PAGE_URL]
+
+
+def test_the_directorys_spelling_of_a_name_wins():
+    """The report's byline and FantasyPros' byline stay the same string."""
+    found = ExpertFinder(session=_directory_session()).find("justin  boone")
+    assert found == Expert(id="317", name="Justin Boone")
+
+
+def test_lookup_id_names_whose_id_it_is():
+    """The only check that can catch a mislabel — see verify_experts."""
+    finder = ExpertFinder(session=_directory_session())
+    assert finder.lookup_id("317") == Expert(id="317", name="Justin Boone")
+    assert finder.lookup_id("44") is None
+
+
+def test_directory_distinguishes_unreadable_from_empty():
+    """``None`` means "we could not look", never "nobody is listed"."""
+    assert ExpertFinder(session=_FakeSession({})).directory() is None
+
+
+def test_directory_survives_brackets_inside_the_json():
+    """A regex would stop at the first ``]`` inside an image URL; this doesn't."""
+    experts = parse_expert_directory(_fx("fantasypros_rankings_directory.html"))
+    assert [e.id for e in experts] == ["317", "9", "4317"]
 
 
 def test_find_all_reports_what_it_could_not_resolve():
@@ -150,7 +215,9 @@ def test_lookups_are_memoized_including_failures():
     finder = ExpertFinder(session=session)
     for _ in range(3):
         finder.find("Justin Boone")
-    assert len(session.calls) == 1
+    # One directory attempt plus one per-expert-page fallback, then nothing:
+    # both the directory read and the failed lookup are cached.
+    assert session.calls == [RANKINGS_PAGE_URL, _page("Justin Boone")]
 
 
 def test_env_line_is_paste_ready():
@@ -229,6 +296,66 @@ def test_a_failed_consensus_fetch_does_not_invent_a_problem(capsys):
             raise requests.RequestException("offline")
         return _rows(["Alpha Back"])
     checks = verify_experts([Expert("1", "Boone")], fetch=fetch)
+    assert checks[0].ok
+
+
+DIRECTORY = [Expert("1", "Boone"), Expert("2", "Eisenberg"), Expert("3", "Richard")]
+
+
+def test_an_id_absent_from_the_directory_is_called_dead_not_misread():
+    """The fix that matters most: "wrong id" and "dead id" need different actions."""
+    checks = verify_experts([Expert("44", "Dave Richard")],
+                            fetch=_fetcher({None: CONSENSUS, "44": []}),
+                            directory=DIRECTORY)
+    assert not checks[0].ok
+    assert "dead" in checks[0].problem and "3 weekly rankers" in checks[0].problem
+
+
+def test_an_id_belonging_to_another_analyst_is_flagged_before_any_fetch():
+    """A mislabel returns real numbers, so no ranking comparison can reveal it.
+
+    Only the directory can, and it does so without spending a request — the
+    ranks would be perfectly valid, just filed under the wrong person.
+    """
+    def _explode(*a, **k):
+        raise AssertionError("a mislabel is settled without fetching ranks")
+
+    checks = verify_experts([Expert("1", "Dave Richard")],
+                            fetch=lambda s, sc, pos, timeout=20, filters=None:
+                                _rows(CONSENSUS) if filters is None else _explode(),
+                            directory=DIRECTORY)
+    assert not checks[0].ok
+    assert "is Boone, not Dave Richard" in checks[0].problem
+    assert checks[0].actual_name == "Boone"
+
+
+def test_a_vouched_id_returning_nothing_blames_the_transport_not_the_id():
+    """The misdiagnosis this replaces.
+
+    The public page filters in the browser, so a perfectly good id returns
+    nothing through the scrape. Reporting "the id is wrong" sent the user off to
+    re-derive an id that was already correct.
+    """
+    checks = verify_experts([Expert("1", "Boone")],
+                            fetch=_fetcher({None: CONSENSUS, "1": []}),
+                            directory=DIRECTORY)
+    assert not checks[0].ok
+    assert "the id is valid" in checks[0].problem
+    assert "FANTASYPROS_API_KEY" in checks[0].problem
+
+
+def test_without_a_directory_the_old_diagnosis_still_stands():
+    """No directory downgrades the verdict; it never invents a stronger one."""
+    checks = verify_experts([Expert("9", "Ghost")],
+                            fetch=_fetcher({None: CONSENSUS, "9": []}))
+    assert "the id is wrong or has no weekly data yet" in checks[0].problem
+
+
+def test_a_directory_name_spelled_differently_is_not_a_mislabel():
+    """"J.J. Zachariason" vs "JJ Zachariason" is the same person."""
+    checks = verify_experts([Expert("1", "boone")],
+                            fetch=_fetcher({None: CONSENSUS, "1": ["Alpha Back"]}),
+                            directory=DIRECTORY)
     assert checks[0].ok
 
 
@@ -313,3 +440,84 @@ def test_the_command_reads_no_roster_and_writes_no_results_log(tmp_path, monkeyp
     cli.cmd_experts(_Args(["Justin Boone"]), settings,
                     finder=ExpertFinder(session=session))
     assert not settings.results_log_path.exists()
+
+
+def test_verify_hands_the_directory_to_the_verifier():
+    """cmd_experts owns the lookup; verification stays offline-injectable."""
+    seen = {}
+
+    def _verifier(experts, **kw):
+        seen.update(kw)
+        return []
+
+    cli.cmd_experts(_Args(verify=True), Settings(preferred_experts="317:Justin Boone"),
+                    finder=ExpertFinder(session=_directory_session()),
+                    verifier=_verifier)
+    assert [(e.id, e.name) for e in seen["directory"]] == [
+        ("317", "Justin Boone"), ("9", "Andy Behrens"), ("4317", "Pat Fitzmaurice")]
+
+
+def test_an_unlisted_analyst_is_not_sent_to_the_manual_lookup(capsys):
+    """The manual steps find an id. There is no id to find, so don't offer them."""
+    rc = cli.cmd_experts(_Args(["Jamey Eisenberg"]), Settings(),
+                         finder=ExpertFinder(session=_directory_session()))
+    err = capsys.readouterr().err
+    assert rc == 1
+    assert "Pick Experts" not in err
+    assert "doesn't publish weekly NFL ranks" in err
+    assert "columns are scraped separately" in err  # and still work
+
+
+def test_a_mix_of_unlisted_and_unreachable_still_offers_the_manual_steps(capsys):
+    """One name we genuinely couldn't look up is enough to keep the fallback.
+
+    Driven through a stub finder rather than a session: with a readable
+    directory every miss is settled, so the mixed state this guard exists for
+    can't be produced by a real lookup — which is exactly why the guard is a
+    check on ``unlisted`` and not on "did anything fail".
+    """
+    class _StubFinder:
+        pages: dict = {}
+        notes = {"Jamey Eisenberg": "not one of the 3 experts",
+                 "Someone Else": "their FantasyPros page could not be fetched"}
+        unlisted = {"Jamey Eisenberg"}
+
+        def find_all(self, names):
+            return [], list(names)
+
+    cli.cmd_experts(_Args(["Jamey Eisenberg", "Someone Else"]), Settings(),
+                    finder=_StubFinder())
+    err = capsys.readouterr().err
+    assert "Pick Experts" in err          # still reachable for the unknown one
+    assert "Jamey Eisenberg: not one of the 3 experts" in err
+
+
+def test_a_valid_id_that_returns_nothing_is_not_sent_to_the_manual_lookup(capsys):
+    """The remedy has to match the diagnosis.
+
+    Re-deriving an id the directory just vouched for returns the same number.
+    What the user actually needs is the API key.
+    """
+    from ff_startsit.sources.experts import ExpertCheck
+
+    rc = cli.cmd_experts(
+        _Args(verify=True), Settings(preferred_experts="317:Justin Boone"),
+        finder=ExpertFinder(session=_directory_session()),
+        verifier=lambda experts, **kw: [
+            ExpertCheck(experts[0], 0, "no ranks came back, but the id is valid",
+                        id_ok=True)])
+    err = capsys.readouterr().err
+    assert rc == 1
+    assert "Pick Experts" not in err
+    assert "FANTASYPROS_API_KEY" in err
+
+
+def test_a_dead_id_still_gets_the_manual_lookup(capsys):
+    from ff_startsit.sources.experts import ExpertCheck
+
+    cli.cmd_experts(
+        _Args(verify=True), Settings(preferred_experts="44:Dave Richard"),
+        finder=ExpertFinder(session=_directory_session()),
+        verifier=lambda experts, **kw: [
+            ExpertCheck(experts[0], 0, "this id is dead", id_ok=False)])
+    assert "Pick Experts" in capsys.readouterr().err

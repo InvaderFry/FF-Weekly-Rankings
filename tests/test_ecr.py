@@ -283,6 +283,8 @@ def test_wrong_week_warns_once_per_week_but_stays_flagged(monkeypatch, capsys):
 
     assert sig.served_wrong_week is True
     assert capsys.readouterr().err.count("not week-5 rankings") == 1
+
+
 def test_scrape_does_not_attribute_unfiltered_consensus_to_one_expert():
     from ff_startsit.sources.ecr import fetch_scrape_rows
 
@@ -298,3 +300,56 @@ def test_scrape_does_not_attribute_unfiltered_consensus_to_one_expert():
 
     assert fetch_scrape_rows(Session(), "half", "RB", filters="101") == []
     assert len(fetch_scrape_rows(Session(), "half", "RB")) == 1
+
+
+def _api_session(payload):
+    class Response:
+        def raise_for_status(self):
+            pass
+
+        def json(self):
+            return payload
+
+    class Session:
+        def get(self, url, **kwargs):
+            return Response()
+
+    return Session()
+
+
+_ONE_PLAYER = [{"player_name": "Test Back", "player_position_id": "RB", "rank_ecr": 1}]
+
+
+def test_api_does_not_attribute_unfiltered_consensus_to_one_expert():
+    """The API path fails closed on a filter it can see was not honored."""
+    from ff_startsit.sources.ecr import fetch_api_rows
+
+    served_everyone = {"filters": "101,102", "players": _ONE_PLAYER}
+    session = _api_session(served_everyone)
+    assert fetch_api_rows(session, "k", 2026, "half", "RB", 1, filters="101") == []
+    # Without a filter the same response is plain consensus, which is fine.
+    assert len(fetch_api_rows(session, "k", 2026, "half", "RB", 1)) == 1
+
+
+def test_api_filter_unconfirmed_by_the_response_is_not_an_expert_ranking():
+    """A response that names no experts is not proof it honored one.
+
+    This is the fail-open case: the guard used to be skipped entirely when the
+    payload carried no ``filters`` key, so plain consensus came back and was
+    rendered under the journalist's name. ``JournalistFetcher``'s duplicate
+    check needs two experts to compare and so cannot catch it for a
+    single-journalist config.
+    """
+    from ff_startsit.sources.ecr import fetch_api_rows
+
+    session = _api_session({"players": _ONE_PLAYER})  # no "filters" key at all
+    assert fetch_api_rows(session, "k", 2026, "half", "RB", 1, filters="317") == []
+
+
+def test_api_honored_filter_is_accepted():
+    """The guard must not reject a filter the response confirms it applied."""
+    from ff_startsit.sources.ecr import fetch_api_rows
+
+    session = _api_session({"filters": "317", "players": _ONE_PLAYER})
+    rows = fetch_api_rows(session, "k", 2026, "half", "RB", 1, filters="317")
+    assert [r.name for r in rows] == ["Test Back"]

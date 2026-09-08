@@ -28,6 +28,11 @@ def _payload(name):
 
 
 class _FakeResp:
+    #: The scrape fallback reads ``.text``. Empty is the faithful answer: the
+    #: public rankings page filters in the browser, so it can never serve one
+    #: expert's ranks either — when the API declines a filter, nothing is left.
+    text = ""
+
     def __init__(self, payload):
         self._payload = payload
 
@@ -118,11 +123,33 @@ def test_no_experts_configured_returns_none():
 
 
 def test_identical_ranks_warns_filter_may_be_ignored(capsys):
-    payload = _payload("ecr_api_rb_expert1.json")
-    session = _FakeSession({"101": payload, "102": payload})
+    """The backstop for a response that *claims* the filter and ignores it.
+
+    Each payload echoes the id it was asked for, so the transport-level check in
+    ``fetch_api_rows`` is satisfied and cannot be what catches this. Only the
+    ranks themselves give it away: two analysts do not agree exactly.
+    """
+    ranks = _payload("ecr_api_rb_expert1.json")["players"]
+    session = _FakeSession({"101": {"filters": "101", "players": ranks},
+                            "102": {"filters": "102", "players": ranks}})
     view = _fetcher(session).build_view(PLAYERS, week=3)
     assert view is None  # never publish consensus under individual names
     assert "filter may be ignored" in capsys.readouterr().err
+
+
+def test_a_response_that_serves_another_experts_filter_is_refused(capsys):
+    """Caught at the transport, before the ranks are ever compared.
+
+    Asking for 102 and being handed the response for 101 is not this analyst's
+    ranking, however plausible the numbers look.
+    """
+    payload = _payload("ecr_api_rb_expert1.json")   # echoes filters "101"
+    session = _FakeSession({"101": payload, "102": payload})
+    view = _fetcher(session).build_view(PLAYERS, week=3)
+    # Boone still stands; only the expert whose response was somebody else's is
+    # dropped — one bad id costs its own column, not the section.
+    assert [e.name for e in view.experts] == ["Justin Boone"]
+    assert "no rankings from preferred journalist Jamey Eisenberg" in capsys.readouterr().err
 
 
 def test_fetch_is_memoized_per_expert_and_position():

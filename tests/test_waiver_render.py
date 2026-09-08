@@ -349,3 +349,38 @@ def test_a_standing_banner_still_suppresses_the_line_everywhere():
         assert "beats anyone you could drop" not in out
         assert "data outage" not in out
         assert "PRESEASON" in out
+
+
+def test_the_drop_table_shows_the_key_it_is_sorted_by():
+    """A table ordered by an invisible column reads as unsorted.
+
+    Drops are ranked worst-rest-of-season first, which is also the criterion
+    each row was selected on. The weekly blend score used to sit here instead,
+    and a list running 61.7, 58.6, 72.0 looks like a bug — worse, those finals
+    came from separate per-position normalizations, so reading down the column
+    compared a quarterback to a running back and got a number for it.
+    """
+    def _drop(key, pos, final, ros, reason):
+        score = PlayerScore(player=Player(key=key, name=f"Guy {key}", team="KC",
+                                          position=pos), final=final)
+        score.season_rank = ros
+        return DropCandidate(score, reason)
+
+    bundle = WaiverBundle(label="L", scoring="half", week=3, drops=[
+        _drop("a", "RB", 61.7, 240, "RB depth"),
+        _drop("b", "QB", 73.8, 180, "QB depth"),
+    ])
+    out = render_waiver_digest(3, [bundle])
+    assert "| ROS rank |" in out
+    assert "| Score |" not in out
+    assert "240" in out and "180" in out
+    assert "61.7" not in out and "73.8" not in out
+
+
+def test_a_drop_without_a_season_rank_renders_an_em_dash():
+    """Renderers must tolerate a missing rank rather than format None."""
+    score = PlayerScore(player=Player(key="a", name="No Rank", team="KC",
+                                      position="RB"), final=50.0)
+    bundle = WaiverBundle(label="L", scoring="half", week=3,
+                          drops=[DropCandidate(score, "RB depth")])
+    assert "—" in render_waiver_digest(3, [bundle])
