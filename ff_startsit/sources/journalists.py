@@ -122,7 +122,8 @@ class JournalistFetcher:
 
         if not ranks_by_expert:
             return None
-        self._warn_if_filter_ignored(ranks_by_expert)
+        if self._warn_if_filter_ignored(ranks_by_expert):
+            return None
 
         by_position: dict[str, list[JournalistRow]] = {}
         for p in players:
@@ -166,7 +167,7 @@ class JournalistFetcher:
         except requests.RequestException:
             return []
 
-    def _warn_if_filter_ignored(self, ranks_by_expert: dict[str, dict[str, float]]) -> None:
+    def _warn_if_filter_ignored(self, ranks_by_expert: dict[str, dict[str, float]]) -> bool:
         """Warn when every expert returned identical ranks for 2+ experts.
 
         That pattern usually means FantasyPros ignored the ``filters=`` ids
@@ -178,3 +179,5 @@ class JournalistFetcher:
             print("warning: all preferred journalists returned identical ranks — "
                   "the expert-id filter may be ignored; verify the ids in "
                   "FF_PREFERRED_EXPERTS.", file=sys.stderr)
+            return True
+        return False

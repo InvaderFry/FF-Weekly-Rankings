@@ -454,6 +454,19 @@ def load_settings(env_file: str | os.PathLike | None = None) -> Settings:
     if not leagues:
         leagues = [_synthesized_default(roster_source, espn_league_id, espn_team_id,
                                         sleeper_league_id)]
+    # Non-sensitive overrides can be maintained without retrieving/replacing the
+    # secret that contains league IDs. Match names case-insensitively as elsewhere.
+    profiles = {league.name.lower(): league for league in leagues}
+    for entry in os.getenv("FF_LEAGUE_SCORING", "").split(","):
+        if not entry.strip():
+            continue
+        name, sep, value = entry.partition("=")
+        profile = profiles.get(name.strip().lower())
+        value = value.strip().lower()
+        if not sep or profile is None or value not in SCORING_CODES:
+            raise ValueError("Invalid FF_LEAGUE_SCORING override; use a configured "
+                             "league name and ppr, half, or std.")
+        profile.scoring = value
     default_league = os.getenv("FF_DEFAULT_LEAGUE", "").strip() or leagues[0].name
 
     return Settings(

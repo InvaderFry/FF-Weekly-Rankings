@@ -308,6 +308,11 @@ def pick_adds(index: dict[str, PlayerScore], pool: Sequence[PoolPlayer],
         score = index.get(key)
         if score is None or score.final is None or not has_ecr(score):
             continue
+        if (pool_by_key[key].injury_status or "").upper() in _STASH_STATUSES:
+            continue
+        injury = score.raw.get("injury")
+        if injury is not None and injury.available and injury.raw == 0:
+            continue
         ratio = depth_ratio(score, rules)
         if ratio is None or ratio > MAX_ADD_DEPTH_RATIO:
             continue  # too deep at his position to be worth a roster spot
@@ -321,10 +326,15 @@ def pick_adds(index: dict[str, PlayerScore], pool: Sequence[PoolPlayer],
     for ratio, score in candidates:
         if len(targets) >= max_adds or not available_drops:
             break
-        drop = available_drops[0]
-        if not _worth_adding(score, drop.score, rules):
+        drop = next((d for d in available_drops
+                     if _worth_adding(score, d.score, rules)), None)
+        if drop is None:
             continue
-        available_drops.pop(0)
+        available_drops.remove(drop)
+        if score.player.position in {"K", "DEF"}:
+            # Alternatives are not instructions to roster several streamers.
+            available_drops = [d for d in available_drops
+                               if d.score.player.position != score.player.position]
         margin = None
         if drop.score.player.position == score.player.position:
             margin = score.final - drop.score.final
@@ -360,6 +370,14 @@ def _worth_adding(add: PlayerScore, drop: PlayerScore, rules: LeagueRules) -> bo
     finals came from separate min-max populations, and the deepest position on the
     roster won by default.
     """
+    if add.player.position in {"K", "DEF"} or drop.player.position in {"K", "DEF"}:
+        if add.player.position != drop.player.position:
+            return False
+    else:
+        # A good matchup cannot justify surrendering better season-long value.
+        if (add.season_rank is None or drop.season_rank is None
+                or add.season_rank >= drop.season_rank):
+            return False
     if add.player.position == drop.player.position:
         if add.final is None or drop.final is None:
             return False
@@ -435,17 +453,22 @@ def suggest_bid(target: WaiverTarget, rules: LeagueRules,
     which position happened to sit at the head of your drop list.
     """
     demand = _demand(target.pool)
+    streamer = target.pool is not None and target.pool.player.position in {"K", "DEF"}
 
     if rules.acquisition_type == ACQ_FAAB:
         if not faab_remaining or faab_remaining <= 0:
             return "no FAAB left"
         share = MIN_BID_SHARE + (MAX_BID_SHARE - MIN_BID_SHARE) * (
             0.75 * conviction + 0.25 * demand)
+        if streamer:
+            share = min(share, 0.02)
         dollars = max(1, round(faab_remaining * share))
         return (f"bid ~${dollars} "
                 f"({dollars / faab_remaining * 100:.0f}% of your ${faab_remaining:,.0f} left)")
 
     if rules.acquisition_type == ACQ_PRIORITY:
+        if streamer:
+            return "only if he clears waivers"
         weighted = 0.75 * conviction + 0.25 * demand
         if weighted >= 0.66:
             return "worth your top waiver claim"

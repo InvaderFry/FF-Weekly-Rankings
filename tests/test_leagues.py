@@ -7,8 +7,29 @@ from ff_startsit.config import load_settings, parse_leagues
 
 def _clear(monkeypatch):
     for name in ("FF_LEAGUES", "FF_LEAGUES_FILE", "FF_DEFAULT_LEAGUE",
+                 "FF_LEAGUE_SCORING",
                  "ESPN_LEAGUE_ID", "ESPN_TEAM_ID", "SLEEPER_LEAGUE_ID"):
         monkeypatch.delenv(name, raising=False)
+
+
+def test_scoring_override_preserves_secret_identifiers(tmp_path, monkeypatch):
+    _clear(monkeypatch)
+    monkeypatch.setenv("FF_DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("FF_LEAGUES", "workTG=espn:111:3:half,AaronRun=espn:222:7:half")
+    monkeypatch.setenv("FF_LEAGUE_SCORING", "aaronrun=ppr")
+    profiles = load_settings().leagues
+    assert [(p.name, p.league_id, p.team_id, p.scoring) for p in profiles] == [
+        ("workTG", "111", "3", "half"), ("AaronRun", "222", "7", "ppr")]
+
+
+def test_bad_scoring_override_cannot_silently_publish_wrong_scoring(monkeypatch):
+    import pytest
+    _clear(monkeypatch)
+    monkeypatch.setenv("FF_LEAGUES", "AaronRun=espn:222:7:half")
+    for value in ("AaronRun=full", "typo=ppr", "AaronRun"):
+        monkeypatch.setenv("FF_LEAGUE_SCORING", value)
+        with pytest.raises(ValueError, match="FF_LEAGUE_SCORING"):
+            load_settings()
 
 
 def test_parse_leagues_basic_and_scoring():

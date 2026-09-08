@@ -108,6 +108,16 @@ def test_build_signals_swaps_in_samples_only_when_preseason_and_enabled(tmp_path
     assert not any(s.is_sample for s in build_signals(settings_off, preseason=True))
 
 
+def test_final_week_before_kickoff_uses_live_signals(monkeypatch, tmp_path):
+    monkeypatch.setattr("ff_startsit.pipeline.is_preseason", lambda: True)
+    monkeypatch.setattr("ff_startsit.pipeline.is_rehearsal_window", lambda: True)
+    signals = build_signals(Settings(data_dir=tmp_path))
+    assert {s.name for s in signals} == {"ecr", "vegas", "injury", "weather"}
+    assert not any(s.is_sample for s in signals)
+    assert season.preseason_banner(Settings(), date(2026, 9, 8)) == season.EARLY_BANNER
+    assert season.preseason_banner(Settings(), date(2026, 8, 1)) == season.SAMPLE_BANNER
+
+
 def test_sample_run_fills_lineup_and_never_logs(tmp_path):
     settings = Settings(data_dir=tmp_path)
     signals = build_signals(settings, preseason=True)

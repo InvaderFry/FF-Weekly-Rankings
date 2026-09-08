@@ -21,9 +21,10 @@ from ..season import (REHEARSAL_BANNER, WAIVER_BANNER, is_preseason,
 from ..sources.schedule import ScheduleProvider
 from .base import LeagueViewProvider, pool_players
 from .columns import ColumnFetcher, index_mentions
-from .models import LeagueRules, PoolPlayer, WaiverBundle
+from .models import DropCandidate, LeagueRules, PoolPlayer, WaiverBundle
+from .season_values import SeasonValueProvider, URLS, protected_rank
 from .score import (BYE_HORIZON, MIN_LEAGUE_TEAMS, bye_gaps, dedupe_players,
-                    droppable, find_stashes, pick_adds, score_positions,
+                    droppable, find_stashes, has_ecr, pick_adds, score_positions,
                     signal_coverage, starting_slots, team_players)
 from .trades import suggest_trades
 
@@ -36,9 +37,9 @@ MARGIN_NOTE = ("Scores are normalized within each position's candidate set, so a
                "margin is shown only when an add and the player he replaces play "
                "the same position. Everything else is ordered by where a player "
                "ranks against what the league starts at his position.")
-TRADE_NOTE = ("Trade ideas are built from this week's ensemble scores only — no "
-              "rest-of-season projections, strength of schedule, or keeper "
-              "value — and they value starting slots, not FLEX depth. The gain "
+TRADE_NOTE = ("Trade ideas require similar overall rest-of-season ranks and "
+              "weekly lineup gains for both teams. Rankings are not trade prices "
+              "and do not cover keeper or dynasty value. The gain "
               "figures are within-position points, so compare them to each other "
               "only inside one idea. Treat them as conversation starters.")
 
@@ -135,6 +136,7 @@ def build_bundle(settings: Settings, label: str, provider: LeagueViewProvider,
                  signals: Optional[Sequence] = None,
                  schedule: Optional[ScheduleProvider] = None,
                  column_fetcher: Optional[ColumnFetcher] = None,
+                 season_values: Optional[SeasonValueProvider] = None,
                  limit: int = 150, max_adds: int = 8, max_trades: int = 5,
                  include_trades: bool = True,
                  include_columns: bool = True,
@@ -204,6 +206,22 @@ def build_bundle(settings: Settings, label: str, provider: LeagueViewProvider,
     signals = (list(signals) if signals is not None
                else build_signals(settings, preseason=False))
     _, index = score_positions(settings, candidates, week, signals=signals)
+    try:
+        season_ranks = (season_values or SeasonValueProvider()).fetch(candidates, settings.scoring)
+    except Exception as exc:
+        print(f"warning: rest-of-season rankings unavailable: {exc}", file=sys.stderr)
+        season_ranks = {}
+    for key, score in index.items():
+        score.season_rank = season_ranks.get(key)
+    if season_ranks:
+        bundle.sources.append(("FantasyPros rest-of-season rankings", URLS[settings.scoring]))
+        bundle.notes.append(f"Season-long ranks cover {len(season_ranks)}/{len(candidates)} "
+                            f"players. Top {protected_rank(rules.team_count)} overall players "
+                            "and players without a season rank are protected from drops. "
+                            "Kickers and defenses are same-position streaming swaps only.")
+    else:
+        notice = "Rest-of-season rankings unavailable: skill-player drops and trades withheld; only same-position kicker/defense swaps can be evaluated."
+        bundle.caveat = f"{bundle.caveat} {notice}" if bundle.caveat else notice
 
     # Every run, not just the rehearsal. An empty adds list is otherwise
     # indistinguishable from a broken one, and `has_ecr` gates adds and drops
@@ -218,6 +236,15 @@ def build_bundle(settings: Settings, label: str, provider: LeagueViewProvider,
     my_scores = [index[p.key] for p in my_players if p.key in index]
     protected = _lineup_keys(my_scores, rules)
     drops = droppable(my_scores, rules, protected=protected)
+    drops = [d for d in drops if d.score.player.position not in {"K", "DEF"}
+             and d.score.season_rank is not None
+             and d.score.season_rank > protected_rank(rules.team_count)]
+    drops.sort(key=lambda d: d.score.season_rank, reverse=True)
+    # A one-for-one streamer replacement preserves the starting requirement;
+    # a weekly starter can be replaced at that same position, never for a WR/RB.
+    streamers = [DropCandidate(s, "same-position streaming replacement only")
+                 for s in my_scores if s.player.position in {"K", "DEF"}
+                 and s.final is not None and has_ecr(s)]
 
     ranks = journalist_ranks(settings, dedupe_players(pool_players(pool), my_players), week)
 
@@ -225,12 +252,14 @@ def build_bundle(settings: Settings, label: str, provider: LeagueViewProvider,
     if include_columns:
         fetcher = column_fetcher or ColumnFetcher()
         mentions = index_mentions(fetcher.fetch(week, pool_players(pool)))
-        bundle.sources = list(fetcher.read)
+        bundle.sources.extend(fetcher.read)
+        for author, reason in getattr(fetcher, "unavailable", {}).items():
+            bundle.notes.append(f"{author}: {reason}. Column commentary omitted.")
 
     my_team = next((t for t in teams if t.is_mine), None)
     faab_left = rules.faab_remaining(my_team.faab_spent if my_team else None)
 
-    bundle.adds = pick_adds(index, pool, drops, rules, faab_remaining=faab_left,
+    bundle.adds = pick_adds(index, pool, drops + streamers, rules, faab_remaining=faab_left,
                             journalist_ranks=ranks, mentions=mentions,
                             max_adds=max_adds)
     bundle.drops = drops[:max_adds]
@@ -250,11 +279,7 @@ def build_bundle(settings: Settings, label: str, provider: LeagueViewProvider,
                 "or check your SWID cookie."
             )
         else:
-            # Deliberately *not* passing ``protected``: a trade offer is drawn
-            # only from surplus (players beyond a position's starting slots),
-            # and that surplus is exactly what fills the FLEX. Protecting every
-            # lineup slot left nothing tradeable but your 10th-best player,
-            # which no rival wants — so no idea ever fired.
+            # The trade builder protects the full lineup on both sides.
             bundle.trades = suggest_trades(teams, index, rules,
                                            max_ideas=max_trades)
             if bundle.trades:

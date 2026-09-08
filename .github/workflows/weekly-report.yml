@@ -8,6 +8,7 @@ on:
   schedule:
     - cron: "0 21 * * 4"   # Thursday ~21:00 UTC (≈5pm ET EDT / 4pm EST)
     - cron: "0 13 * * 0"   # Sunday   ~13:00 UTC (≈9am ET EDT / 8am EST)
+    - cron: "0 17 * 9 3"   # September Wednesdays, ahead of early season openers
   workflow_dispatch:
     inputs:
       week:
@@ -48,6 +49,7 @@ jobs:
       # ESPN_LEAGUE_ID/ESPN_TEAM_ID below drive a single "default" league. The
       # ESPN cookies are per-account, so one pair covers all your ESPN leagues.
       FF_LEAGUES: ${{ secrets.FF_LEAGUES }}
+      FF_LEAGUE_SCORING: ${{ vars.FF_LEAGUE_SCORING }}
       ESPN_LEAGUE_ID: ${{ secrets.ESPN_LEAGUE_ID }}
       ESPN_TEAM_ID: ${{ secrets.ESPN_TEAM_ID }}
       ESPN_S2: ${{ secrets.ESPN_S2 }}
@@ -59,7 +61,7 @@ jobs:
       # Repository *variable* (Settings -> Secrets and variables -> Actions ->
       # Variables tab), not a secret: journalist ids aren't sensitive. Unset ->
       # the Preferred journalists section is simply omitted. See docs/SETUP.md.
-      FF_PREFERRED_EXPERTS: ${{ vars.FF_PREFERRED_EXPERTS }}
+      FF_PREFERRED_EXPERTS: ${{ vars.FF_PREFERRED_EXPERTS || secrets.FF_PREFERRED_EXPERTS }}
       DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
       INPUT_WEEK: ${{ github.event.inputs.week }}
       # Where the #7 decision log lives between runs (see "Restore decision log").

@@ -95,6 +95,10 @@ class _Args:
 def _offline(monkeypatch, tmp_path):
     """Pin every network edge: signals, schedule, week, roster and provider."""
     monkeypatch.setattr(cli, "_resolve_week", lambda args, settings: 9)
+    monkeypatch.setattr("ff_startsit.waivers.build.SeasonValueProvider.fetch",
+                        lambda self, players, scoring: {
+                            p.key: {"m10": 240, "f1": 120}.get(p.key, 150)
+                            for p in players})
     monkeypatch.setattr(cli, "_get_roster", lambda args, s, p=None: list(MINE))
     monkeypatch.setattr("ff_startsit.waivers.build.build_signals",
                         lambda settings, **kw: [_FakeECR()])

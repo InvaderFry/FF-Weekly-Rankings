@@ -21,6 +21,9 @@ SAMPLE_BANNER = ("⚠️ PRESEASON — the NFL season hasn't started, so real ra
 NODATA_BANNER = ("⚠️ PRESEASON — the NFL season hasn't started, so real rankings "
                  "aren't available yet and no picks can be made. Real data begins "
                  "with Week 1 in September. (Sample fill disabled: FF_PRESEASON_FILL=0)")
+EARLY_BANNER = ("🏈 EARLY WEEK 1 — live rankings, injury reports, odds and weather "
+                "are being fetched before kickoff. No sample scores are used. "
+                "Check availability again before your players lock.")
 #: Shown on the waiver pass, which refuses outright before Week 1.
 WAIVER_BANNER = ("⚠️ PRESEASON — the NFL season hasn't started, so there are no "
                  "weekly rankings to score a waiver wire against. No adds, drops "
@@ -121,6 +124,8 @@ def preseason_banner(settings, today: Optional[date] = None) -> Optional[str]:
     """
     if not is_preseason(today):
         return None
+    if is_rehearsal_window(today):
+        return EARLY_BANNER
     return SAMPLE_BANNER if getattr(settings, "preseason_fill", True) else NODATA_BANNER
 
 

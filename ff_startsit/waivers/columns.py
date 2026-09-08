@@ -94,9 +94,8 @@ def strip_tags(raw: str) -> str:
 def find_column_url(index_html: str, base_url: str, week: int) -> Optional[str]:
     """Pick this week's waiver column out of an author index page (pure).
 
-    Prefers a link naming the week; falls back to the most recent waiver link,
-    since an author page lists newest first and a column that doesn't put the
-    week in its slug is still almost certainly the current one.
+    Prefer a link naming the week. A link naming a different week is never a
+    fallback; an undated waiver link can still be the current column.
     """
     week_pat = re.compile(rf"week[-_]?0*{int(week)}(?!\d)", re.IGNORECASE)
     fallback: Optional[str] = None
@@ -106,6 +105,8 @@ def find_column_url(index_html: str, base_url: str, week: int) -> Optional[str]:
         url = href if href.startswith("http") else base_url.rstrip("/") + "/" + href.lstrip("/")
         if week_pat.search(href):
             return url
+        if re.search(r"week[-_]?\d+", href, re.IGNORECASE):
+            continue
         if fallback is None:
             fallback = url
     return fallback
@@ -180,6 +181,7 @@ class ColumnFetcher:
         self.timeout = timeout
         #: (author, url) for every column we actually read, for the credits line.
         self.read: list[tuple[str, str]] = []
+        self.unavailable: dict[str, str] = {}
         #: (author, week) -> (url, article text), or None when it couldn't be
         #: read. One fetcher is shared across every league in a run, and the
         #: writers publish one column a week rather than one per league — so the
@@ -193,6 +195,7 @@ class ColumnFetcher:
             try:
                 mentions.extend(self._fetch_one(source, week, players))
             except requests.RequestException as exc:
+                self.unavailable[source.author] = "request failed"
                 print(f"warning: couldn't read {source.author}'s column: {exc}",
                       file=sys.stderr)
         return mentions
@@ -226,14 +229,17 @@ class ColumnFetcher:
 
         index = self._get(source.index_url)
         if index is None:
+            self.unavailable[source.author] = "author index unavailable"
             return None
         url = find_column_url(index, source.base_url, week)
         if not url:
+            self.unavailable[source.author] = f"no current Week {week} waiver column linked"
             print(f"warning: no week-{week} waiver column found for {source.author}.",
                   file=sys.stderr)
             return None
         body = self._get(url)
         if body is None:
+            self.unavailable[source.author] = "article unavailable"
             return None
 
         self._articles[cache_key] = (url, strip_tags(body))

@@ -103,6 +103,9 @@ class PlayerScore:
     normalized: dict[str, float] = field(default_factory=dict)       # signal name -> 0..100
     final: Optional[float] = None
     flags: list[str] = field(default_factory=list)
+    # Overall rest-of-season rank, only populated by the waiver pass. Never
+    # enters the weekly blend or calibration corpus.
+    season_rank: Optional[float] = None
 
 
 @dataclass

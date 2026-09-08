@@ -22,7 +22,7 @@ from ff_startsit.waivers.models import (ACQ_FAAB, FantasyTeam, LeagueRules,
 RANKS = {"m1": 3, "m2": 5, "m3": 8, "m4": 20, "m5": 12, "m6": 30, "m7": 88,
          "m8": 70, "m9": 6, "m10": 4,
          "t1": 60, "t2": 45, "t3": 10, "t4": 8,
-         "f1": 20, "f2": 75}
+         "f1": 20, "f2": 75, "m11": 10, "t5": 9}
 # team_count is what turns a rank into "would he start anywhere in this league",
 # so it has to be a real league size. The two rosters below stand in for a normal
 # twelve — spelling out ten more would exercise nothing the two already do.
@@ -41,9 +41,10 @@ MINE = [_p("m1", "My Qb", "QB"), _p("m2", "My Rb1", "RB"), _p("m3", "My Rb2", "R
         # bye-week check below have something to find.
         _p("m5", "My Wr1", "WR", team="SF"), _p("m6", "My Wr2", "WR", team="SF"),
         _p("m7", "My Wr3", "WR"), _p("m8", "My Te", "TE"), _p("m9", "My K", "K"),
-        _p("m10", "Kansas City", "DEF")]
+        _p("m10", "Kansas City", "DEF"), _p("m11", "My Flex", "RB")]
 THEIRS = [_p("t1", "Their Rb", "RB"), _p("t2", "Their Wr", "WR"),
-          _p("t3", "Their Te1", "TE"), _p("t4", "Their Te2", "TE")]
+          _p("t3", "Their Te1", "TE"), _p("t4", "Their Te2", "TE"),
+          _p("t5", "Their Flex", "TE")]
 POOL = [PoolPlayer(_p("f1", "Free Wr", "WR", team="SF"), percent_owned=35.0),
         PoolPlayer(_p("f2", "Hurt Rb", "RB"), percent_owned=3.0, injury_status="IR")]
 
@@ -103,6 +104,11 @@ class _Schedule(ScheduleProvider):
 def _no_journalists(monkeypatch):
     monkeypatch.setattr("ff_startsit.waivers.build.journalist_ranks",
                         lambda settings, players, week: {})
+    monkeypatch.setattr("ff_startsit.waivers.build.SeasonValueProvider.fetch",
+                        lambda self, players, scoring: {
+                            p.key: {"m4": 65, "t3": 68, "t4": 66,
+                                    "m7": 240, "f1": 120}.get(p.key, 150)
+                            for p in players})
 
 
 def _build(tmp_path, provider=None, schedule=None, **kw):
@@ -123,6 +129,21 @@ def test_a_full_league_produces_adds_drops_and_trades(tmp_path):
     assert b.adds[0].drop.player.key == "m7"     # the worst droppable WR
     assert "$" in b.adds[0].bid                  # FAAB league -> a dollar figure
     assert b.drops and b.trades
+
+
+def test_ros_outage_withholds_skill_moves_and_explains_it(tmp_path, monkeypatch):
+    monkeypatch.setattr("ff_startsit.waivers.build.SeasonValueProvider.fetch",
+                        lambda *a: {})
+    bundle = _build(tmp_path)
+    assert not bundle.adds and not bundle.drops and not bundle.trades
+    assert "rankings unavailable" in bundle.caveat
+
+
+def test_high_value_bench_player_is_protected_even_with_a_poor_week(tmp_path, monkeypatch):
+    monkeypatch.setattr("ff_startsit.waivers.build.SeasonValueProvider.fetch",
+                        lambda self, players, scoring: {p.key: 35 for p in players})
+    bundle = _build(tmp_path)
+    assert not bundle.drops and not bundle.adds
 
 
 def test_the_bid_is_a_share_of_what_is_left_not_the_whole_budget(tmp_path):
@@ -209,7 +230,7 @@ def test_column_mentions_are_attached_to_their_add(tmp_path):
 
     b = _build(tmp_path, include_columns=True, column_fetcher=_Fetcher())
     assert b.adds[0].mentions[0].author == "Dave Richard"
-    assert b.sources == [("Dave Richard", "https://cbs.test/x")]
+    assert ("Dave Richard", "https://cbs.test/x") in b.sources
 
 
 # --- preseason -------------------------------------------------------------

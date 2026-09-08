@@ -59,10 +59,19 @@ def test_the_week_specific_column_wins_over_an_older_one():
     assert url.endswith("fantasy-football-week-9-waiver-wire-adds/")
 
 
-def test_an_unnamed_week_falls_back_to_the_most_recent_waiver_link():
-    """Author pages list newest first, and not every slug carries the week."""
-    url = find_column_url(INDEX, "https://www.cbssports.com", 12)
-    assert "waiver" in url
+def test_a_different_week_is_never_used_as_the_current_column():
+    assert find_column_url(INDEX, "https://www.cbssports.com", 12) is None
+
+
+def test_an_unnamed_week_can_still_supply_the_current_column():
+    html = '<a href="/news/waiver-wire-pickups/">Pickups</a>'
+    assert find_column_url(html, "https://cbs.test", 1) == "https://cbs.test/news/waiver-wire-pickups/"
+
+
+def test_missing_columns_have_reportable_status():
+    fetcher = ColumnFetcher([SOURCE], session=_FakeSession({SOURCE.index_url: "<html></html>"}))
+    assert fetcher.fetch(1, POOL) == []
+    assert "no current Week 1" in fetcher.unavailable["Dave Richard"]
 
 
 def test_a_page_with_no_waiver_link_returns_none():

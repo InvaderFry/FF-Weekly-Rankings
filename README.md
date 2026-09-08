@@ -97,6 +97,18 @@ local use? Copy `leagues.example.json` to `leagues.json` (gitignored);
 
 ## Use
 
+Scoring can also be overridden without replacing your league-ID secret:
+set the `FF_LEAGUE_SCORING` repository variable (or environment variable) to
+`work=half,dynasty=ppr`. League names must already exist; overrides take
+precedence over scoring in `FF_LEAGUES` or `leagues.json`. All three workflows
+use this setting. Preferred expert IDs can be a repository variable or a secret;
+the variable takes precedence.
+
+During the final seven days before kickoff, start/sit uses live Week 1 data with
+an early-week banner, even before the season begins. Earlier preseason runs still
+use labeled samples. A September Wednesday report runs at 17:00 UTC in addition
+to the Thursday/Sunday schedule to cover Wednesday openers.
+
 > **`ffstartsit: command not found`?** The command lives in `.venv/bin/`, so it's
 > only on your `PATH` once the venv is activated. Any of these work:
 > - `source .venv/bin/activate` (Windows: `.venv\Scripts\activate`), then `ffstartsit ...`
@@ -177,6 +189,18 @@ be mistaken for a broken one. It also runs by itself once, on the scheduled pass
 inside the final week before kickoff — the point at which Week 1 data exists.
 The workflow exposes it as a checkbox on **Actions → Tuesday waiver wire &
 trades → Run workflow**.
+
+Acquisition safeguards: the waiver pass fetches current FantasyPros **overall
+rest-of-season rankings** separately from weekly scoring. It protects the top
+`max(100, league size × 8)` overall players and any player missing a season rank
+from drops. A skill-player add must improve season-long rank as well as pass the
+weekly comparison. Kickers and defenses only replace their own position, with at
+most one swap per position, a 2% remaining-budget bid (minimum $1), and no advice
+to spend a priority claim. They never appear in trade offers. Trade candidates
+must have ROS ranks within 25% and 12 places of each other; these are conservative
+rank guards, not a trade-price model. Two-QB/superflex trade offers are withheld
+because these rankings are for ordinary redraft leagues. Missing or stale ROS
+data withholds skill-player drops and trades, with a visible explanation.
 
 Each league's section gives you:
 
