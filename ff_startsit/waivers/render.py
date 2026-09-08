@@ -47,14 +47,25 @@ def _adds_table(bundle: WaiverBundle) -> list[str]:
     return lines
 
 
+def _ros(rank) -> str:
+    """An overall rest-of-season rank for display, or an em dash."""
+    return "—" if rank is None else f"{rank:g}"
+
+
 def _drops_table(bundle: WaiverBundle) -> list[str]:
     if not bundle.drops:
         return []
+    # The overall rest-of-season rank, not this week's blend score: it is the key
+    # this list is *ordered* by (worst first) and the criterion each row was
+    # selected on, and a table sorted by a column it doesn't show reads as
+    # unsorted. It is also the only number here that means the same thing for a
+    # quarterback and a tight end — the weekly finals came from separate
+    # per-position min-max sets, so reading down that column compared nothing.
     lines = ["**Conditional drop candidates** (only for a verified upgrade)", "",
-             "| Player | Pos | Score | Why |", "|---|---|---:|---|"]
+             "| Player | Pos | ROS rank | Why |", "|---|---|---:|---|"]
     for d in bundle.drops:
         lines.append(f"| {md_cell(d.score.player.name)} | {md_cell(d.score.player.position)} "
-                     f"| {d.score.final:.1f} | {md_cell(d.reason)} |")
+                     f"| {_ros(d.score.season_rank)} | {md_cell(d.reason)} |")
     lines.append("")
     return lines
 

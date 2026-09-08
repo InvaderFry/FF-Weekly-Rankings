@@ -86,7 +86,16 @@ without touching the pure engine.
 - **Fail loud-but-graceful on bad config.** Invalid weights (negative / all-zero),
   bad thresholds, and corrupt learned-weights files fall back to defaults with a
   warning (`config._validate_weights`, `_warn`) — they never silently produce an
-  all-`None` blend.
+  all-`None` blend. **`load_settings` must never raise**, and
+  `_apply_scoring_overrides` is why that is stated rather than assumed:
+  `FF_LEAGUE_SCORING` used to `raise ValueError` on an entry naming a league
+  that isn't configured. That variable exists precisely so the non-sensitive
+  half of a league's config can be edited without touching the secret carrying
+  its ids — in the workflows one is a repository *variable* and the other a
+  *secret*, edited on different screens — so drift between them is the expected
+  state, and a rename took every command in all three workflows down on a
+  traceback before it read a single ranking. Entries are independent: a bad one
+  warns, names the configured leagues, and leaves that league's scoring alone.
 - **`config.Settings` is the sole owner of blend weights.** Weight precedence:
   hardcoded defaults < `learned_weights.json` (written by `calibrate --write`) <
   explicit `FF_WEIGHT_*` env. Don't read weights from anywhere else. A learned
@@ -193,15 +202,50 @@ flagging. It reuses `weighted_final`, the `OutcomeProvider` seam, and `load_deci
 it never writes weights.
 
 `sources/experts.py` is a **setup helper, not a signal** — it resolves analyst
-names to the FantasyPros expert ids `FF_PREFERRED_EXPERTS` wants. It is split by
-reliability on purpose: *discovery* (`ExpertFinder.find`) reads an id off the
-per-expert page whose slug is the analyst's name, so it is markup-dependent and
-returns `None` rather than a guess, because a wrong-but-valid id returns a real
-ranking and would label another analyst's numbers with your journalist's name.
-*Verification* (`verify_experts`) parses no markup at all — it re-fetches through
-`ecr.fetch_scrape_rows` and compares rankings numerically, which is what catches
-that mislabel case, plus a dead id and an ignored `filters` parameter. Only
-discovery can tie a number to a name, and the command says so.
+names to the FantasyPros expert ids `FF_PREFERRED_EXPERTS` wants.
+
+*Discovery* (`ExpertFinder.directory`) reads `expertGroupsData.expert_data` off
+the ranking page `ecr.py` already fetches: a JSON array of every expert the site
+can serve, each `{"id", "name", "site"}`. Extraction is bracket-matched
+(`_json_array_at`), not regexed — the array holds 80-odd objects whose strings
+contain brackets, and `.*?` stops at the first `]` inside an image URL. It
+replaced a name-as-URL-slug scheme that read an id off
+`/nfl/rankings/<name>-consensus-rankings.php`: that went quiet when the markup
+moved, and because every failure path returns `None` rather than a guess, the
+command degraded into printing manual instructions and nothing else. Prefer a
+*ranking* page over a staff directory — an expert listed there is by
+construction one whose ranks can be asked for.
+
+The directory is also what makes three failures distinguishable, and they render
+to a user as the same missing section: **a dead id** (absent from the
+directory — no key and no retry will help), **a mislabeled id** (present, but
+another analyst's — it returns real, plausible numbers under your journalist's
+byline, which no ranking comparison can catch), and **a live id this transport
+cannot filter to**. That last one is the normal case: the public rankings page
+applies its expert filter in the browser and serves the same consensus whatever
+`filters` asks for, so per-journalist ranks need `FANTASYPROS_API_KEY`. The old
+`verify_experts` called it "the id is wrong", which sent the user to re-derive
+the one thing that was already correct — so `ExpertCheck.id_ok` now carries
+whether the directory vouched for the id, and the *remedy* the command prints
+keys off that rather than off the mere fact of failure.
+
+Two live findings worth not rediscovering: as of the 2026 season FantasyPros
+lists 83 weekly NFL rankers, Justin Boone is 317, and **no CBS analyst is in the
+list at all** — Jamey Eisenberg and Dave Richard cannot feed this section by any
+id. Their Tuesday waiver *columns* come from `waivers/columns.py`, a different
+scrape entirely, and are unaffected.
+
+`ecr._matches_filters` is the guard underneath all of that, and it **fails
+closed on both transports**, including when the response names no `filters` at
+all. A response that doesn't say which experts it covers is not evidence that it
+covered the one requested, and the cost is asymmetric: consensus served in place
+of one analyst is real, plausible numbers under the wrong byline, while a false
+negative costs one omitted section. The API path used to skip the check whenever
+the key was absent (`"filters" in payload and not _matches_filters(...)`) while
+the scrape path failed closed — and `JournalistFetcher._warn_if_filter_ignored`
+cannot cover that gap, because it needs two experts returning identical ranks to
+compare, which is exactly the single-journalist config that is left once the
+dead ids are dropped.
 
 ### Game context (schedule)
 
@@ -290,13 +334,26 @@ reason a piece of it is shaped the way it is.
   same for a QB as for a TE. Add ordering, `droppable` ordering, `_worth_adding`,
   bid conviction and `trades.FAIRNESS_BAND_FACTOR` all use it. `WaiverTarget.margin`
   is filled in **only** when an add and his drop share a position, where the
-  subtraction is real; renderers must tolerate `None`. Trade fairness is a
+  subtraction is real; renderers must tolerate `None`. For the same reason the
+  drop table shows **`ROS rank`, not `Score`**: `build_bundle` orders drops by
+  `season_rank` and selects them on it, and a table sorted by a column it does
+  not display reads as unsorted (61.7, 58.6, 72.0) — while the weekly `final`
+  it used to show was a cross-position comparison of separately normalized
+  sets. Renderers must tolerate a `None` rank there too. Trade fairness is a
   *multiple* (`hi / lo`), not a difference — a 0.3 gap separates a league-winner
   from a starter at ratio 0.1 and two bench bodies at 2.0.
 
   Two honest limits. `depth_ratio` ranks by starter scarcity, not points over
-  replacement, so a genuine DEF1 still outranks a fringe RB; fixing that needs
-  projections the tool deliberately doesn't have. And `team_count` comes from
+  replacement, so within the skill positions a genuine DEF1 still outranks a
+  fringe RB; fixing that properly needs projections the tool deliberately
+  doesn't have. Across the streaming boundary it is patched rather than fixed:
+  `pick_adds` sorts on `(position in STREAM_POSITIONS, ratio, -final)`, so
+  kickers and defenses fall below every skill player. A league starts one of
+  each, which makes almost every rostered K/DEF read as scarce — DEF2 scores
+  2/8 = 0.25 against a useful TE17's 17/12 = 1.42 — and every league's table
+  opened with a defense and a kicker above the players who decide the week. The
+  key is **ordering only**: `_worth_adding`, the bid caps and the drop pairing
+  are untouched, and the streamers are still listed. And `team_count` comes from
   `len(teams)` in `build_bundle`, floored by `MIN_LEAGUE_TEAMS` (4) — a partial
   team parse understates every position's demand, which reads the whole wire as
   filler and empties the report, turning an outage into "nothing worth adding".

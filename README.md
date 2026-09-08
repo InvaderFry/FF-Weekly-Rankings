@@ -144,7 +144,10 @@ If you trust a few specific rankers — say Justin Boone, Jamey Eisenberg, and
 Dave Richard — you can add a **"Preferred journalists"** section to the report
 and dashboard: each journalist's own weekly rank per player, plus their
 average. It's a side-by-side view only; it never enters the blended score or
-calibration. Set `FF_PREFERRED_EXPERTS` to FantasyPros expert ids —
+calibration. It needs `FANTASYPROS_API_KEY` — the public rankings page filters
+in the browser and serves consensus to every request, and publishing consensus
+under an analyst's name is the one thing this section must not do. Set
+`FF_PREFERRED_EXPERTS` to FantasyPros expert ids —
 [docs/SETUP.md](docs/SETUP.md#3-preferred-journalists-ff_preferred_experts)
 walks through finding them — then:
 
@@ -218,9 +221,11 @@ Each league's section gives you:
   the wire because their team is on bye this week.
 - **What the writers said** — quotes from Justin Boone's, Jamey Eisenberg's and
   Dave Richard's weekly waiver columns, matched against your free-agent pool and
-  linked back to each piece. Their *rankings* also feed the report via
-  `FF_PREFERRED_EXPERTS` (above), which is the part that survives a layout
-  change: if a column can't be read, the quotes vanish and nothing else does.
+  linked back to each piece. The two halves fail independently: if a column
+  can't be read, the quotes vanish and nothing else does. Note the *ranks* half
+  needs `FANTASYPROS_API_KEY` and an analyst FantasyPros actually ranks — of
+  those three, only Boone qualifies, so the columns are what the CBS pair
+  contribute. `ffstartsit experts --verify` says which of yours are usable.
 
 Two things it deliberately does not do. It adds **no blend signal**, so no
 start/sit ranking changes. And it is **never written to the results log** — a

@@ -111,12 +111,28 @@ def fetch_api_rows(session: requests.Session, api_key: str, season: int, scoring
     )
     resp.raise_for_status()
     payload = resp.json()
-    if filters and "filters" in payload and not _matches_filters(payload, filters):
+    if filters and not _matches_filters(payload, filters):
         return []
     return parse_api_response(payload)
 
 
 def _matches_filters(payload: dict, filters: str) -> bool:
+    """True only when the response *proves* it honored exactly these expert ids.
+
+    Deliberately fails closed, including when the payload names no ``filters``
+    at all. A response that doesn't say which experts it covers is not evidence
+    that it covered the one that was asked for, and the cost of being wrong is
+    asymmetric: consensus returned in place of one analyst renders real,
+    plausible numbers under that analyst's byline, which is the mislabel this
+    check exists to prevent — while a false negative costs one omitted section.
+
+    This used to be skipped whenever the key was absent (``"filters" in payload
+    and not _matches_filters(...)``), which left the API path failing *open*
+    where the scrape path failed closed. ``JournalistFetcher`` cannot backstop
+    that: its duplicate-ranks check needs two experts to compare, so exactly the
+    single-journalist config that is left once the dead ids are dropped is the
+    one it cannot see.
+    """
     expected = set(re.split(r"[:,]", filters))
     served = set(re.split(r"[:,]", str(payload.get("filters", ""))))
     return expected == served

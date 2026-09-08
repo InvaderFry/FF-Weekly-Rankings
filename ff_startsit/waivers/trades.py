@@ -34,7 +34,7 @@ from typing import Optional, Sequence
 
 from ..models import PlayerScore
 from .models import FantasyTeam, LeagueRules, TradeIdea
-from .score import depth_ratio, starting_slots
+from .score import STREAM_POSITIONS, depth_ratio, starting_slots
 from .season_values import comparable_trade
 
 #: Two sides' totals must land within this many 0-100 points for the offer to
@@ -149,13 +149,13 @@ def suggest_trades(teams: Sequence[FantasyTeam], index: dict[str, PlayerScore],
         theirs = team_shape(other, index, rules)
 
         for my_pos, my_shape in mine.items():
-            if my_pos in {"K", "DEF"}:
+            if my_pos in STREAM_POSITIONS:
                 continue
             for send in my_shape.surplus:
                 if send.player.key in protected or send.final is None:
                     continue
                 for their_pos, their_shape in theirs.items():
-                    if their_pos == my_pos or their_pos in {"K", "DEF"}:
+                    if their_pos == my_pos or their_pos in STREAM_POSITIONS:
                         continue  # swapping RB for RB rarely fixes either roster
                     for get in their_shape.surplus:
                         if get.final is None or get.player.key in starting.get(other.team_id, set()):

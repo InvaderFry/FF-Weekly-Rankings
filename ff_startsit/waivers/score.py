@@ -91,6 +91,13 @@ MIN_BID_SHARE = 0.02
 #: Injury statuses worth stashing rather than starting.
 _STASH_STATUSES = {"IR", "OUT", "PUP", "SUS", "NA", "DNR", "COV"}
 
+#: Positions a league starts exactly one of, and streams. Named because they are
+#: an exception to ``depth_ratio`` in one specific way: the ratio measures
+#: starter *scarcity*, and one slot per team makes almost every rostered kicker
+#: and defense look scarce, while the points between DEF2 and DEF10 are a
+#: rounding error next to the gap between a startable RB and a bench body.
+STREAM_POSITIONS = frozenset({"K", "DEF"})
+
 #: How many weeks ahead the bye-week check looks.
 BYE_HORIZON = 3
 
@@ -317,9 +324,20 @@ def pick_adds(index: dict[str, PlayerScore], pool: Sequence[PoolPlayer],
         if ratio is None or ratio > MAX_ADD_DEPTH_RATIO:
             continue  # too deep at his position to be worth a roster spot
         candidates.append((ratio, score))
-    # Shallowest first; ``final`` only breaks ties, where both are at one position
-    # and it is a real comparison again.
-    candidates.sort(key=lambda c: (c[0], -c[1].final))
+    # Streamers last, then shallowest first; ``final`` only breaks ties, where
+    # both are at one position and it is a real comparison again.
+    #
+    # The streamer key is not cosmetic. ``depth_ratio`` ranks by starter
+    # scarcity, and a league starts one kicker and one defense, so the second-best
+    # defense scores 2/8 = 0.25 while a genuinely useful TE17 scores 17/12 = 1.42
+    # — and every league's table opened with a defense and a kicker while the
+    # skill players who actually decide a week sat below them. Scarcity is the
+    # right axis *within* a position and the wrong one across this particular
+    # boundary, because the points between DEF2 and DEF10 are nearly nothing.
+    # Ordering only: the streamers are still listed, still bid on the same way
+    # (``suggest_bid`` caps them), and nothing about who is worth adding moves.
+    candidates.sort(key=lambda c: (c[1].player.position in STREAM_POSITIONS,
+                                   c[0], -c[1].final))
 
     available_drops = list(drops)
     targets: list[WaiverTarget] = []
@@ -331,7 +349,7 @@ def pick_adds(index: dict[str, PlayerScore], pool: Sequence[PoolPlayer],
         if drop is None:
             continue
         available_drops.remove(drop)
-        if score.player.position in {"K", "DEF"}:
+        if score.player.position in STREAM_POSITIONS:
             # Alternatives are not instructions to roster several streamers.
             available_drops = [d for d in available_drops
                                if d.score.player.position != score.player.position]
@@ -370,7 +388,8 @@ def _worth_adding(add: PlayerScore, drop: PlayerScore, rules: LeagueRules) -> bo
     finals came from separate min-max populations, and the deepest position on the
     roster won by default.
     """
-    if add.player.position in {"K", "DEF"} or drop.player.position in {"K", "DEF"}:
+    if (add.player.position in STREAM_POSITIONS
+            or drop.player.position in STREAM_POSITIONS):
         if add.player.position != drop.player.position:
             return False
     else:
@@ -453,7 +472,8 @@ def suggest_bid(target: WaiverTarget, rules: LeagueRules,
     which position happened to sit at the head of your drop list.
     """
     demand = _demand(target.pool)
-    streamer = target.pool is not None and target.pool.player.position in {"K", "DEF"}
+    streamer = (target.pool is not None
+                and target.pool.player.position in STREAM_POSITIONS)
 
     if rules.acquisition_type == ACQ_FAAB:
         if not faab_remaining or faab_remaining <= 0:

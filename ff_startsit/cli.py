@@ -426,6 +426,8 @@ def cmd_experts(args, settings: Settings, finder=None, verifier=None) -> int:
     from .sources.experts import (ExpertFinder, format_env_line, verify_experts)
     from .sources.journalists import parse_experts
 
+    finder = finder or ExpertFinder()
+
     if getattr(args, "verify", False):
         experts = parse_experts(settings.preferred_experts)
         if not experts:
@@ -433,10 +435,13 @@ def cmd_experts(args, settings: Settings, finder=None, verifier=None) -> int:
                   "`ffstartsit experts \"Justin Boone\" ...` to find ids first.",
                   file=sys.stderr)
             return 1
-        checks = (verifier or verify_experts)(experts, scoring=settings.scoring)
+        # The directory is what lets a dead id, a mislabeled id and a live id
+        # this transport cannot filter be told apart. The finder already knows
+        # how to read it; verification stays offline-injectable by taking the
+        # result rather than fetching it.
+        checks = (verifier or verify_experts)(
+            experts, scoring=settings.scoring, directory=finder.directory())
         return _print_expert_checks(checks)
-
-    finder = finder or ExpertFinder()
 
     if getattr(args, "list_all", False):
         experts = finder.list_all()
@@ -466,7 +471,22 @@ def cmd_experts(args, settings: Settings, finder=None, verifier=None) -> int:
         print("\nThen check them: ffstartsit experts --verify")
     if missing:
         print(f"\nCouldn't resolve: {', '.join(missing)}", file=sys.stderr)
-        print(_MANUAL_STEPS, file=sys.stderr)
+        # A name the directory positively does not list is answered, not merely
+        # unresolved — printing the manual steps for it sends the user hunting
+        # for an id that does not exist.
+        settled = [n for n in missing if n in getattr(finder, "unlisted", set())]
+        for name in missing:
+            note = getattr(finder, "notes", {}).get(name)
+            if note:
+                print(f"  • {name}: {note}.", file=sys.stderr)
+        if len(settled) < len(missing):
+            print(_MANUAL_STEPS, file=sys.stderr)
+        else:
+            print("\nThese analysts can't feed the Preferred journalists section "
+                  "at all — FantasyPros doesn't publish weekly NFL ranks for "
+                  "them. Drop them from FF_PREFERRED_EXPERTS; their waiver "
+                  "columns are scraped separately and are unaffected.",
+                  file=sys.stderr)
     # Any unresolved name means the printed line is incomplete — say so with the
     # exit code, but still print what was found: a partial answer beats none.
     return 0 if found and not missing else 1
@@ -501,11 +521,28 @@ def _print_expert_checks(checks) -> int:
     table.add_column("verdict")
     for c in checks:
         verdict = "[green]ok[/green]" if c.ok else f"[red]{c.problem}[/red]"
-        table.add_row(c.expert.id, c.expert.name, str(c.rows), verdict)
+        name = c.expert.name
+        if getattr(c, "actual_name", "") and c.actual_name != c.expert.name:
+            name = f"{name} [dim](FantasyPros: {c.actual_name})[/dim]"
+        table.add_row(c.expert.id, name, str(c.rows), verdict)
     Console().print(table)
 
     bad = [c for c in checks if not c.ok]
     if bad:
+        # The remedy is not always "go find the id again". When the directory
+        # vouched for every failing id, looking them up a second time returns
+        # the same numbers and fixes nothing — the transport is what can't
+        # narrow to one analyst.
+        if all(getattr(c, "id_ok", None) for c in bad):
+            print("\nThe ids are fine — the ranks aren't reaching this app.",
+                  file=sys.stderr)
+            print("Single-expert ranks come back only from the FantasyPros API; "
+                  "the public page applies its expert filter in the browser and "
+                  "serves the same consensus to every request. Set "
+                  "FANTASYPROS_API_KEY (and the matching Actions secret) to "
+                  "enable the section. Until then it is omitted rather than "
+                  "published under the wrong byline.", file=sys.stderr)
+            return 1
         print("\nAt least one id looks wrong.", file=sys.stderr)
         print(_MANUAL_STEPS, file=sys.stderr)
         return 1
@@ -513,8 +550,8 @@ def _print_expert_checks(checks) -> int:
     print("\nAll ids return distinct rankings, so the filter is working and none "
           "of them is silently serving consensus.")
     print("Note this checks that each id is live and distinct — not that it "
-          "belongs to the analyst you named it after. Only the per-expert page "
-          "(the lookup above) ties a number to a name.")
+          "belongs to the analyst you named it after. The expert directory "
+          "(`ffstartsit experts --list`) is what ties a number to a name.")
     return 0
 
 

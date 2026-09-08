@@ -23,9 +23,10 @@ from .base import LeagueViewProvider, pool_players
 from .columns import ColumnFetcher, index_mentions
 from .models import DropCandidate, LeagueRules, PoolPlayer, WaiverBundle
 from .season_values import SeasonValueProvider, URLS, protected_rank
-from .score import (BYE_HORIZON, MIN_LEAGUE_TEAMS, bye_gaps, dedupe_players,
-                    droppable, find_stashes, has_ecr, pick_adds, score_positions,
-                    signal_coverage, starting_slots, team_players)
+from .score import (BYE_HORIZON, MIN_LEAGUE_TEAMS, STREAM_POSITIONS, bye_gaps,
+                    dedupe_players, droppable, find_stashes, has_ecr, pick_adds,
+                    score_positions, signal_coverage, starting_slots,
+                    team_players)
 from .trades import suggest_trades
 
 #: Scores are min-maxed inside a position's own candidate set, so a 9-point WR
@@ -236,14 +237,14 @@ def build_bundle(settings: Settings, label: str, provider: LeagueViewProvider,
     my_scores = [index[p.key] for p in my_players if p.key in index]
     protected = _lineup_keys(my_scores, rules)
     drops = droppable(my_scores, rules, protected=protected)
-    drops = [d for d in drops if d.score.player.position not in {"K", "DEF"}
+    drops = [d for d in drops if d.score.player.position not in STREAM_POSITIONS
              and d.score.season_rank is not None
              and d.score.season_rank > protected_rank(rules.team_count)]
     drops.sort(key=lambda d: d.score.season_rank, reverse=True)
     # A one-for-one streamer replacement preserves the starting requirement;
     # a weekly starter can be replaced at that same position, never for a WR/RB.
     streamers = [DropCandidate(s, "same-position streaming replacement only")
-                 for s in my_scores if s.player.position in {"K", "DEF"}
+                 for s in my_scores if s.player.position in STREAM_POSITIONS
                  and s.final is not None and has_ecr(s)]
 
     ranks = journalist_ranks(settings, dedupe_players(pool_players(pool), my_players), week)
