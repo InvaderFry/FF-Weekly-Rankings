@@ -51,6 +51,76 @@ def _bundle(label="work", adds=1, trades=1, week=9):
     return b
 
 
+# --- F3: the add table shows Depth, not the unsorted, cross-position Score ---
+
+def _depth_bundle():
+    """A mixed skill/streamer bundle, ordered by depth ratio the way
+    `pick_adds` actually orders it -- includes a `None` depth (a target built
+    without going through `pick_adds`, which renderers must tolerate)."""
+    b = WaiverBundle(label="work", scoring="half", week=9,
+                     rules=LeagueRules(acquisition_type=ACQ_FAAB, faab_budget=100.0))
+    b.adds = [
+        WaiverTarget(score=_ps("f1", "Deep TE", "TE", 76.5), depth_ratio=0.42,
+                    reasons=("takes the roster spot",)),
+        WaiverTarget(score=_ps("f2", "Solid WR", "WR", 84.5), depth_ratio=0.91,
+                    reasons=("takes the roster spot",)),
+        WaiverTarget(score=_ps("f3", "No Ratio", "RB", 50.0), depth_ratio=None,
+                    reasons=("takes the roster spot",)),
+        WaiverTarget(score=_ps("f4", "Streamer Def", "DEF", 91.9), depth_ratio=1.50,
+                    reasons=("takes the roster spot",)),
+    ]
+    return b
+
+
+def _markdown_add_rows(md):
+    """Parse the add table's data rows into stripped cells, by column."""
+    lines = [ln for ln in md.splitlines() if ln.startswith("| **")]
+    return [[c.strip() for c in ln.strip("|").split("|")] for ln in lines]
+
+
+def test_the_add_table_shows_depth_not_the_cross_position_score():
+    """AndyLOT's Week 1 add table read 76.5, 91.9, 84.5 in the Score column --
+    visibly unsorted, because the list is ordered by depth ratio and that
+    column showed `final`, a *within-position* score instead. The fixture's
+    `final` values (76.5, 84.5, 50.0, 91.9) are deliberately not in the
+    fixture's own add order, so a regression that goes back to printing
+    `final` in this column fails the exact-cell check below rather than
+    slipping through by coincidence."""
+    b = _depth_bundle()
+    md = render_waiver_digest(9, [b])
+    assert "| Add | Pos | Depth |" in md
+    assert "| Score |" not in md
+
+    rows = _markdown_add_rows(md)
+    depth_cells = [r[2] for r in rows]        # Add, Pos, Depth, Drop, Bid, Why
+    assert depth_cells == ["0.42", "0.91", "—", "1.50"]
+    numeric = [float(c) for c in depth_cells if c != "—"]
+    assert numeric == sorted(numeric), f"Depth column must read sorted, got {numeric}"
+
+    html = build_waivers_html(9, [b], "2026-09-09")
+    assert "<th class='num'>Depth</th>" in html
+    assert ">Score<" not in html
+    for cell in ("0.42", "0.91", "1.50"):
+        assert f"<td class='num'>{cell}</td>" in html
+
+
+def test_a_none_depth_renders_an_em_dash_not_a_crash():
+    b = _depth_bundle()
+    md = render_waiver_digest(9, [b])
+    html = build_waivers_html(9, [b], "2026-09-09")
+    embed = build_waiver_payload(9, [b])
+    assert "No Ratio" in md and "No Ratio" in html
+    assert "No Ratio" in json.dumps(embed)
+    # The row's depth cell is a plain em dash, not "None".
+    assert "None" not in md and "None" not in html
+
+
+def test_the_depth_legend_explains_the_column():
+    b = _depth_bundle()
+    assert "Below 1.00 is a startable player" in render_waiver_digest(9, [b])
+    assert "Below 1.00 is a startable player" in build_waivers_html(9, [b], "2026-09-09")
+
+
 # --- markdown -------------------------------------------------------------
 def test_markdown_covers_every_section():
     md = render_waiver_digest(9, [_bundle()])
@@ -573,3 +643,52 @@ def test_it_stays_quiet_when_every_starting_position_produced_an_add():
     b.adds = [WaiverTarget(score=_ps("f1", "A Wideout", "WR", 70.0))]
     b.considered_adds = {"WR": 9}
     assert b.no_adds_at_positions() is None
+
+
+# --- an empty stash section explains itself ---------------------------------
+
+def test_no_stashes_reason_separates_a_quiet_wire_from_a_gate_that_held():
+    """The stash gates want an NFL team *and* a rest-of-season rank, which is
+    tight enough to empty the section on a normal week -- and an empty section
+    rendered as nothing at all, so "nobody is shelved" and "four were weighed
+    and none could be vouched for" arrived as the same blank space. Same
+    distinguishable-failures fix `no_adds_reason` and `no_trades_reason` each
+    already got."""
+    quiet = _bundle()
+    quiet.stashes = []
+    quiet.stash_pool = 0
+    assert "nothing to stash" in quiet.no_stashes_reason()
+
+    gated = _bundle()
+    gated.stashes = []
+    gated.stash_pool = 4
+    reason = gated.no_stashes_reason()
+    assert "4 shelved or bye-week free agents were weighed" in reason
+    assert "rest-of-season rank" in reason
+
+    # A populated section says nothing extra, and a standing banner or caveat
+    # owns the explanation -- the same three conditions `no_adds_reason` uses.
+    assert _bundle().no_stashes_reason() is None
+    bannered = _bundle()
+    bannered.stashes = []
+    bannered.stash_pool = 4
+    bannered.banner = "Preseason: nothing is scored yet."
+    assert bannered.no_stashes_reason() is None
+
+
+def test_both_renderers_carry_the_empty_stash_sentence():
+    """One definition, and neither renderer may invent its own wording or drop
+    the heading. Discord has never carried a stash section, so this is two
+    renderers rather than `no_adds_reason`'s three."""
+    from ff_startsit.output.html import build_waivers_html
+
+    b = _bundle()
+    b.stashes = []
+    b.stash_pool = 3
+    sentence = b.no_stashes_reason()
+
+    md = render_waiver_digest(b.week, [b])
+    assert "Stash watch" in md and sentence in md
+
+    html = build_waivers_html(b.week, [b], "2026-09-09")
+    assert "Stash watch" in html and sentence in html

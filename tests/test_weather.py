@@ -68,6 +68,26 @@ def test_score_conditions_clear_is_perfect_and_monotonic():
     assert score_conditions(80, 100) >= 0.0
 
 
+def test_score_conditions_quantizes_to_a_five_point_step():
+    """PR2's fix for F1: two forecasts a few mph apart are sensor noise, not a
+    real weather difference, and must land on the identical raw value so they
+    tie under `to_0_100` instead of stretching into a 0-100 blend spread."""
+    close = [score_conditions(w, 0.0) for w in (9.0, 10.0, 10.4)]   # ~1.4mph apart
+    assert len(set(close)) == 1
+
+    far = [score_conditions(0.0, 0.0), score_conditions(20.0, 0.0)]  # 20mph apart
+    assert len(set(far)) == 2
+    assert far[0] > far[1]                    # still monotonic, worse scores lower
+
+
+def test_score_conditions_result_is_always_a_multiple_of_the_step():
+    from ff_startsit.sources.weather import QUANTIZE_STEP
+
+    for wind, precip in ((0, 0), (9.3, 12.0), (18.0, 60.0), (80.0, 100.0)):
+        score = score_conditions(wind, precip)
+        assert score % QUANTIZE_STEP == 0
+
+
 def test_parse_hourly_reads_the_hourly_block():
     parsed = parse_hourly(_hourly())
     assert parsed["2025-10-05T17:00"] == (10.0, 20.0)

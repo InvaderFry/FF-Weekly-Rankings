@@ -12,6 +12,20 @@ from datetime import datetime
 from typing import Optional
 
 
+def _fmt_raw(value: float) -> str:
+    """Round a raw signal value to 2dp for display, without a trailing point/zeros.
+
+    ``f"{value:g}"`` defaults to 6 significant figures, which is how a Vegas
+    implied-total gap of 1.222222 ended up printed verbatim in a close-call
+    note. No signal here carries meaningful precision past a hundredth, so
+    round first, then strip the noise ``:.2f`` leaves behind (``2.0`` ->
+    ``"2.00"`` -> ``"2"``). Shared by ``output.render.flat_signal_note`` and
+    ``engine.blend._flag_raw_dead_heat``, the two places that print a raw gap.
+    """
+    text = f"{round(value, 2):.2f}".rstrip("0").rstrip(".")
+    return text or "0"
+
+
 @dataclass(frozen=True)
 class Player:
     """A roster player, canonicalized from Sleeper.
@@ -174,10 +188,14 @@ class Recommendation:
 
         Returns ``(signal, spread, gap)`` for every signal that carries a
         configured raw gap, reads a usable raw value for at least two *scored*
-        candidates, and spans no more than that gap across all of them. Signals
-        with no configured gap (injury, weather) are bucketed statuses with no
-        continuous scale, so they abstain here exactly as they do in
-        ``blend._flag_raw_dead_heat``.
+        candidates, and spans no more than that gap across all of them. A
+        signal with no configured gap (injury) is a bucketed status with no
+        continuous scale, so it abstains here exactly as it does in
+        ``blend._flag_raw_dead_heat``. Weather carries a gap (12.0 of its 0-100
+        conditions score) purely for this presentational check — its blend
+        weight still sits under the disagreement floor, so it cannot flag or
+        veto a close call, only earn the "read with care" note this method
+        drives.
 
         Deliberately about the whole candidate set, not the top two: the flag is
         already the dead-heat condition's job. This answers the different

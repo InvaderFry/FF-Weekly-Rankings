@@ -398,12 +398,13 @@ def pick_adds(index: dict[str, PlayerScore], pool: Sequence[PoolPlayer],
             margin=margin,
             drop=drop.score,
             pool=pp,
+            depth_ratio=ratio,
             journalist_avg=journalist_ranks.get(score.player.key),
             mentions=tuple(mentions.get(score.player.key, ())),
         )
         target.bid = suggest_bid(target, rules, faab_remaining,
                                  conviction=_conviction(ratio))
-        target.reasons = tuple(add_reasons(target, rules))
+        target.reasons = tuple(add_reasons(target))
         targets.append(target)
     return targets
 
@@ -456,8 +457,14 @@ def _conviction(ratio: float) -> float:
     return min(1.0, max(0.0, (MAX_ADD_DEPTH_RATIO - ratio) / span))
 
 
-def add_reasons(target: WaiverTarget, rules: LeagueRules) -> list[str]:
-    """Short human "why" lines — the part a ranking alone doesn't tell you."""
+def add_reasons(target: WaiverTarget) -> list[str]:
+    """Short human "why" lines — the part a ranking alone doesn't tell you.
+
+    Takes no ``LeagueRules``: the only line that needed them was the "ranks POSn
+    against the N POS the league starts" prose, and the add table's Depth column
+    now carries that reading numerically. A parameter kept past its last reader
+    reads as a dependency this function still has.
+    """
     reasons: list[str] = []
     if target.drop is not None:
         if target.margin is not None:
@@ -473,17 +480,10 @@ def add_reasons(target: WaiverTarget, rules: LeagueRules) -> list[str]:
                 f"takes the roster spot from {target.drop.player.name} "
                 f"({target.drop.player.position}), your most droppable player"
             )
-    ecr = target.score.raw.get("ecr")
-    if ecr is not None and ecr.available and ecr.raw is not None:
-        pos = target.score.player.position
-        # "where the league starts 8" reads as though each team starts eight of
-        # them. ``starter_demand`` is a *league-wide* count (team_count x slots),
-        # which is the whole point of the comparison: it is the line between a
-        # startable player and bench depth.
-        reasons.append(
-            f"ranks {pos}{ecr.raw:g} against the {starter_demand(pos, rules)} "
-            f"{pos} the league starts each week"
-        )
+    # No "ranks POSn against the N POS the league starts" line here any more:
+    # that used to be the only place this ratio reached the reader, but the
+    # add table's Depth column now shows the same reading numerically, and a
+    # "why" that repeats the row it sits in isn't a reason.
     if target.journalist_avg is not None:
         reasons.append(f"preferred journalists average him {target.journalist_avg:.1f}")
     if target.mentions:
@@ -551,6 +551,66 @@ def _demand(pool: Optional[PoolPlayer]) -> float:
 
 
 # --- stashes & byes --------------------------------------------------------
+def _stash_kind(pp: PoolPlayer, score: PlayerScore, bye_teams: set[str]) -> Optional[str]:
+    """``"hurt"``, ``"bye"``, or ``None`` — is this player a stash candidate at all?
+
+    Candidacy only: it asks whether there is anything here to consider, not
+    whether the idea survives. ``_stash_reason`` applies the gates. The split
+    exists so ``stash_candidates`` can count what was weighed without copying
+    the rule — the same "extracted rather than copied" discipline
+    ``no_adds_at_positions`` needed for ``add_candidate_ratio``, and for the
+    same reason: "N were considered" is only honest while the two agree.
+    """
+    if (pp.injury_status or "").upper() in _STASH_STATUSES:
+        return "hurt"
+    if pp.player.team and pp.player.team in bye_teams:
+        return "bye"
+    return None
+
+
+def _stash_reason(pp: PoolPlayer, score: PlayerScore, kind: str) -> Optional[str]:
+    """The stash line for a candidate, or ``None`` when the gates reject him."""
+    if kind == "hurt":
+        if not pp.player.team or score.season_rank is None:
+            # No NFL team (unsigned, like Hill) or no rest-of-season rank:
+            # this app has no return-date model, and a missing ROS rank is
+            # not evidence he plays again this season — the same discipline
+            # `has_ecr` already applies to adds and drops.
+            return None
+        status = (pp.injury_status or "").upper()
+        return f"{status} — stash while he's cheap (ROS rank {score.season_rank:g})"
+    if not has_ecr(score):
+        return None
+    return "on bye this week — ranked, and nobody else is looking"
+
+
+def _stash_seen(index: dict[str, PlayerScore], pool: Sequence[PoolPlayer],
+                taken: set[str], bye_teams: set[str]):
+    """Yield ``(pool player, score, kind)`` for every stash candidate in the pool."""
+    for pp in pool:
+        if pp.player.key in taken:
+            continue
+        score = index.get(pp.player.key)
+        if score is None or score.final is None:
+            continue
+        kind = _stash_kind(pp, score, bye_teams)
+        if kind is not None:
+            yield pp, score, kind
+
+
+def stash_candidates(index: dict[str, PlayerScore], pool: Sequence[PoolPlayer],
+                     taken: set[str], bye_teams: set[str]) -> int:
+    """How many free agents were weighed as stashes, before the gates.
+
+    ``find_stashes`` returning nothing means two different things — nobody on
+    the wire is shelved or on bye, or several were and none cleared the team +
+    ROS-rank gate — and an empty stash section renders identically either way.
+    This is the denominator ``WaiverBundle.no_stashes_reason`` needs to tell
+    them apart, in the same shape ``pool_size`` serves ``no_adds_reason``.
+    """
+    return sum(1 for _ in _stash_seen(index, pool, taken, bye_teams))
+
+
 def find_stashes(index: dict[str, PlayerScore], pool: Sequence[PoolPlayer],
                  taken: set[str], bye_teams: set[str],
                  max_stashes: int = 5) -> list[StashIdea]:
@@ -560,9 +620,20 @@ def find_stashes(index: dict[str, PlayerScore], pool: Sequence[PoolPlayer],
     "handcuff" is not something it can honestly claim to detect:
 
     * **Hurt but ranked** — a real player carrying an OUT/IR/PUP/SUS tag, who is
-      only in the pool because he's shelved.
+      only in the pool because he's shelved, has an NFL team, and has a
+      rest-of-season rank saying he is expected back on it. Without both gates
+      this recommended Tyreek Hill (unsigned, rehabbing, no guarantee he plays
+      again in 2026 at all) identically to Zach Charbonnet (rostered, on PUP,
+      ranked, and projected back around Week 5) — "stash while he's cheap" read
+      the same for a real return date and for a coin flip on whether there is
+      one at all.
     * **On bye** — ranked, healthy, and invisible this week purely because his
       team isn't playing. He is the cheapest good player on the wire today.
+
+    Those gates are tight enough to empty the section on a normal week, which is
+    why ``stash_candidates`` counts what they rejected: silence here has to be
+    attributable, the same way ``no_adds_reason`` made an empty add table
+    attributable.
     """
     def _rank(pp: PoolPlayer) -> float:
         # Unscored players must sort last, not first: a bare `or 0` key put every
@@ -571,21 +642,12 @@ def find_stashes(index: dict[str, PlayerScore], pool: Sequence[PoolPlayer],
         return -(score.final) if score is not None and score.final is not None else 1.0
 
     out: list[StashIdea] = []
-    for pp in sorted(pool, key=_rank):
+    for pp, score, kind in _stash_seen(index, sorted(pool, key=_rank), taken, bye_teams):
         if len(out) >= max_stashes:
             break
-        key = pp.player.key
-        if key in taken:
-            continue
-        score = index.get(key)
-        if score is None or score.final is None:
-            continue
-        status = (pp.injury_status or "").upper()
-        if status in _STASH_STATUSES:
-            out.append(StashIdea(score=score, reason=f"{status} — stash while he's cheap"))
-        elif pp.player.team and pp.player.team in bye_teams and has_ecr(score):
-            out.append(StashIdea(score=score,
-                                 reason="on bye this week — ranked, and nobody else is looking"))
+        reason = _stash_reason(pp, score, kind)
+        if reason is not None:
+            out.append(StashIdea(score=score, reason=reason))
     return out
 
 

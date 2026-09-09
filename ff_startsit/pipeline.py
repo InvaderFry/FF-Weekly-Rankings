@@ -80,6 +80,7 @@ def recommend(
     command: str = "",
     log: bool = True,
     exclude_unavailable: bool = False,
+    starter_count: Optional[int] = None,
 ) -> Recommendation:
     """Fetch every available signal for ``players`` and blend into a ranking.
 
@@ -90,6 +91,12 @@ def recommend(
     stashing exactly the players who cannot play this week. The start/sit
     commands, where "can he play" and "should I start him" are the same
     question, pass ``True``.
+
+    ``starter_count``, when given, additionally flags a close call at the
+    boundary of the last starting slot (rank N vs N+1), not just the overall
+    top two — see ``engine.blend._flag_starter_boundary``. Callers that know
+    the league's real starting slots supply it from those; ``None`` (the
+    default) leaves every caller's behavior exactly as before.
     """
     signals = list(signals) if signals is not None else build_signals(settings)
 
@@ -153,6 +160,8 @@ def recommend(
         close_call_raw_gaps=settings.close_call_raw_gaps,
         unavailable_keys=unavailable_keys,
         disagree_exempt=settings.disagree_exempt,
+        dead_heat_exempt=settings.presentational_gaps,
+        starter_count=starter_count,
     )
 
     # The fourth kind of run that is never logged, for the same reason as the

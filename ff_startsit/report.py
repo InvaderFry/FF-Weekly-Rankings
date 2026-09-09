@@ -13,7 +13,7 @@ from typing import Optional, Sequence
 
 from .config import Settings
 from .models import Player, PlayerScore, Recommendation
-from .output.render import md_cell, render_markdown
+from .output.render import LINEUP_UNSCORED_NOTE, lineup_unscored_keys, md_cell, render_markdown
 from .pipeline import build_signals, recommend
 from .season import preseason_banner
 from .sources.journalists import JournalistFetcher, JournalistView, parse_experts
@@ -39,6 +39,47 @@ POSITION_ORDER = ["QB", "RB", "WR", "TE", "K", "DEF"]
 # Position precedence for FLEX tie-breaks. Arbitrary but fixed, and derived from
 # POSITION_ORDER so the file keeps one ordering convention rather than two.
 _FLEX_ORDER = {pos: i for i, pos in enumerate(FLEX_POSITIONS)}
+
+def starter_counts(slots: Optional[Sequence[str]] = None) -> dict[str, int]:
+    """How many starters each position gets in ``slots`` (flex slots excluded).
+
+    Derived from the slot list actually in use rather than hardcoded beside it,
+    because the two must not be able to disagree. This is the same shape of
+    guard as ``waivers.build._lineup_keys``, which had to learn the lesson the
+    hard way: computing drop protection from the hardcoded 1QB/2RB/2WR template
+    while the other half of the guard counted surplus against the league's real
+    ``roster_slots`` left a superflex league's second quarterback both
+    unprotected *and* surplus. Here the consequence is milder — ``starter_count``
+    only decides which *pair* the close-call check examines, so a mismatch
+    misses a warning rather than cutting a starter — but the fix is the same
+    one: one derivation, fed by whatever slot list the lineup is being built
+    from.
+
+    Flex slots are excluded because they have no position to count against:
+    ``SLOT_POSITIONS`` names the ones that accept more than themselves, and a
+    slot absent from it is an ordinary position slot. With the default template
+    this is ``{"QB": 1, "RB": 2, "WR": 2, "TE": 1, "K": 1, "DEF": 1}``.
+
+    ``None`` means ``LINEUP_SLOTS``. A league whose real slots are known — the
+    waiver pass already reads them off ESPN and Sleeper — passes them here and
+    to ``build_lineup`` together, so a 3-WR league checks WR3/WR4 rather than
+    WR2/WR3. The start/sit commands have no league-rules fetch on their path and
+    keep the template, which is what the rest of that path assumes anyway.
+    """
+    counts: dict[str, int] = {}
+    for slot in (slots if slots is not None else LINEUP_SLOTS):
+        if slot not in SLOT_POSITIONS:
+            counts[slot] = counts.get(slot, 0) + 1
+    return counts
+
+
+#: The default template's counts, for callers and tests that want the constant
+#: rather than the derivation. Feeds ``rank_each_position``'s ``starter_count``,
+#: which is what lets the close-call flag additionally check the pair straddling
+#: the last starting slot (rank N vs N+1) rather than only the overall top two —
+#: the decision that actually sets a 2-WR league's lineup at WR2/WR3, not
+#: WR1/WR2.
+STARTER_COUNTS: dict[str, int] = starter_counts()
 
 #: Fraction of the flex pool that must carry an ECR value for the pooled ranking
 #: to be trusted. Below this the pooled blend is running on Vegas/injury/weather
@@ -116,7 +157,8 @@ class LeagueBundle:
 
 def rank_each_position(settings: Settings, players: Sequence[Player], week: int,
                        log: bool = False,
-                       signals: Optional[Sequence] = None) -> dict[str, Recommendation]:
+                       signals: Optional[Sequence] = None,
+                       slots: Optional[Sequence[str]] = None) -> dict[str, Recommendation]:
     """Rank each position group once. One scoring pass = one set of API calls.
 
     The signal instances are built once and reused across positions so each
@@ -125,14 +167,21 @@ def rank_each_position(settings: Settings, players: Sequence[Player], week: int,
     network calls and API quota. ``signals`` lets a caller share one set across
     this pass and the pooled FLEX pass, so the two together still cost a single
     Odds API credit.
+
+    ``slots`` is the league's starting-slot list, defaulting to ``LINEUP_SLOTS``.
+    It is read only through ``starter_counts`` — see there for why the count is
+    derived from the slot list rather than kept beside it — and decides which
+    pair the close-call check examines at each position.
     """
     signals = list(signals) if signals is not None else build_signals(settings)
+    counts = starter_counts(slots)
     recs: dict[str, Recommendation] = {}
     for pos in {p.position for p in players}:
         cands = [p for p in players if p.position == pos]
         recs[pos] = recommend(settings, cands, week, signals=signals,
                               command="report", log=log,
-                              exclude_unavailable=True)
+                              exclude_unavailable=True,
+                              starter_count=counts.get(pos))
     return recs
 
 
@@ -195,7 +244,8 @@ def rank_flex_pool(settings: Settings, players: Sequence[Player], week: int,
 
 
 def score_week(settings: Settings, players: Sequence[Player], week: int,
-               log: bool = False) -> WeekScores:
+               log: bool = False,
+               slots: Optional[Sequence[str]] = None) -> WeekScores:
     """One signal set, one per-position pass, one pooled FLEX pass.
 
     ``log`` appends the per-position decisions to the results log, so the
@@ -204,9 +254,14 @@ def score_week(settings: Settings, players: Sequence[Player], week: int,
     scores every position every week would otherwise dominate the corpus with
     rows nobody acted on. The pooled FLEX pass is never logged either way —
     see ``rank_pooled``.
+
+    ``slots`` is the league's starting-slot list, forwarded to
+    ``rank_each_position`` so the close-call boundary check and the lineup are
+    reasoning about the same shape of league.
     """
     signals = build_signals(settings)
-    recs = rank_each_position(settings, players, week, log=log, signals=signals)
+    recs = rank_each_position(settings, players, week, log=log, signals=signals,
+                              slots=slots)
     flex, note = rank_flex_pool(settings, players, week, signals=signals)
     return WeekScores(recs=recs, flex=flex, flex_note=note)
 
@@ -352,6 +407,7 @@ def _digest_body(recs: dict[str, Recommendation],
     """
     if lineup is None:
         lineup = build_lineup(scored(recs))
+    unscored = lineup_unscored_keys(recs)
     lines: list[str] = []
     if banner:
         lines += [f"> {banner}", ""]
@@ -361,13 +417,20 @@ def _digest_body(recs: dict[str, Recommendation],
         "| Slot | Player | Team | Score |",
         "|---|---|---|---|",
     ]
+    any_unscored = False
     for slot, pick in lineup:
         if pick is None:
             lines.append(f"| {slot} | _(no option)_ | | |")
+        elif pick.player.key in unscored:
+            any_unscored = True
+            lines.append(f"| {md_cell(slot)} | {md_cell(pick.player.name)} "
+                         f"| {md_cell(pick.player.team or 'BYE')} | — |")
         else:
             lines.append(f"| {md_cell(slot)} | {md_cell(pick.player.name)} "
                          f"| {md_cell(pick.player.team or 'BYE')} "
                          f"| {pick.final:.1f} |")
+    if any_unscored:
+        lines += ["", f"_{LINEUP_UNSCORED_NOTE}_"]
 
     if getattr(lineup, "caveat", None):
         lines += ["", f"> ⚠️ {lineup.caveat}"]

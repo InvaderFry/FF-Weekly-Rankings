@@ -125,12 +125,67 @@ without touching the pure engine.
   reads the raw values instead — the only scale that knows a tenth of a rank from
   twenty. It is deliberately **unanimous**, not any-of: a signal with a real
   separation vetoes the flag, because that is an edge and flagging it would be the
-  false alarm the other floors exist to prevent. Signals absent from the mapping
-  (injury, weather) are bucketed statuses with no meaningful continuous scale and
-  abstain — they can neither flag nor veto. Do *not* "fix" this in
-  `normalize.to_0_100` instead: the calibrator re-blends logged `normalized`
-  values through `weighted_final`, so changing the transform makes every
-  historical row in `results_log.jsonl` unreplayable.
+  false alarm the other floors exist to prevent. A signal absent from the mapping
+  (injury) is a bucketed status with no meaningful continuous scale and
+  abstains — it can neither flag nor veto. Weather carries a gap too
+  (`FF_CLOSE_RAW_GAP_WEATHER`, 12.0 points of its own 0-100 conditions score) but
+  it exists for `flat_signals` below, not for this method, and it is named in
+  **`Settings.presentational_gaps`** — the list of signals barred from voting
+  here whatever their weight. That list is the point: weather's exclusion used to
+  fall out of the weight floor alone, 0.10 against a 0.15 `min_disagree_weight`,
+  which made a coincidence between two independently configurable numbers
+  load-bearing. Raising `FF_WEIGHT_WEATHER` or lowering `FF_MIN_DISAGREE_WEIGHT`
+  silently promoted it to a voter, and the dangerous direction is the **veto**,
+  not the flag: this function returns the moment one voter reads a real
+  separation, so a 12-point gap on a scale quantized to 5-point steps would
+  suppress the warning entirely on the strength of two forecasts one step apart.
+  Naming it means the gap can be tuned for the note it actually drives without
+  moving what the flag does. Do *not* "fix" this in `normalize.to_0_100` instead: the
+  calibrator re-blends logged `normalized` values through `weighted_final`, so
+  changing the transform makes every historical row in `results_log.jsonl`
+  unreplayable.
+
+  Two more findings from a 2026-09-09 review of live Week 1 output shaped this
+  further, both worth not rediscovering. First, `_flag_close_call`'s
+  disagreement loop used to let `disagree_exempt` (injury) skip the weight floor
+  entirely, so *any* Questionable-vs-healthy split on the top two tripped the
+  flag regardless of whether anything else backed it up — 5 of 9 multi-candidate
+  groups flagged in one run, most not real coin flips. The exemption now only
+  changes what an exempt-but-under-floor disagreement *does*: it still appends
+  its note (so it reaches `results_log.jsonl` for later analysis), but it no
+  longer sets `close_call` on its own. A signal that also clears the real weight
+  floor is untouched — this only demotes the exemption's own bypass. The
+  designation itself is never hidden: it is already on the player's own `flags`,
+  rendered in every table regardless of `close_call`, and reaches Discord's
+  starter alerts whenever that player is the pick. Second, the flag's first
+  condition only ever compared the top two overall — rank 1 vs 2 — but in a
+  league starting N at a position, the decision that actually sets the lineup is
+  rank N vs N+1. `_flag_close_call` now takes an optional `starter_count` and
+  additionally evaluates that boundary pair with its own wording ("Last starting
+  spot is a coin flip: X vs Y"). Purely additive to the engine: `weighted_final`
+  is untouched, so logged rows stay replayable, and every other caller
+  (`compare`, the waiver pass) passes no `starter_count` and is unaffected.
+
+  Two things about that boundary check are load-bearing. It runs **both**
+  conditions the top two get, the raw one included — the normalized threshold
+  alone would reproduce the exact blindness this whole section exists to cover,
+  since `to_0_100` is min-max *within the candidate set* and so whether the
+  boundary pair reads as close depends on the spread of the whole group rather
+  than on the two players. Four receivers at ECR 18 / 20 / 20.5 / 21 put the
+  WR2/WR3 boundary — half a rank apart, the tightest call on the roster — 16.7
+  normalized points apart and silent. And `starter_count` comes from
+  **`report.starter_counts(slots)`**, derived from the slot list actually in use
+  rather than hardcoded beside it, threaded through `score_week` and
+  `rank_each_position`. `waivers.build._lineup_keys` is why: computing one half
+  of a guard from the hardcoded template while the other half read the league's
+  real `roster_slots` left a superflex league's second quarterback both
+  unprotected and surplus. The consequence here is milder — the count only
+  decides which *pair* is examined, so a mismatch misses a warning rather than
+  cutting a starter — but a second copy of the template is exactly how that bug
+  started. The start/sit path has no league-rules fetch and keeps the default
+  (2 RB, 2 WR, 1 each of QB/TE/K/DEF), as the rest of that path already does;
+  a caller that knows the league's real slots passes them to `score_week` and
+  `build_lineup` together and a 3-WR league checks WR3/WR4.
 
   The same min-max blindness has a second, purely *presentational* consequence,
   and `Recommendation.flat_signals` is the answer to it. A column can look
@@ -142,8 +197,21 @@ without touching the pure engine.
   "read with care" line under the table (`render.flat_signal_note`, mirrored in
   `html.py`). It reuses `close_call_raw_gaps` rather than adding a threshold, and
   it asks about the whole candidate set rather than the top two — the dead-heat
-  condition already owns that pair. Bucketed signals with no configured gap
-  (injury, weather) abstain here exactly as they do in `_flag_raw_dead_heat`.
+  condition already owns that pair. Injury has no configured gap and abstains
+  here exactly as it does in `_flag_raw_dead_heat`.
+
+  Weather's own raw values used to make this worse than a blind spot: a 2026
+  review found `weather.score_conditions` returning a continuous value rounded
+  to 2dp, which contradicts the "bucketed status" premise the flag logic relies
+  on to justify weather's abstention there — and, unguarded by a raw gap here,
+  let a few mph of forecast noise (Caleb Williams 93.7 vs Ja'Marr Chase 95.5, both
+  clear football weather) blend into a ~29-point spread with no warning. The fix
+  is two-sided: `score_conditions` now quantizes its result to a 5-point step, so
+  near-identical forecasts produce an *identical* raw value and stop moving
+  `final` at all rather than moving it by up to weather's full blend weight; and
+  weather gained the `close_call_raw_gaps` entry described above so that when a
+  real (unquantized-away) spread remains, this method can still call it out.
+  Both halves route around `normalize.to_0_100` on purpose — see above.
 
 ### The self-calibration loop (#7)
 
@@ -407,9 +475,19 @@ reason a piece of it is shaped the way it is.
   `season_rank` and selects them on it, and a table sorted by a column it does
   not display reads as unsorted (61.7, 58.6, 72.0) — while the weekly `final`
   it used to show was a cross-position comparison of separately normalized
-  sets. Renderers must tolerate a `None` rank there too. Trade fairness is a
-  *multiple* (`hi / lo`), not a difference — a 0.3 gap separates a league-winner
-  from a starter at ratio 0.1 and two bench bodies at 2.0.
+  sets. Renderers must tolerate a `None` rank there too. The add table had the
+  identical defect and is fixed the identical way: `pick_adds` orders and gates
+  on `depth_ratio`, but the table showed `final`, so AndyLOT's Week 1 adds read
+  76.5, 91.9, 84.5 — visibly unsorted, because the column and the ordering
+  disagreed. `WaiverTarget.depth_ratio` carries the value `pick_adds` actually
+  used, and the add table shows **`Depth`** instead of `Score`; renderers must
+  tolerate `None` there too, the same contract as the drop table's `ROS rank`.
+  The `"ranks POSn against the N POS the league starts"` clause that used to be
+  in `add_reasons`' "why" text is gone for the same reason: once the Depth
+  column carries that reading numerically, restating it in prose said the same
+  thing twice in one row. Trade fairness is a *multiple* (`hi / lo`), not a
+  difference — a 0.3 gap separates a league-winner from a starter at ratio 0.1
+  and two bench bodies at 2.0.
 
   Two honest limits. `depth_ratio` ranks by starter scarcity, not points over
   replacement, so within the skill positions a genuine DEF1 still outranks a
@@ -470,6 +548,20 @@ reason a piece of it is shaped the way it is.
   honest while the two agree. `STREAM_POSITIONS` moved to `waivers/models.py` for
   the same reason: `WaiverBundle` reasons about it now, and two copies would let
   a renderer and the scorer disagree about which empty rows are worth explaining.
+
+  **`WaiverBundle.no_stashes_reason()`** is the third of these, and exists
+  because `find_stashes`' gates are tight by design: a shelved player needs an
+  NFL team *and* a rest-of-season rank before "stash while he's cheap" is an
+  honest sentence, since this app has no return-date model and a missing ROS
+  rank is not evidence anyone plays again. Tight gates empty the section on a
+  normal week, and an empty stash section rendered as **nothing at all** — the
+  digest and the dashboard both dropped the heading — so "nobody on the wire is
+  shelved or on bye" and "four were weighed and none could be vouched for"
+  arrived as the same blank space. Its denominator is `score.stash_candidates`,
+  which walks the same `_stash_seen` the finder walks, extracted rather than
+  copied for the same reason `add_candidate_ratio` was. Unlike the two above
+  this is **two** renderers, not three: Discord has never carried a stash
+  section.
 - **Preseason is refused, not filled.** `pipeline.build_signals` serves bundled
   sample values before Week 1 so a start/sit *table* has something to
   demonstrate with. Dealt to a real roster those values name real players to
@@ -594,3 +686,20 @@ true for one healthy body beside two on IR: those rows carry "not startable:
 ruled out this week", which is exactly what a roster owner needs to see, so that
 table stays. The interactive `render_table` keeps its table too — someone who
 typed `rank TE` asked for it.
+
+That collapse fixed the position table; it did not reach the lineup table one
+level up, which is `render.lineup_unscored_keys`' fix. `report.build_lineup`
+fills a slot from `PlayerScore.final` alone, with no `Recommendation` in hand to
+ask `unranked` of — so for an `unranked` position (a lone candidate, or one
+scored body beside a ruled-out one) it printed the fabricated midpoint
+`weighted_final` produces from an all-50 `normalized` row, unconditionally, as
+though it were a real score: 10 of 27 Week 1 lineup rows read exactly `50.0`
+while the position section directly below said no signal could be scored — one
+report contradicting itself. `lineup_unscored_keys` takes the `recs` dict every
+lineup renderer already has beside the `Lineup` and returns the player keys
+drawn from an `unranked` recommendation; each renderer blanks `final` to `—` for
+exactly those picks and adds one footnote. `final` on the `PlayerScore` itself is
+untouched — `build_lineup` is still greedy on it, and the player still has to be
+startable — this is a presentation fact, the same kind `unranked` and
+`lone_candidate` already are, just one hop further from the `Recommendation`
+that knows it.

@@ -50,17 +50,31 @@ PRECIP_PENALTY_AT_100 = 30.0  # penalty when precipitation probability is 100%
 GAME_HOURS = 4
 
 
+#: The step `score_conditions` quantizes its result to. CLAUDE.md calls weather
+#: "a bucketed status with no meaningful continuous scale" to justify its
+#: abstention from the close-call flag's disagreement/veto floors -- but the
+#: implementation used to return a continuous value rounded to 2dp, which made
+#: that premise false: two forecasts a few mph apart (93.7 vs 95.5, both calm
+#: football weather) rendered as a ~29-point spread once blended. Quantizing
+#: means near-identical forecasts produce an *identical* raw value, which ties
+#: under `to_0_100` and contributes exactly 0 to the blend differential instead
+#: of up to 10 points (weather's 0.10 default weight) of pure sensor noise.
+QUANTIZE_STEP = 5.0
+
+
 def score_conditions(wind_mph: float, precip_prob: float) -> float:
     """Map wind (mph) + precipitation probability (0-100) to a 0-100 score.
 
     Calm and dry is ~100; wind is the dominant factor (it hurts passing and field
     goals most), precipitation a secondary one. Monotonic: worse weather never
-    scores higher. Clamped to [0, 100].
+    scores higher. Clamped to [0, 100], then quantized to a `QUANTIZE_STEP`-point
+    step -- see the note on that constant.
     """
     wind_penalty = max(0.0, wind_mph - CALM_WIND_MPH) * WIND_PENALTY_PER_MPH
     wind_penalty = min(wind_penalty, MAX_WIND_PENALTY)
     precip_penalty = max(0.0, min(precip_prob, 100.0)) / 100.0 * PRECIP_PENALTY_AT_100
-    return round(max(0.0, min(100.0, 100.0 - wind_penalty - precip_penalty)), 2)
+    raw = max(0.0, min(100.0, 100.0 - wind_penalty - precip_penalty))
+    return round(raw / QUANTIZE_STEP) * QUANTIZE_STEP
 
 
 def parse_hourly(blob: dict) -> dict[str, tuple[float, float]]:

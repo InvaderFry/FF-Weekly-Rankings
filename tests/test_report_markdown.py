@@ -1,7 +1,7 @@
 from ff_startsit import report
 from ff_startsit.config import Settings
 from ff_startsit.models import Player, PlayerScore, Recommendation
-from ff_startsit.output.render import render_markdown
+from ff_startsit.output.render import LINEUP_UNSCORED_NOTE, render_markdown
 
 
 def _rec(*scores, close_call=False, notes=None):
@@ -49,6 +49,32 @@ def test_build_lineup_fills_slots_without_reuse():
     # No key is used twice.
     used = [pick.player.key for _, pick in lineup if pick]
     assert len(used) == len(set(used))
+
+
+def test_lineup_table_blanks_a_fabricated_midpoint_score():
+    """A lone TE candidate normalizes to the neutral midpoint (50.0) with
+    nothing real behind it -- `to_0_100` has no other value to compare it to.
+    The lineup table used to print that 50.0 as though it were a real score,
+    directly contradicting the position section right below it, which says no
+    signal could be scored. Issue #40: 10 of 27 lineup rows read exactly
+    `50.0` this way."""
+    recs = {
+        "TE": _rec(_ps("te1", "Lone Tight End", "TE", 50.0)),
+        "RB": _rec(_ps("rb1", "Alpha", "RB", 90.0), _ps("rb2", "Bravo", "RB", 10.0)),
+    }
+    digest = report.render_digest(3, "ppr", recs)
+    assert "| TE | Lone Tight End | KC | — |" in digest
+    assert "| TE | Lone Tight End | KC | 50.0 |" not in digest
+    assert LINEUP_UNSCORED_NOTE in digest
+
+
+def test_lineup_table_keeps_a_real_score_for_a_multi_candidate_slot():
+    """A slot with a real ranking behind it must keep printing its number --
+    the fix only blanks fabricated midpoints, not every score."""
+    recs = {"RB": _rec(_ps("rb1", "Alpha", "RB", 90.0), _ps("rb2", "Bravo", "RB", 10.0))}
+    digest = report.render_digest(3, "ppr", recs)
+    assert "| RB | Alpha | KC | 90.0 |" in digest
+    assert LINEUP_UNSCORED_NOTE not in digest
 
 
 def test_render_digest_from_precomputed_recs():
@@ -411,6 +437,31 @@ def test_rank_each_position_holds_out_a_player_who_cannot_play(tmp_path):
     assert recs["RB"].scores[0].player.key == "1"
 
 
+def test_rank_each_position_flags_the_last_starting_spot_not_just_the_top_two(tmp_path):
+    """F5(b): workTG's real Week 1 decision (Nabers 45.5 Q vs Burden 42.9 Q)
+    sat at the WR2/WR3 boundary, not the top two, and the old top-two-only
+    check never saw it. `report.STARTER_COUNTS["WR"]` is 2, so the pair that
+    should trip here is rank 2 vs rank 3 -- not rank 1 vs rank 2, which must
+    stay a clean, unflagged gap or this test proves nothing."""
+    from ff_startsit.config import Settings
+    from ff_startsit.models import Player
+    from ff_startsit.report import rank_each_position
+
+    settings = Settings(data_dir=tmp_path, weights={"ecr": 1.0},
+                        close_call_threshold=1.0)
+    players = [Player("1", "WR1", "KC", "WR"), Player("2", "WR2", "KC", "WR"),
+              Player("3", "WR3", "KC", "WR"), Player("4", "WR4", "KC", "WR")]
+    # Rank 1 is far clear; ranks 2 and 3 are essentially tied; rank 4 trails.
+    signals = [_FakeECR({"1": 1.0, "2": 20.0, "3": 20.1, "4": 90.0})]
+
+    rec = rank_each_position(settings, players, week=1, log=False,
+                             signals=signals)["WR"]
+
+    assert rec.close_call is True
+    assert any("Last starting spot" in n for n in rec.notes)
+    assert not any("Too close to call" in n for n in rec.notes)
+
+
 # --- a lone candidate is not a ranking -------------------------------------
 
 def test_unranked_is_about_what_could_be_compared():
@@ -491,6 +542,18 @@ def _blend_with(vegas_raws, gaps=None):
                  else {"ecr": 3.0, "vegas": 1.5})
 
 
+def test_fmt_raw_rounds_and_strips_trailing_noise():
+    """`:g` defaults to 6 significant figures, which is how a Vegas gap of
+    1.222222 ended up printed verbatim in a close-call note (issue #40)."""
+    from ff_startsit.models import _fmt_raw
+
+    assert _fmt_raw(2.0) == "2"
+    assert _fmt_raw(1.222222) == "1.22"
+    assert _fmt_raw(0.5) == "0.5"
+    assert _fmt_raw(100.0) == "100"
+    assert _fmt_raw(0.0) == "0"
+
+
 def test_a_tiny_raw_spread_is_called_out_under_the_table():
     """`to_0_100` is min-max within the candidate set with no minimum-span floor,
     so the best candidate is 100 and the worst is 0 however little separates
@@ -515,10 +578,45 @@ def test_a_real_raw_spread_is_left_alone():
     assert "Read with care" not in md
 
 
+def _blend_with_weather(weather_raws, gaps=None):
+    """Blend a candidate set with real raw weather values, so the raw scale
+    weather now carries (PR2's fix) exists to test against."""
+    from ff_startsit.engine.blend import blend
+    from ff_startsit.models import SignalValue
+    players = [Player(str(i), f"P{i}", "KC", "WR") for i in range(len(weather_raws))]
+    values = {
+        "weather": {p.key: SignalValue(raw=v, available=True)
+                    for p, v in zip(players, weather_raws)},
+        "ecr": {p.key: SignalValue(raw=float(i + 1) * 5, available=True)
+                for i, p in enumerate(players)},
+    }
+    return blend(week=1, scoring="ppr", players=players, signal_values=values,
+                higher_is_better={"weather": True, "ecr": False},
+                weights={"weather": 0.10, "ecr": 0.60}, close_call_threshold=5.0,
+                close_call_raw_gaps=gaps if gaps is not None
+                else {"ecr": 3.0, "weather": 12.0})
+
+
+def test_weather_flat_spread_is_called_out_once_it_carries_a_raw_gap():
+    """Before PR2, weather had no configured raw gap at all, so `flat_signals`
+    always skipped it -- the "read with care" note built for exactly this case
+    never fired for the column that needed it most: Week 1's AndyLOT WR set
+    spanned 93.7-100 raw weather and rendered as a 0-100 blowout with no
+    warning."""
+    rec = _blend_with_weather([93.7, 95.5, 95.2])   # spans 1.8, under the 12 gap
+    assert [name for name, _, _ in rec.flat_signals()] == ["weather"]
+
+
+def test_weather_flat_note_does_not_fire_on_a_real_spread():
+    rec = _blend_with_weather([50.0, 70.0, 95.0])   # spans 45, well past the 12 gap
+    assert rec.flat_signals() == []
+
+
 def test_bucketed_signals_abstain_from_the_flat_check():
-    """Injury and weather are bucketed statuses with no continuous scale, so they
-    carry no configured gap and can neither raise nor suppress the note — the
-    same abstention they make in `blend._flag_raw_dead_heat`."""
+    """A signal absent from the configured gaps (injury is the shipped
+    example — a bucketed status with no continuous scale) carries no
+    configured gap and can neither raise nor suppress the note — the same
+    abstention it makes in `blend._flag_raw_dead_heat`."""
     rec = _blend_with([22.0, 21.8], gaps={"vegas": 1.5})
     assert [name for name, _, _ in rec.flat_signals()] == ["vegas"]
     no_gaps = _blend_with([22.0, 21.8], gaps={})
@@ -544,3 +642,49 @@ def test_one_reading_is_not_a_spread():
                 close_call_raw_gaps={"vegas": 1.5})
     assert rec.flat_signals() == []
     assert "vegas spans" not in render_markdown(rec, title="RB")
+
+
+def test_starter_counts_derive_from_the_slot_list_it_is_given():
+    """The count and the lineup must not be able to disagree about the league.
+
+    Hardcoding the counts beside `LINEUP_SLOTS` is the same shape of guard that
+    `waivers.build._lineup_keys` had to learn the hard way -- one half reading a
+    template while the other read the league's real slots. Here a 3-WR league's
+    boundary is WR3/WR4, and a count derived from the slots it is handed says so.
+    """
+    from ff_startsit.report import LINEUP_SLOTS, STARTER_COUNTS, starter_counts
+
+    assert starter_counts() == STARTER_COUNTS == {"QB": 1, "RB": 2, "WR": 2,
+                                                  "TE": 1, "K": 1, "DEF": 1}
+    three_wr = ["QB", "RB", "RB", "WR", "WR", "WR", "TE", "FLEX", "K", "DEF"]
+    assert starter_counts(three_wr)["WR"] == 3
+    # Flex slots have no position to count against and stay out of the mapping,
+    # the same way they stay out of `LeagueRules.roster_slots`.
+    assert "FLEX" not in starter_counts(LINEUP_SLOTS + ["FLEX", "SUPER_FLEX"])
+
+
+def test_rank_each_position_takes_the_boundary_from_the_leagues_slots(tmp_path):
+    """A 3-WR league's lineup decision is WR3/WR4, and the check must follow it.
+
+    Same four receivers either way: under the default 2-WR template the tied
+    pair sits at the boundary and flags; told the league starts three, the
+    boundary moves past them and the same data must go quiet.
+    """
+    from ff_startsit.config import Settings
+    from ff_startsit.models import Player
+    from ff_startsit.report import rank_each_position
+
+    settings = Settings(data_dir=tmp_path, weights={"ecr": 1.0},
+                        close_call_threshold=1.0)
+    players = [Player("1", "WR1", "KC", "WR"), Player("2", "WR2", "KC", "WR"),
+               Player("3", "WR3", "KC", "WR"), Player("4", "WR4", "KC", "WR")]
+    ranks = {"1": 1.0, "2": 20.0, "3": 20.1, "4": 90.0}
+
+    default = rank_each_position(settings, players, week=1, log=False,
+                                 signals=[_FakeECR(dict(ranks))])["WR"]
+    assert any("Last starting spot" in n for n in default.notes)
+
+    three_wr = rank_each_position(
+        settings, players, week=1, log=False, signals=[_FakeECR(dict(ranks))],
+        slots=["QB", "RB", "RB", "WR", "WR", "WR", "TE", "FLEX", "K", "DEF"])["WR"]
+    assert not any("Last starting spot" in n for n in three_wr.notes)

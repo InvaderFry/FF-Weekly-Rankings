@@ -123,6 +123,14 @@ class WaiverTarget:
     margin: Optional[float] = None
     drop: Optional[PlayerScore] = None
     pool: Optional[PoolPlayer] = None
+    #: The ratio ``pick_adds`` actually ordered and gated this add on
+    #: (``score.depth_ratio``) — positional rank over what the league starts
+    #: there. The one number comparable across positions, unlike ``score.final``,
+    #: which is min-maxed *within* a position and meaningless read down a mixed
+    #: table. ``None`` for a target built outside ``pick_adds`` (e.g. directly in
+    #: a test); renderers must tolerate that the same way they do a missing
+    #: season rank.
+    depth_ratio: Optional[float] = None
     #: Average FantasyPros rank across the preferred journalists, when ranked.
     journalist_avg: Optional[float] = None
     mentions: tuple["ColumnMention", ...] = ()
@@ -207,6 +215,10 @@ class WaiverBundle:
     #: and "no trade is worth making" is a claim about a search that happened.
     trades_considered: bool = False
     stashes: list[StashIdea] = field(default_factory=list)
+    #: How many free agents were weighed as stashes before the gates
+    #: (``score.stash_candidates``). The denominator ``no_stashes_reason`` needs,
+    #: for the same reason ``pool_size`` is the one ``no_adds_reason`` needs.
+    stash_pool: int = 0
     byes: list[ByeGap] = field(default_factory=list)
     sources: list[tuple[str, str]] = field(default_factory=list)  # (author, url)
     #: Surfaced by every renderer, like ``report.Lineup.caveat`` — the honest
@@ -282,6 +294,34 @@ class WaiverBundle:
             return ("Nothing on the wire beats anyone you could drop this week "
                     f"(ranked {ranked} of {self.pool_size} free agents).")
         return "Nothing on the wire beats anyone you could drop this week."
+
+    def no_stashes_reason(self) -> Optional[str]:
+        """Why the stash section is empty — a quiet wire, or a gate that held.
+
+        The same argument as ``no_adds_reason``, one section over. ``find_stashes``
+        wants an OUT/IR/PUP/SUS player who still has an NFL team *and* a
+        rest-of-season rank, or a ranked player on bye — deliberately tight, since
+        this app has no return-date model and a missing ROS rank is not evidence
+        anyone plays again. Tight gates empty the section often, and an empty
+        section rendered as nothing at all: the digest and the dashboard both drop
+        the heading entirely, so "nobody is shelved this week" and "four shelved
+        players were weighed and none could be vouched for" arrived as the same
+        blank space. That is the distinguishable-failures-rendering-identically
+        shape ``no_adds_reason`` and ``no_trades_reason`` each already fixed.
+
+        ``None`` means render nothing, on the same two conditions as the others: a
+        banner or a caveat is standing and already explains the silence. (Discord
+        has never carried a stash section, so unlike ``no_adds_reason`` this is
+        shared by two renderers, not three.)
+        """
+        if self.banner or self.caveat or self.stashes:
+            return None
+        if not self.stash_pool:
+            return ("No free agent is shelved or on bye this week, so there was "
+                    "nothing to stash.")
+        return (f"{self.stash_pool} shelved or bye-week free agents were weighed, "
+                "and none cleared the bar: a stash needs an NFL team and a "
+                "rest-of-season rank saying he plays again.")
 
     def no_adds_at_positions(self) -> Optional[str]:
         """Which starting positions produced no add, and whether anyone was weighed.

@@ -9,13 +9,43 @@ from pathlib import Path
 from rich.console import Console
 from rich.table import Table
 
-from ..models import Recommendation
+from ..models import Recommendation, _fmt_raw
 
 _console = Console()
 
 
 #: Shown under a table with a single candidate. See ``Recommendation.unranked``.
 UNRANKED_NOTE = ("Only one candidate here, so there is nothing to rank against — the per-signal columns are blank rather than showing a midpoint placeholder.")
+
+#: Shown under the suggested-lineup table when a pick's score is a fabricated
+#: midpoint rather than a real reading. See ``lineup_unscored_keys``.
+LINEUP_UNSCORED_NOTE = ("— = too few candidates at that slot to score against "
+                        "each other, so the number would be a fabricated "
+                        "midpoint, not a real signal.")
+
+#: Legend for the waiver add table's "Depth" column (`waivers.score.depth_ratio`).
+#: Lives here, not in ``waivers/``, because ``output/html.py`` cannot import
+#: upward from ``waivers/`` and both it and ``waivers/render.py`` need the same
+#: wording rather than two invented copies.
+DEPTH_LEGEND = ("Depth = positional rank ÷ what the league starts there. Below "
+                "1.00 is a startable player; above is bench depth.")
+
+
+def lineup_unscored_keys(recs: dict[str, Recommendation]) -> frozenset[str]:
+    """Player keys whose lineup ``final`` is a fabricated midpoint, not a reading.
+
+    ``engine.normalize.to_0_100`` maps a single usable value to the neutral
+    midpoint (50), so a position with fewer than two scored candidates —
+    ``Recommendation.unranked`` — blends into an exact 50.0 with nothing real
+    behind it. 10 of 27 Week 1 lineup rows read exactly ``50.0`` this way while
+    the section right below said "no signal could be scored" — one report
+    contradicting itself. ``report.build_lineup`` still fills the slot from
+    that number (the player still has to be startable), but showing it in a
+    table reads as a score. One definition, shared by the digest, the
+    dashboard and the Discord embed.
+    """
+    return frozenset(s.player.key for rec in recs.values() if rec.unranked
+                     for s in rec.scores)
 
 
 def render_table(rec: Recommendation, title: str = "") -> None:
@@ -93,7 +123,7 @@ def flat_signal_note(rec: Recommendation) -> str:
     flat = rec.flat_signals()
     if not flat:
         return ""
-    parts = [f"{name} spans {spread:g} (separation threshold {gap:g})"
+    parts = [f"{name} spans {_fmt_raw(spread)} (separation threshold {_fmt_raw(gap)})"
              for name, spread, gap in flat]
     column = "column magnifies" if len(flat) == 1 else "columns magnify"
     return ("Read with care: " + "; ".join(parts) +

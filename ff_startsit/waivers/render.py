@@ -10,13 +10,18 @@ from __future__ import annotations
 from datetime import date
 from typing import Optional, Sequence
 
-from ..output.render import md_cell
+from ..output.render import DEPTH_LEGEND, md_cell
 from .models import WaiverBundle, WaiverTarget
 
 
 
 def _bid_cell(target: WaiverTarget) -> str:
     return target.bid or "—"
+
+
+def _depth_cell(ratio: Optional[float]) -> str:
+    """An add's positional depth ratio for display, or an em dash."""
+    return "—" if ratio is None else f"{ratio:.2f}"
 
 
 def _adds_table(bundle: WaiverBundle) -> list[str]:
@@ -26,7 +31,7 @@ def _adds_table(bundle: WaiverBundle) -> list[str]:
         # None means a banner is standing and already explains it.
         reason = bundle.no_adds_reason()
         return [f"_{reason}_", ""] if reason else []
-    lines = ["| Add | Pos | Score | Drop for him | Bid | Why |",
+    lines = ["| Add | Pos | Depth | Drop for him | Bid | Why |",
              "|---|---|---:|---|---|---|"]
     for t in bundle.adds:
         drop = t.drop.player.name if t.drop else "—"
@@ -40,9 +45,13 @@ def _adds_table(bundle: WaiverBundle) -> list[str]:
         why = "; ".join(t.reasons[1:]) or "—"  # reasons[0] repeats the drop column
         lines.append(
             f"| **{md_cell(t.score.player.name)}** | {md_cell(t.score.player.position)} "
-            f"| {t.score.final:.1f} | {drop} "
+            f"| {_depth_cell(t.depth_ratio)} | {drop} "
             f"| {md_cell(_bid_cell(t))} | {md_cell(why)} |"
         )
+    # The table is ordered by depth ratio, not by final score (see CLAUDE.md's
+    # depth_ratio section) — the legend is what makes the column's own numbers
+    # readable rather than just visibly sorted.
+    lines.extend(["", f"_{DEPTH_LEGEND}_"])
     # A table listing only streamers still leaves the positions that decide a
     # week unexplained; the bundle owns that sentence too.
     gap = bundle.no_adds_at_positions()
@@ -99,7 +108,10 @@ def _trades_section(bundle: WaiverBundle) -> list[str]:
 
 def _stash_section(bundle: WaiverBundle) -> list[str]:
     if not bundle.stashes:
-        return []
+        # The bundle decides what an empty section means, exactly as it does for
+        # adds and trades — a quiet wire or a gate that held, not a blank space.
+        reason = bundle.no_stashes_reason()
+        return ["### Stash watch", "", f"_{reason}_", ""] if reason else []
     lines = ["### Stash watch", ""]
     for s in bundle.stashes:
         lines.append(f"- {md_cell(s.score.player.name)} "

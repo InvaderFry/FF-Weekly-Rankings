@@ -25,9 +25,8 @@ from .models import DropCandidate, LeagueRules, PoolPlayer, WaiverBundle
 from .season_values import SeasonValueProvider, URLS, protected_rank
 from .score import (BYE_HORIZON, MIN_LEAGUE_TEAMS, STREAM_POSITIONS, bye_gaps,
                     dedupe_players, droppable, find_stashes, has_ecr, pick_adds,
-                    score_positions, signal_coverage, starting_slots,
-                    viable_adds_by_position,
-                    team_players)
+                    score_positions, signal_coverage, stash_candidates,
+                    starting_slots, team_players, viable_adds_by_position)
 from .trades import suggest_trades
 
 #: Scores are min-maxed inside a position's own candidate set, so a 9-point WR
@@ -279,6 +278,7 @@ def build_bundle(settings: Settings, label: str, provider: LeagueViewProvider,
 
     taken = {t.score.player.key for t in bundle.adds}
     bundle.stashes = find_stashes(index, pool, taken, bye_teams)
+    bundle.stash_pool = stash_candidates(index, pool, taken, bye_teams)
     bundle.byes = bye_gaps(my_players, rules, week, playing)
 
     if include_trades:

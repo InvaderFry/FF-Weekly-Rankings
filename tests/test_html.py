@@ -1,5 +1,6 @@
 from ff_startsit.models import Player, PlayerScore, Recommendation
 from ff_startsit.output.html import build_dashboard_html, build_multi_dashboard_html
+from ff_startsit.output.render import LINEUP_UNSCORED_NOTE
 from ff_startsit.report import LeagueBundle
 
 
@@ -28,6 +29,26 @@ def test_build_dashboard_html_is_complete_document():
     assert "Alpha" in html and "Bravo" in html
     # An empty slot is rendered, not crashed on.
     assert "(no option)" in html
+
+
+def test_lineup_table_blanks_a_fabricated_midpoint_score():
+    """Same defect as the markdown digest: a lone candidate's `final` is a
+    fabricated 50.0 midpoint, and the dashboard used to print it as a real
+    score."""
+    lone = _rec(_ps("1", "Lone Tight End", "TE", 50.0))
+    html = build_dashboard_html(3, "ppr", [("TE", lone.scores[0])], {"TE": lone},
+                                generated_on="2026-06-24")
+    assert ">—<" in html
+    assert "50.0" not in html
+    assert LINEUP_UNSCORED_NOTE in html
+
+
+def test_lineup_table_keeps_a_real_score_for_a_multi_candidate_slot():
+    rb = _rec(_ps("1", "Alpha", "RB", 90.0), _ps("2", "Bravo", "RB", 10.0))
+    html = build_dashboard_html(3, "ppr", [("RB", rb.scores[0])], {"RB": rb},
+                                generated_on="2026-06-24")
+    assert ">90.0<" in html
+    assert LINEUP_UNSCORED_NOTE not in html
 
 
 def test_build_dashboard_html_flags_and_close_call():
