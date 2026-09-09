@@ -1,0 +1,304 @@
+{
+  "events": [
+    {
+      "week": 1,
+      "date": "2026-09-11T00:35Z",
+      "competitions": [
+        {
+          "date": "2026-09-11T00:35Z",
+          "neutralSite": true,
+          "venue": {
+            "id": "9119",
+            "fullName": "Melbourne Cricket Ground",
+            "address": {
+              "city": "Melbourne",
+              "state": "VIC",
+              "country": "Australia"
+            },
+            "indoor": false
+          },
+          "competitors": [
+            {
+              "homeAway": "home",
+              "team": {
+                "abbreviation": "LAR"
+              }
+            },
+            {
+              "homeAway": "away",
+              "team": {
+                "abbreviation": "SF"
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "week": 3,
+      "date": "2026-09-27T20:25Z",
+      "competitions": [
+        {
+          "date": "2026-09-27T20:25Z",
+          "neutralSite": true,
+          "venue": {
+            "id": "11931",
+            "fullName": "Maracan\u00e3 Stadium",
+            "address": {
+              "city": "Rio De Janeiro",
+              "country": "Brazil"
+            },
+            "indoor": false
+          },
+          "competitors": [
+            {
+              "homeAway": "home",
+              "team": {
+                "abbreviation": "DAL"
+              }
+            },
+            {
+              "homeAway": "away",
+              "team": {
+                "abbreviation": "BAL"
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "week": 4,
+      "date": "2026-10-04T13:30Z",
+      "competitions": [
+        {
+          "date": "2026-10-04T13:30Z",
+          "neutralSite": true,
+          "venue": {
+            "id": "5534",
+            "fullName": "Tottenham Hotspur Stadium",
+            "address": {
+              "city": "London",
+              "country": "England"
+            },
+            "indoor": false
+          },
+          "competitors": [
+            {
+              "homeAway": "home",
+              "team": {
+                "abbreviation": "WSH"
+              }
+            },
+            {
+              "homeAway": "away",
+              "team": {
+                "abbreviation": "IND"
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "week": 5,
+      "date": "2026-10-11T13:30Z",
+      "competitions": [
+        {
+          "date": "2026-10-11T13:30Z",
+          "neutralSite": true,
+          "venue": {
+            "id": "5534",
+            "fullName": "Tottenham Hotspur Stadium",
+            "address": {
+              "city": "London",
+              "country": "England"
+            },
+            "indoor": false
+          },
+          "competitors": [
+            {
+              "homeAway": "home",
+              "team": {
+                "abbreviation": "JAX"
+              }
+            },
+            {
+              "homeAway": "away",
+              "team": {
+                "abbreviation": "PHI"
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "week": 6,
+      "date": "2026-10-18T13:30Z",
+      "competitions": [
+        {
+          "date": "2026-10-18T13:30Z",
+          "neutralSite": true,
+          "venue": {
+            "id": "2455",
+            "fullName": "Wembley Stadium",
+            "address": {
+              "city": "London",
+              "country": "England"
+            },
+            "indoor": false
+          },
+          "competitors": [
+            {
+              "homeAway": "home",
+              "team": {
+                "abbreviation": "JAX"
+              }
+            },
+            {
+              "homeAway": "away",
+              "team": {
+                "abbreviation": "HOU"
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "week": 7,
+      "date": "2026-10-25T13:30Z",
+      "competitions": [
+        {
+          "date": "2026-10-25T13:30Z",
+          "neutralSite": true,
+          "venue": {
+            "id": "1781",
+            "fullName": "Stade de France",
+            "address": {
+              "city": "Saint-Denis",
+              "country": "France"
+            },
+            "indoor": false
+          },
+          "competitors": [
+            {
+              "homeAway": "home",
+              "team": {
+                "abbreviation": "NO"
+              }
+            },
+            {
+              "homeAway": "away",
+              "team": {
+                "abbreviation": "PIT"
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "week": 9,
+      "date": "2026-11-08T14:30Z",
+      "competitions": [
+        {
+          "date": "2026-11-08T14:30Z",
+          "neutralSite": true,
+          "venue": {
+            "id": "1353",
+            "fullName": "Santiago Bernab\u00e9u",
+            "address": {
+              "city": "Madrid",
+              "country": "Spain"
+            },
+            "indoor": true
+          },
+          "competitors": [
+            {
+              "homeAway": "home",
+              "team": {
+                "abbreviation": "ATL"
+              }
+            },
+            {
+              "homeAway": "away",
+              "team": {
+                "abbreviation": "CIN"
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "week": 10,
+      "date": "2026-11-15T14:30Z",
+      "competitions": [
+        {
+          "date": "2026-11-15T14:30Z",
+          "neutralSite": true,
+          "venue": {
+            "id": "11930",
+            "fullName": "FC Bayern Munich Stadium",
+            "address": {
+              "city": "Munich",
+              "country": "Germany"
+            },
+            "indoor": false
+          },
+          "competitors": [
+            {
+              "homeAway": "home",
+              "team": {
+                "abbreviation": "DET"
+              }
+            },
+            {
+              "homeAway": "away",
+              "team": {
+                "abbreviation": "NE"
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "week": 11,
+      "date": "2026-11-23T01:20Z",
+      "competitions": [
+        {
+          "date": "2026-11-23T01:20Z",
+          "neutralSite": true,
+          "venue": {
+            "id": "8219",
+            "fullName": "Estadio Banorte",
+            "address": {
+              "city": "Mexico City",
+              "country": "Mexico"
+            },
+            "indoor": false
+          },
+          "competitors": [
+            {
+              "homeAway": "home",
+              "team": {
+                "abbreviation": "SF"
+              }
+            },
+            {
+              "homeAway": "away",
+              "team": {
+                "abbreviation": "MIN"
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "source": "https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard?dates=2026&seasontype=2&week={week}",
+  "collected_on": "2026-09-09"
+}

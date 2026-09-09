@@ -7,7 +7,7 @@ venue. Roofed stadiums play in controlled conditions, so the weather signal scor
 them neutral and never makes a network call for them.
 
 Coordinates are approximate stadium centers — precise enough for a city-level
-forecast. Home team is the lookup; a player's game is at their team's stadium.
+forecast. The schedule selects the actual home or neutral venue for both teams.
 """
 
 from __future__ import annotations
@@ -72,14 +72,22 @@ def _venue_key(name: str) -> str:
 # Jacksonville). Anything not listed resolves to None so the weather signal marks
 # itself unavailable instead of inventing conditions.
 NEUTRAL_VENUES: dict[str, Stadium] = {
+    # City of Melbourne location pin (rounded); ESPN identifies this as outdoors.
+    # https://whatson.melbourne.vic.gov.au/things-to-do/melbourne-cricket-ground-mcg
+    _venue_key("Melbourne Cricket Ground"): Stadium(-37.8202, 144.9817, dome=False),
+    _venue_key("Stade de France"): Stadium(48.9245, 2.3602, dome=False),
+    _venue_key("Maracanã Stadium"): Stadium(-22.9122, -43.2302, dome=False),
+    _venue_key("Estadio Banorte"): Stadium(19.3029, -99.1505, dome=False),
     _venue_key("Tottenham Hotspur Stadium"): Stadium(51.6043, -0.0665, dome=False),
     _venue_key("Wembley Stadium"): Stadium(51.5560, -0.2795, dome=False),
+    _venue_key("FC Bayern Munich Stadium"): Stadium(48.2188, 11.6247, dome=False),
     _venue_key("Allianz Arena"): Stadium(48.2188, 11.6247, dome=False),
     _venue_key("Deutsche Bank Park"): Stadium(50.0686, 8.6455, dome=False),
     _venue_key("Estadio Azteca"): Stadium(19.3029, -99.1505, dome=False),
     _venue_key("Croke Park"): Stadium(53.3607, -6.2512, dome=False),
     _venue_key("Arena Corinthians"): Stadium(-23.5453, -46.4742, dome=False),
     _venue_key("Neo Quimica Arena"): Stadium(-23.5453, -46.4742, dome=False),
+    _venue_key("Santiago Bernabéu"): Stadium(40.4531, -3.6883, dome=True),
     _venue_key("Santiago Bernabeu Stadium"): Stadium(40.4531, -3.6883, dome=False),
 }
 
