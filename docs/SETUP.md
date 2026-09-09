@@ -185,6 +185,34 @@ Run `ffstartsit experts --verify` at any time; it tells these two cases apart
 (and a third: an id that belongs to a different analyst than the name you filed
 it under).
 
+> **Known state as of 2026-09-08: this section is off, and the key is why.**
+> `FANTASYPROS_API_KEY` returns **HTTP 403 `ForbiddenException`** on every
+> request. That was measured, not guessed: the key produces a *byte-identical*
+> response to sending no `x-api-key` header at all and to sending 40 characters
+> of garbage, on seasons 2026, 2025 and 2024 alike. So it is not a season,
+> scoring or `filters` problem, and re-pasting the key does not fix it.
+>
+> Two explanations fit and have **not** been told apart, because API Gateway
+> answers both with the same 403: the key is not recognized, or the plan behind
+> it does not cover the `consensus-rankings` endpoint (FantasyPros' rankings API
+> is a commercial product). Asking FantasyPros which one it is, is the whole
+> fix — there is no code change that helps. Until then the section stays empty
+> **even with a correct `FF_PREFERRED_EXPERTS`**: a valid id is necessary and
+> not sufficient.
+>
+> What this does *not* affect is worth stating plainly, because the warning
+> sounds worse than it is. Consensus ECR — 0.60 of the blend — comes back fine
+> from the scrape, which reads the same numbers out of the page's embedded
+> `ecrData`. Journalist ranks are annotation: `JournalistFetcher` is not a
+> `Signal`, carries no weight, and `journalist_avg` is attached in
+> `waivers/score.py` and never read by any sort or gate. **No start/sit or
+> waiver recommendation changes when this section is missing.** What you
+> actually lose is the display section and week-aware rankings (`--week N`
+> returns current-week ranks, warned, and withheld from the results log).
+>
+> Since the merge of the dead-key warning, a rejected key says so on every run
+> rather than falling through to the scrape in silence.
+
 ### The quick way
 
 ```bash

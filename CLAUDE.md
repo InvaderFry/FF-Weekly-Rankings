@@ -236,6 +236,27 @@ is in the list at all** — Jamey Eisenberg and Dave Richard cannot feed this se
 id. Their Tuesday waiver *columns* come from `waivers/columns.py`, a different
 scrape entirely, and are unaffected.
 
+**Do not "solve" the CBS pair by scraping CBS's own rankings pages.** They look
+like the obvious answer — `/fantasy/football/rankings/ppr/RB/jamey-eisenberg/`
+exists and returns 200 — and they are a trap, measured 2026-09-08: every slug
+serves *byte-identical* data. Eisenberg, Dave Richard, `consensus`, and a
+`not-a-real-analyst` slug invented on the spot all return the same ranking with
+the same fingerprint, because the per-analyst filtering happens client-side in
+JavaScript and the server ships one consensus document to every URL. Only a
+handful of rows are even server-rendered. The page also links internally to
+*different* slugs (`jameye`, `drichard`) that behave the same way.
+
+That shape fails **open**, which is what makes it worse than having no source:
+a dead or misspelled slug is indistinguishable from a working one, so the
+scraper would publish CBS house consensus under a named byline forever and
+nothing in the response could catch it. It is the identical failure to the
+`44`/`45` ids this section already removed, and the exact case `_matches_filters`
+fails closed to prevent. A `columns.py`-style name-matching inversion does not
+rescue it either: that trick guards against *invented* names, and here every
+name is real — it is the attribution that is false. If CBS ranks are ever
+wanted, the only honest route is a data endpoint that names the analyst in its
+response, so the fetcher can fail closed the way both ECR transports do.
+
 `ecr._matches_filters` is the guard underneath all of that, and it **fails
 closed on both transports**, including when the response names no `filters` at
 all. A response that doesn't say which experts it covers is not evidence that it
