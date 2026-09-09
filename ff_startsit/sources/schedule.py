@@ -162,7 +162,9 @@ class ScheduleProvider:
         self.timeout = timeout
         self.cache_dir = Path(cache_dir) if cache_dir else None
         self._weeks: dict[int, dict[str, GameContext]] = {}
-        self.source_status: list[str] = []
+        #: ``(identity, line)`` pairs — see ``ECRSignal.source_status`` for why
+        #: the identity travels with the line rather than being parsed back out.
+        self.source_status: list[tuple[tuple, str]] = []
 
     def _season(self) -> int:
         if self.season is None:
@@ -231,8 +233,9 @@ class ScheduleProvider:
         week_info = blob.get("week")
         provider_week = week_info.get("number", "unknown") if isinstance(week_info, dict) else "unknown"
         self.source_status.append(
-            f"ESPN schedule: requested Week {week}; provider Week {provider_week}; "
-            f"{kind} {timestamp.isoformat(timespec='seconds')}")
+            (("espn-schedule", week),
+             f"ESPN schedule: requested Week {week}; provider Week {provider_week}; "
+             f"{kind} {timestamp.isoformat(timespec='seconds')}"))
 
     def _fetch(self, week: int) -> dict:
         resp = self.session.get(

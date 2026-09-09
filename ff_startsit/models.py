@@ -139,7 +139,11 @@ class Recommendation:
     #: into config. Empty for callers that pass no gaps, which keeps every
     #: existing construction of this class valid.
     raw_gaps: dict[str, float] = field(default_factory=dict)
-    source_status: list[str] = field(default_factory=list)
+    #: ``(identity, line)`` pairs describing which source served this run, one
+    #: per (transport, week). The identity travels with the line so a consumer
+    #: can keep the newest version of a source's status instead of every
+    #: snapshot of it — see ``pipeline._merge_source_status``.
+    source_status: list[tuple[tuple, str]] = field(default_factory=list)
 
     @property
     def unranked(self) -> bool:

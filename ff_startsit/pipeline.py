@@ -72,6 +72,27 @@ def flex_signals(signals: Sequence[Signal]) -> Optional[list[Signal]]:
     return out if found else None
 
 
+def _merge_source_status(rec, entries) -> None:
+    """Keep one status line per source identity, the newest winning.
+
+    These lines are snapshots of a live aggregate — ``ECRSignal.source_status``
+    grows its position list as the run scores position after position — so the
+    plain string dedupe this replaced kept every growing prefix and a
+    three-league digest reopened with 18 near-identical ECR rows above the
+    tables that decide the week. Matching on the identity the signal supplies
+    (rather than on the rendered text) collapses them back to the one line per
+    (transport, week) that ``ECRSignal.source_status`` documents, and it does so
+    without teaching this function how any signal punctuates its own status.
+    """
+    for key, line in entries:
+        for index, (seen, _) in enumerate(rec.source_status):
+            if seen == key:
+                rec.source_status[index] = (key, line)
+                break
+        else:
+            rec.source_status.append((key, line))
+
+
 def recommend(
     settings: Settings,
     players: Sequence[Player],
@@ -165,13 +186,9 @@ def recommend(
     )
 
     for sig in signals:
-        for detail in getattr(sig, "source_status", []):
-            if detail not in rec.source_status:
-                rec.source_status.append(detail)
+        _merge_source_status(rec, getattr(sig, "source_status", []))
         schedule = getattr(sig, "schedule", None)
-        for detail in getattr(schedule, "source_status", []):
-            if detail not in rec.source_status:
-                rec.source_status.append(detail)
+        _merge_source_status(rec, getattr(schedule, "source_status", []))
 
     # The fourth kind of run that is never logged, for the same reason as the
     # three above: the row would not mean what it claims. `calibrate` scores

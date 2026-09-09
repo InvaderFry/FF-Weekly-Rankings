@@ -1,5 +1,6 @@
 import json
 import os
+import re
 from pathlib import Path
 
 import pytest
@@ -7,6 +8,7 @@ import pytest
 from ff_startsit import cli
 from ff_startsit.config import LeagueProfile, Settings
 from ff_startsit.models import Player
+from ff_startsit.output.render import LINEUP_UNSCORED_NOTE
 from ff_startsit.roster.base import RosterError
 from ff_startsit.roster.espn import ESPNProvider
 from ff_startsit.roster.manual import ManualProvider
@@ -825,3 +827,53 @@ def test_rank_does_not_rank_a_player_who_cannot_play(_ranked_with_an_ir_back,
     one = out.index("Runner One")
     two = out.index("Runner Two")
     assert one < two, "the healthy, ranked back must outrank the IR one"
+
+
+@pytest.fixture
+def _lineup_week(monkeypatch, tmp_path):
+    """A roster with both shapes: two scored RBs, and a lone QB and DEF.
+
+    `report.score_week` imports `build_signals` by name, so the patch has to
+    land on `report`, not on `pipeline` as the `rank` fixtures above do.
+    """
+    from ff_startsit import report as report_module
+
+    monkeypatch.setattr(cli, "_print_preseason_banner", lambda *a, **kw: None)
+    monkeypatch.setattr(cli, "_get_roster",
+                        lambda args, settings, profile=None: _rank_roster())
+    monkeypatch.setattr(report_module, "build_signals",
+                        lambda *a, **kw: [_RankSignal({"1": 4.0, "2": 19.0,
+                                                       "3": 7.0, "KC": 6.0})])
+    return _settings(data_dir=tmp_path, weights={"ecr": 1.0})
+
+
+def _lineup_args(**kw):
+    import argparse
+    base = dict(week=5, md=False, source=None, league=None, team=None,
+                league_name=None)
+    base.update(kw)
+    return argparse.Namespace(**base)
+
+
+@pytest.mark.parametrize("md", [False, True])
+def test_lineup_does_not_print_a_fabricated_midpoint(_lineup_week, capsys, md):
+    """`lineup` was the fourth lineup renderer and the last one still showing it.
+
+    `normalize.to_0_100` maps a lone candidate to the neutral midpoint, so a
+    position with one body blends to an exact 50.0 with nothing behind it. The
+    digest, the dashboard and the Discord embed all blank that via
+    `lineup_unscored_keys`; this command did not, so a live ChatOps `/lineup`
+    answered `QB Passer Three 50.0` in the same week the digest for the same
+    league rendered the same player as `—`. One report contradicting itself.
+    """
+    assert cli.cmd_lineup(_lineup_args(md=md), _lineup_week) == 0
+    out = capsys.readouterr().out
+
+    # The lone QB and the lone DEF have nothing to rank against.
+    assert "Passer Three" in out and "Kansas City" in out
+    assert "50.0" not in out
+    assert "—" in out
+    assert LINEUP_UNSCORED_NOTE in out
+    # ...while the two RBs were scored against each other and keep real numbers.
+    assert "Runner One" in out
+    assert re.search(r"Runner One.*\d+\.\d", out)
