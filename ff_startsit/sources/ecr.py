@@ -138,6 +138,30 @@ def _matches_filters(payload: dict, filters: str) -> bool:
     return expected == served
 
 
+def _api_failure_reason(exc: requests.RequestException) -> str:
+    """Turn a failed API call into a cause the reader can act on.
+
+    The status code is the whole diagnosis here, and the actionable split is
+    401/403 (the key itself is the problem — no retry helps) against everything
+    else (transport or rate limiting, which a later run may well clear). A bare
+    "API unavailable" sent the reader to check their network for a key their
+    plan simply doesn't cover.
+    """
+    resp = getattr(exc, "response", None)
+    if resp is None:
+        return f"the request to it failed ({exc.__class__.__name__})"
+    code = resp.status_code
+    if code in (401, 403):
+        return (f"the API rejected the key (HTTP {code}) — it is either not a "
+                "valid key or the plan behind it does not cover the "
+                "consensus-rankings endpoint")
+    if code == 404:
+        return f"the endpoint returned HTTP {code} — the API path may have moved"
+    if code == 429:
+        return f"the API rate-limited the request (HTTP {code})"
+    return f"the API returned HTTP {code}"
+
+
 def fetch_scrape_rows(session: requests.Session, scoring: str, position: str,
                       timeout: int = 20,
                       filters: Optional[str] = None) -> list[ExternalRow]:
@@ -194,6 +218,9 @@ class ECRSignal(Signal):
         self.served_wrong_week: bool = False
         self._rows_cache: dict[tuple[str, int], list[ExternalRow]] = {}
         self._week_warned: set[int] = set()  # warn once per week, not per position
+        #: Guards the dead-key warning below. A set rather than a bool so the
+        #: pooled sibling can share the one instance and the run says it once.
+        self._api_warned: set[str] = set()
 
     def pooled(self, pool_position: str = FLEX_POOL) -> "ECRSignal":
         """A sibling instance that fetches one pooled cross-position ranking.
@@ -208,6 +235,7 @@ class ECRSignal(Signal):
                         session=self.session, timeout=self.timeout,
                         pool_position=pool_position)
         sib._rows_cache = self._rows_cache
+        sib._api_warned = self._api_warned
         return sib
 
     def is_available(self) -> bool:
@@ -251,8 +279,12 @@ class ECRSignal(Signal):
                 if rows:
                     self.last_source = "api"
                     return rows
-            except (requests.RequestException, ValueError):
-                pass  # fall through to scrape
+                self._warn_api_fallback("returned no rankings")
+            except requests.RequestException as exc:
+                self._warn_api_fallback(_api_failure_reason(exc))
+            except ValueError as exc:
+                self._warn_api_fallback(
+                    f"returned a response this app could not parse ({exc})")
         try:
             rows = self._fetch_scrape(position)
         except requests.RequestException:
@@ -265,6 +297,31 @@ class ECRSignal(Signal):
             print(f"warning: FantasyPros scrape for {position} returned no "
                   "rankings — the page format may have changed.", file=sys.stderr)
         return rows
+
+    def _warn_api_fallback(self, reason: str) -> None:
+        """Say so when a *configured* API key doesn't work.
+
+        This was a bare ``pass`` for a long time, and the reason it survived is
+        that the scrape fallback below is genuinely good enough for the common
+        case: with a completely dead key every ordinary current-week run still
+        printed a correct-looking table, so nothing ever looked broken. What a
+        dead key silently costs is exactly the two things only the API can do —
+        per-journalist ranks (the public page applies its expert filter in the
+        browser and serves the same consensus whatever ``filters`` asks for) and
+        week-aware rankings. Both of those degrade to an omitted section rather
+        than an error, so without this line no output anywhere in the app would
+        ever mention the key again.
+
+        Warned once per run rather than per position: one dead key would
+        otherwise print this for every position in every league.
+        """
+        if self._api_warned:
+            return
+        self._api_warned.add("warned")
+        print(f"warning: FantasyPros API key is set but {reason}. Falling back to "
+              "the public rankings page — consensus ECR still works, but "
+              "per-journalist ranks and week-aware rankings need a working key.",
+              file=sys.stderr)
 
     def _warn_if_week_mismatch(self, week: int) -> None:
         """Say so when scraped rankings can't be the week that was asked for.

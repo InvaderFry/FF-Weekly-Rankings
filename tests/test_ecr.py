@@ -353,3 +353,110 @@ def test_api_honored_filter_is_accepted():
     session = _api_session({"filters": "317", "players": _ONE_PLAYER})
     rows = fetch_api_rows(session, "k", 2026, "half", "RB", 1, filters="317")
     assert [r.name for r in rows] == ["Test Back"]
+
+
+# --- A configured-but-dead API key must not fail silently -------------------
+#
+# The scrape fallback is good enough for current-week consensus, so a dead key
+# still produced a correct-looking table and nothing anywhere said the key was
+# the reason the journalist section had gone missing.
+
+class _RejectingApiSession:
+    """403s the API (as FantasyPros does for an unentitled key), serves the page."""
+
+    def __init__(self, status=403):
+        self.status = status
+        self.api_calls = 0
+
+    def get(self, url, **kw):
+        import requests
+
+        if "api.fantasypros.com" in url:
+            self.api_calls += 1
+            resp = requests.Response()
+            resp.status_code = self.status
+            resp._content = b'{"message":"Forbidden"}'
+            resp.url = url
+            raise requests.HTTPError(f"{self.status} Client Error", response=resp)
+
+        class _HtmlResp:
+            status_code = 200
+            text = (FIXTURES / "ecr_scrape_rb.html").read_text()
+
+            def raise_for_status(self):
+                pass
+
+        return _HtmlResp()
+
+
+def _runner():
+    return Player(key="1", name="Patrick Runner", team="KC", position="RB")
+
+
+def test_rejected_api_key_warns_and_still_falls_back(capsys, monkeypatch):
+    import ff_startsit.season as season_mod
+    monkeypatch.setattr(season_mod, "date_week", lambda *a, **k: 9)
+
+    sig = ECRSignal(api_key="deadkey", scoring="ppr", season=2025,
+                    session=_RejectingApiSession())
+    out = sig.fetch(9, [_runner()])
+
+    err = capsys.readouterr().err
+    # Names the key as the cause, and that no retry will help.
+    assert "FantasyPros API key is set but" in err
+    assert "HTTP 403" in err
+    assert "does not cover" in err
+    # The run still works off the scrape — degradation, not an outage.
+    assert out and out["1"].raw is not None
+
+
+def test_dead_key_warning_names_the_status_it_got(capsys, monkeypatch):
+    import ff_startsit.season as season_mod
+    monkeypatch.setattr(season_mod, "date_week", lambda *a, **k: 9)
+
+    for status, expected in ((404, "may have moved"), (429, "rate-limited"),
+                             (500, "HTTP 500")):
+        sig = ECRSignal(api_key="k", scoring="ppr", season=2025,
+                        session=_RejectingApiSession(status=status))
+        sig.fetch(9, [_runner()])
+        assert expected in capsys.readouterr().err
+
+
+def test_dead_key_warns_once_per_run_not_once_per_position(capsys, monkeypatch):
+    import ff_startsit.season as season_mod
+    monkeypatch.setattr(season_mod, "date_week", lambda *a, **k: 9)
+
+    sig = ECRSignal(api_key="deadkey", scoring="ppr", season=2025,
+                    session=_RejectingApiSession())
+    sig.fetch(9, [
+        Player(key="1", name="Patrick Runner", team="KC", position="RB"),
+        Player(key="2", name="Someone", team="KC", position="WR"),
+        Player(key="3", name="Another", team="KC", position="TE"),
+    ])
+    assert capsys.readouterr().err.count("FantasyPros API key is set but") == 1
+
+
+def test_pooled_sibling_shares_the_dead_key_warning(capsys, monkeypatch):
+    """The FLEX pass is a second instance; one dead key is still one warning."""
+    import ff_startsit.season as season_mod
+    monkeypatch.setattr(season_mod, "date_week", lambda *a, **k: 9)
+
+    sig = ECRSignal(api_key="deadkey", scoring="ppr", season=2025,
+                    session=_RejectingApiSession())
+    sig.fetch(9, [_runner()])
+    sig.pooled().fetch(9, [_runner()])
+    assert capsys.readouterr().err.count("FantasyPros API key is set but") == 1
+
+
+def test_no_api_key_configured_stays_quiet(capsys, monkeypatch):
+    """Not configuring a key is a choice, not a fault — the scrape is the design."""
+    import ff_startsit.season as season_mod
+    monkeypatch.setattr(season_mod, "date_week", lambda *a, **k: 9)
+
+    sig = ECRSignal(api_key="", scoring="ppr", season=2025,
+                    session=_RejectingApiSession())
+    sig.fetch(9, [_runner()])
+
+    err = capsys.readouterr().err
+    assert "API key is set but" not in err
+    assert sig.session.api_calls == 0  # and no pointless request was made
