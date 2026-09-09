@@ -592,7 +592,7 @@ def test_add_reasons_no_longer_repeats_the_depth_column():
     rules = LeagueRules(roster_slots={"RB": 2}, team_count=10)
     target = WaiverTarget(score=index["f1"])
 
-    reason = "; ".join(add_reasons(target, rules))
+    reason = "; ".join(add_reasons(target))
 
     assert "the league starts" not in reason
     # The reading itself is still there -- just in the Depth column, not prose.
@@ -620,3 +620,30 @@ def test_viable_adds_counts_exactly_what_pick_adds_would_weigh():
 
     assert counts == by_hand
     assert counts.get("WR") == 1          # the unranked one was never a candidate
+
+
+def test_stash_candidates_counts_what_the_gates_rejected():
+    """An empty stash list means two different things, and this is the number
+    that tells them apart. `find_stashes`' gates are tight enough to empty the
+    section on a normal week, so `WaiverBundle.no_stashes_reason` needs to know
+    whether anyone was weighed at all -- the same job `pool_size` does for
+    `no_adds_reason`. Counted through the same `_stash_seen` walk the finder
+    uses, extracted rather than copied, because "N were weighed" is only honest
+    while the two agree."""
+    from ff_startsit.waivers.score import stash_candidates
+
+    unsigned = PoolPlayer(_p("f1", "Unsigned", "RB", team=None), injury_status="IR")
+    ranked = PoolPlayer(_p("f2", "On Pup", "RB", team="SEA"), injury_status="PUP")
+    healthy = PoolPlayer(_p("f3", "Just Bad", "RB", team="KC"))
+    pool = [unsigned, ranked, healthy]
+    _, index = _score([p.player for p in pool] + [_p("r1", "R", "RB")],
+                      {"f1": 40, "f2": 41, "f3": 42, "r1": 10})
+
+    # Both shelved players were weighed; only the vouched-for one survives.
+    assert stash_candidates(index, pool, taken=set(), bye_teams=set()) == 2
+    assert [s.score.player.key
+            for s in find_stashes(index, pool, taken=set(), bye_teams=set())] == ["f2"]
+
+    # A wire with nobody shelved or on bye was not weighed at all -- a genuinely
+    # quiet section, not a gate that held.
+    assert stash_candidates(index, [healthy], taken=set(), bye_teams=set()) == 0

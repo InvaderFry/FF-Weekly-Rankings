@@ -108,7 +108,10 @@ def _trades_section(bundle: WaiverBundle) -> list[str]:
 
 def _stash_section(bundle: WaiverBundle) -> list[str]:
     if not bundle.stashes:
-        return []
+        # The bundle decides what an empty section means, exactly as it does for
+        # adds and trades — a quiet wire or a gate that held, not a blank space.
+        reason = bundle.no_stashes_reason()
+        return ["### Stash watch", "", f"_{reason}_", ""] if reason else []
     lines = ["### Stash watch", ""]
     for s in bundle.stashes:
         lines.append(f"- {md_cell(s.score.player.name)} "

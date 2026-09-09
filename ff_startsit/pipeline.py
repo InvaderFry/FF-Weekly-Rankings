@@ -94,9 +94,9 @@ def recommend(
 
     ``starter_count``, when given, additionally flags a close call at the
     boundary of the last starting slot (rank N vs N+1), not just the overall
-    top two — see ``engine.blend._flag_starter_boundary``. Passed through
-    unchanged; ``None`` (the default) leaves every caller's behavior exactly
-    as before.
+    top two — see ``engine.blend._flag_starter_boundary``. Callers that know
+    the league's real starting slots supply it from those; ``None`` (the
+    default) leaves every caller's behavior exactly as before.
     """
     signals = list(signals) if signals is not None else build_signals(settings)
 
@@ -160,6 +160,7 @@ def recommend(
         close_call_raw_gaps=settings.close_call_raw_gaps,
         unavailable_keys=unavailable_keys,
         disagree_exempt=settings.disagree_exempt,
+        dead_heat_exempt=settings.presentational_gaps,
         starter_count=starter_count,
     )
 

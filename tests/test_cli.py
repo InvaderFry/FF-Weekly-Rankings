@@ -129,7 +129,7 @@ def test_publish_does_one_scoring_pass(tmp_path, monkeypatch):
 
     calls = {"n": 0}
 
-    def fake_rank(settings, plyrs, week, log=False, signals=None):
+    def fake_rank(settings, plyrs, week, log=False, signals=None, slots=None):
         calls["n"] += 1
         ps = PlayerScore(player=players[0])
         ps.final = 90.0
@@ -170,7 +170,7 @@ def test_publish_survives_discord_failure(tmp_path, monkeypatch):
     monkeypatch.setattr(cli, "_get_roster", lambda args, settings, profile=None: players)
     monkeypatch.setattr(cli, "_resolve_week", lambda args, settings: 7)
 
-    def fake_rank(settings, plyrs, week, log=False, signals=None):
+    def fake_rank(settings, plyrs, week, log=False, signals=None, slots=None):
         ps = PlayerScore(player=players[0])
         ps.final = 90.0
         ps.normalized = {"ecr": 90.0}
@@ -257,7 +257,7 @@ def test_publish_includes_journalists_in_both_outputs(tmp_path, monkeypatch):
     monkeypatch.setattr(cli, "_get_roster", lambda args, settings, profile=None: players)
     monkeypatch.setattr(cli, "_resolve_week", lambda args, settings: 7)
 
-    def fake_rank(settings, plyrs, week, log=False, signals=None):
+    def fake_rank(settings, plyrs, week, log=False, signals=None, slots=None):
         ps = PlayerScore(player=players[0])
         ps.final = 90.0
         ps.normalized = {"ecr": 90.0}
@@ -304,7 +304,7 @@ def test_publish_all_leagues_combines_every_league(tmp_path, monkeypatch):
     monkeypatch.setattr(cli, "_get_roster", fake_get_roster)
     monkeypatch.setattr(cli, "_resolve_week", lambda args, settings: 7)
 
-    def fake_rank(settings, plyrs, week, log=False, signals=None):
+    def fake_rank(settings, plyrs, week, log=False, signals=None, slots=None):
         ps = PlayerScore(player=plyrs[0])
         ps.final = 90.0
         ps.normalized = {"ecr": 90.0}
@@ -351,7 +351,7 @@ def test_publish_all_leagues_skips_a_failing_league(tmp_path, monkeypatch):
     monkeypatch.setattr(cli, "_get_roster", fake_get_roster)
     monkeypatch.setattr(cli, "_resolve_week", lambda args, settings: 7)
 
-    def fake_rank(settings, plyrs, week, log=False, signals=None):
+    def fake_rank(settings, plyrs, week, log=False, signals=None, slots=None):
         ps = PlayerScore(player=plyrs[0])
         ps.final = 90.0
         ps.normalized = {"ecr": 90.0}
@@ -571,7 +571,7 @@ def test_notify_warns_instead_of_raising_on_discord_failure(tmp_path, monkeypatc
     monkeypatch.setattr(cli, "_get_roster", lambda args, settings, profile=None: players)
     monkeypatch.setattr(cli, "_resolve_week", lambda args, settings: 7)
 
-    def fake_rank(settings, plyrs, week, log=False, signals=None):
+    def fake_rank(settings, plyrs, week, log=False, signals=None, slots=None):
         ps = PlayerScore(player=players[0])
         ps.final, ps.normalized = 90.0, {"ecr": 90.0}
         return {"RB": Recommendation(week=week, scoring="ppr",

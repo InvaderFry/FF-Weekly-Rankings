@@ -557,3 +557,88 @@ def test_starter_boundary_needs_a_body_below_the_line():
     to compare the last starter against -- must not crash or flag."""
     rec = _blend_four([1.0, 20.0, 20.1, 90.0], starter_count=4)
     assert rec.close_call is False
+
+
+# --- the starter boundary needs the raw check too --------------------------
+
+def _four_wrs():
+    return [Player(key=str(i), name=f"WR{i}", team="KC", position="WR")
+            for i in range(1, 5)]
+
+
+def test_starter_boundary_reads_raw_units_not_just_normalized_scores():
+    """The boundary check inherited `to_0_100`'s min-max blindness.
+
+    `close_call_threshold` lives in the normalized space, which is min-maxed
+    *within the candidate set*, so whether the boundary pair reads as close
+    depends on the spread of the whole group rather than on the two players.
+    Four receivers at ECR 18 / 20 / 20.5 / 21 put the WR2/WR3 boundary -- half a
+    rank apart, well inside the 3.0 ECR gap and the tightest call on the roster
+    -- 16.7 normalized points apart, so the normalized condition alone stayed
+    silent about the one pair it was added to watch. This is exactly why
+    `close_call_raw_gaps` exists for the top two.
+    """
+    rec = blend(
+        week=1, scoring="ppr", players=_four_wrs(),
+        signal_values={"ecr": {"1": SignalValue(18.0), "2": SignalValue(20.0),
+                               "3": SignalValue(20.5), "4": SignalValue(21.0)}},
+        higher_is_better={"ecr": False}, weights={"ecr": 1.0},
+        close_call_threshold=5.0, min_disagree_weight=0.15,
+        close_call_raw_gaps={"ecr": 3.0}, starter_count=2,
+    )
+    # The normalized gap at the boundary is far too wide to trip on its own...
+    finals = [s.final for s in rec.scores]
+    assert finals[1] - finals[2] > 5.0
+    # ...but the raw units say WR2 and WR3 are a dead heat, and the note names
+    # that pair rather than the top two.
+    assert rec.close_call is True
+    boundary = [n for n in rec.notes if n.startswith("Last starting spot")]
+    assert len(boundary) == 1
+    assert "WR2" in boundary[0] and "WR3" in boundary[0]
+    assert "20 vs 20.5" in boundary[0]
+
+
+def test_starter_boundary_raw_check_still_defers_to_a_real_edge():
+    """A signal that genuinely separates the boundary pair vetoes the flag.
+
+    Same unanimity rule the top-two dead heat follows: flagging an edge would be
+    the false alarm the gap floors exist to prevent.
+    """
+    rec = blend(
+        week=1, scoring="ppr", players=_four_wrs(),
+        signal_values={"ecr": {"1": SignalValue(1.0), "2": SignalValue(20.0),
+                               "3": SignalValue(40.0), "4": SignalValue(41.0)}},
+        higher_is_better={"ecr": False}, weights={"ecr": 1.0},
+        close_call_threshold=5.0, min_disagree_weight=0.15,
+        close_call_raw_gaps={"ecr": 3.0}, starter_count=2,
+    )
+    assert not any(n.startswith("Last starting spot") for n in rec.notes)
+
+
+def test_presentational_gap_never_votes_in_the_dead_heat_check():
+    """Weather's raw gap feeds `flat_signals`, and must not become a vetoer.
+
+    Its exclusion used to fall out of the weight floor alone -- 0.10 against a
+    0.15 `min_disagree_weight` -- which made a coincidence between two
+    independently configurable numbers load-bearing. Weighted above the floor,
+    weather here reads a real separation (100 dome vs 60 gale, far outside its
+    12.0 gap) while ECR calls the pair a dead heat. As a voter it would veto and
+    suppress the flag entirely; named in `dead_heat_exempt` it abstains, and ECR
+    alone still flags.
+    """
+    kw = dict(
+        week=1, scoring="ppr", players=_players(),
+        signal_values={"ecr": {"1": SignalValue(12.0), "2": SignalValue(12.5)},
+                       "weather": {"1": SignalValue(100.0), "2": SignalValue(60.0)}},
+        higher_is_better={"ecr": False, "weather": True},
+        weights={"ecr": 0.6, "weather": 0.4},
+        close_call_threshold=1.0, min_disagree_weight=0.15,
+        close_call_raw_gaps={"ecr": 3.0, "weather": 12.0},
+    )
+    voting = blend(**kw)                                   # weather allowed to vote
+    assert voting.close_call is False                      # ...and it vetoes
+
+    exempt = blend(**kw, dead_heat_exempt={"weather"})
+    assert exempt.close_call is True
+    assert any("nothing separates" in n and "weather" not in n
+               for n in exempt.notes)

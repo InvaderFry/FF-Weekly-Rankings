@@ -382,6 +382,13 @@ def _waiver_lists(bundle) -> str:
             out.append(f"<li>{escape(s.score.player.name)} "
                        f"({escape(s.score.player.position)}) — {escape(s.reason)}</li>")
         out.append("</ul>")
+    else:
+        # Same sentence the digest carries: an empty stash section is a quiet
+        # wire or a gate that held, and the two must not render identically.
+        stash_reason = bundle.no_stashes_reason()
+        if stash_reason:
+            out.append("<h3>Stash watch</h3>"
+                       f"<p class='note'>{escape(stash_reason)}</p>")
     if bundle.byes:
         out.append("<h3>Bye-week holes ahead</h3><ul class='ideas'>")
         for gap in bundle.byes:

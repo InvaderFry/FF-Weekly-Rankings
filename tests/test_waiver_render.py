@@ -643,3 +643,52 @@ def test_it_stays_quiet_when_every_starting_position_produced_an_add():
     b.adds = [WaiverTarget(score=_ps("f1", "A Wideout", "WR", 70.0))]
     b.considered_adds = {"WR": 9}
     assert b.no_adds_at_positions() is None
+
+
+# --- an empty stash section explains itself ---------------------------------
+
+def test_no_stashes_reason_separates_a_quiet_wire_from_a_gate_that_held():
+    """The stash gates want an NFL team *and* a rest-of-season rank, which is
+    tight enough to empty the section on a normal week -- and an empty section
+    rendered as nothing at all, so "nobody is shelved" and "four were weighed
+    and none could be vouched for" arrived as the same blank space. Same
+    distinguishable-failures fix `no_adds_reason` and `no_trades_reason` each
+    already got."""
+    quiet = _bundle()
+    quiet.stashes = []
+    quiet.stash_pool = 0
+    assert "nothing to stash" in quiet.no_stashes_reason()
+
+    gated = _bundle()
+    gated.stashes = []
+    gated.stash_pool = 4
+    reason = gated.no_stashes_reason()
+    assert "4 shelved or bye-week free agents were weighed" in reason
+    assert "rest-of-season rank" in reason
+
+    # A populated section says nothing extra, and a standing banner or caveat
+    # owns the explanation -- the same three conditions `no_adds_reason` uses.
+    assert _bundle().no_stashes_reason() is None
+    bannered = _bundle()
+    bannered.stashes = []
+    bannered.stash_pool = 4
+    bannered.banner = "Preseason: nothing is scored yet."
+    assert bannered.no_stashes_reason() is None
+
+
+def test_both_renderers_carry_the_empty_stash_sentence():
+    """One definition, and neither renderer may invent its own wording or drop
+    the heading. Discord has never carried a stash section, so this is two
+    renderers rather than `no_adds_reason`'s three."""
+    from ff_startsit.output.html import build_waivers_html
+
+    b = _bundle()
+    b.stashes = []
+    b.stash_pool = 3
+    sentence = b.no_stashes_reason()
+
+    md = render_waiver_digest(b.week, [b])
+    assert "Stash watch" in md and sentence in md
+
+    html = build_waivers_html(b.week, [b], "2026-09-09")
+    assert "Stash watch" in html and sentence in html

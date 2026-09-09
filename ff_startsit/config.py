@@ -77,14 +77,27 @@ class Settings:
     # instead, which is the only scale that knows a tenth of a rank from twenty.
     # Weather carries one too (12.0 of its 0-100 conditions score) purely for the
     # *presentational* half of this check (`Recommendation.flat_signals`) — it
-    # still cannot flag or veto a dead heat, since its 0.10 blend weight sits
-    # under `min_disagree_weight` and `_flag_raw_dead_heat` filters voters by
-    # weight share before it ever consults this mapping. Injury is the one signal
-    # still absent here: a bucketed status with no meaningful continuous scale, so
-    # a signal with no floor cannot veto the flag. Not a blend weight: the "four
-    # places" rule does not apply and `_validate_weights` is untouched.
+    # is named in `presentational_gaps` below, which is what keeps it from
+    # flagging or vetoing a dead heat. Injury is the one signal still absent
+    # here: a bucketed status with no meaningful continuous scale, so a signal
+    # with no floor cannot veto the flag. Not a blend weight: the "four places"
+    # rule does not apply and `_validate_weights` is untouched.
     close_call_raw_gaps: dict[str, float] = field(
         default_factory=lambda: {"ecr": 3.0, "vegas": 1.5, "weather": 12.0})
+    # Signals whose `close_call_raw_gaps` entry exists for `flat_signals`' "read
+    # with care" note only, and which therefore never vote in
+    # `blend._flag_raw_dead_heat`. Weather's exclusion used to fall out of the
+    # weight floor alone — 0.10 against a 0.15 `min_disagree_weight` — which
+    # made a coincidence between two independently configurable numbers
+    # load-bearing: raising FF_WEIGHT_WEATHER or lowering FF_MIN_DISAGREE_WEIGHT
+    # promoted it to a voter with nothing saying so. The dangerous direction is
+    # the veto, not the flag: `_flag_raw_dead_heat` returns the moment one voter
+    # reads a real separation, so a 12-point gap on a scale quantized to 5-point
+    # steps would suppress the warning entirely on the strength of two forecasts
+    # one step apart. Stating it by name means the gap can be tuned for the note
+    # it actually drives without moving what the flag does.
+    presentational_gaps: frozenset = field(
+        default_factory=lambda: frozenset({"weather"}))
     # Signals whose disagreement flags a close call regardless of
     # `min_disagree_weight`. Injury is weighted low because it is uninformative
     # in the common case — everyone healthy normalizes to a tie — so its weight

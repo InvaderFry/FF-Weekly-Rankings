@@ -642,3 +642,49 @@ def test_one_reading_is_not_a_spread():
                 close_call_raw_gaps={"vegas": 1.5})
     assert rec.flat_signals() == []
     assert "vegas spans" not in render_markdown(rec, title="RB")
+
+
+def test_starter_counts_derive_from_the_slot_list_it_is_given():
+    """The count and the lineup must not be able to disagree about the league.
+
+    Hardcoding the counts beside `LINEUP_SLOTS` is the same shape of guard that
+    `waivers.build._lineup_keys` had to learn the hard way -- one half reading a
+    template while the other read the league's real slots. Here a 3-WR league's
+    boundary is WR3/WR4, and a count derived from the slots it is handed says so.
+    """
+    from ff_startsit.report import LINEUP_SLOTS, STARTER_COUNTS, starter_counts
+
+    assert starter_counts() == STARTER_COUNTS == {"QB": 1, "RB": 2, "WR": 2,
+                                                  "TE": 1, "K": 1, "DEF": 1}
+    three_wr = ["QB", "RB", "RB", "WR", "WR", "WR", "TE", "FLEX", "K", "DEF"]
+    assert starter_counts(three_wr)["WR"] == 3
+    # Flex slots have no position to count against and stay out of the mapping,
+    # the same way they stay out of `LeagueRules.roster_slots`.
+    assert "FLEX" not in starter_counts(LINEUP_SLOTS + ["FLEX", "SUPER_FLEX"])
+
+
+def test_rank_each_position_takes_the_boundary_from_the_leagues_slots(tmp_path):
+    """A 3-WR league's lineup decision is WR3/WR4, and the check must follow it.
+
+    Same four receivers either way: under the default 2-WR template the tied
+    pair sits at the boundary and flags; told the league starts three, the
+    boundary moves past them and the same data must go quiet.
+    """
+    from ff_startsit.config import Settings
+    from ff_startsit.models import Player
+    from ff_startsit.report import rank_each_position
+
+    settings = Settings(data_dir=tmp_path, weights={"ecr": 1.0},
+                        close_call_threshold=1.0)
+    players = [Player("1", "WR1", "KC", "WR"), Player("2", "WR2", "KC", "WR"),
+               Player("3", "WR3", "KC", "WR"), Player("4", "WR4", "KC", "WR")]
+    ranks = {"1": 1.0, "2": 20.0, "3": 20.1, "4": 90.0}
+
+    default = rank_each_position(settings, players, week=1, log=False,
+                                 signals=[_FakeECR(dict(ranks))])["WR"]
+    assert any("Last starting spot" in n for n in default.notes)
+
+    three_wr = rank_each_position(
+        settings, players, week=1, log=False, signals=[_FakeECR(dict(ranks))],
+        slots=["QB", "RB", "RB", "WR", "WR", "WR", "TE", "FLEX", "K", "DEF"])["WR"]
+    assert not any("Last starting spot" in n for n in three_wr.notes)
