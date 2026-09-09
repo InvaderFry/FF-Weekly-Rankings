@@ -141,9 +141,13 @@ jobs:
         if: always() && steps.issue.outcome == 'failure'
         run: |
           echo "::warning title=Issue not posted::The waiver report was not posted or updated. The digest is in this run's summary; the site deploy below was unaffected."
-          echo "### Issue not posted" >> "$GITHUB_STEP_SUMMARY"
-          echo >> "$GITHUB_STEP_SUMMARY"
-          echo "The waiver report could not be posted to an issue — most likely its season/week identity could not be read, which \`identity\` refuses rather than guess at. The digest below is complete." >> "$GITHUB_STEP_SUMMARY"
+          {
+            echo "### Issue not posted"
+            echo
+            echo "The waiver report could not be posted to an issue — most likely its"
+            echo "season/week identity could not be read, which \`identity\` refuses"
+            echo "rather than guess at. The digest below is complete."
+          } >> "$GITHUB_STEP_SUMMARY"
 
       # A Pages deploy replaces the whole site, so uploading a directory that is
       # missing a page silently deletes that page from the live site. The sibling

@@ -23,8 +23,13 @@ cp .env.example .env             # then edit; the app reads .env at startup
 .venv/bin/python -m pytest tests/test_engine.py   # one file
 .venv/bin/python -m pytest -k close_call          # by name substring
 
-.venv/bin/python scripts/check-workflows.py       # the workflow checks CI runs
+.venv/bin/python scripts/check-workflows.py       # half of the workflow check
+actionlint -ignore 'unexpected key "queue" for "concurrency" section'  # the other half
 ```
+
+`actionlint` runs shellcheck over every `run:` block, so a workflow edit that
+looks fine can still fail CI on shell style. Install it (and shellcheck) or
+expect the `workflows` job to be where you find out.
 
 Run the CLI as `ffstartsit <cmd>` (venv active), `.venv/bin/ffstartsit <cmd>`, or
 `python -m ff_startsit <cmd>`. CI (`.github/workflows/ci.yml`) runs `pytest` on
