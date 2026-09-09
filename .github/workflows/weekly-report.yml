@@ -183,11 +183,20 @@ jobs:
           else
             echo "complete=false" >> "$GITHUB_OUTPUT"
             ls -l ./site || true
+            # An annotation, not just a step-summary line: skipping the deploy
+            # leaves the *previous* site standing, so the run is still a success
+            # and shows a green check. Without this the only symptom of "we
+            # stopped publishing" is a page that quietly goes stale, which is
+            # exactly the failure the sibling rebuild's continue-on-error makes
+            # possible in the first place.
+            echo "::warning title=Pages deploy skipped::./site is missing a page, so the live site was left as-is and is now stale. Check the sibling rebuild step above."
             {
               echo "### Pages deploy skipped"
               echo
               echo "\`./site\` is missing a page, so deploying would have deleted the"
-              echo "live copy of it. The previously deployed site is left untouched."
+              echo "live copy of it. The previously deployed site is left untouched"
+              echo "and is therefore **stale** — the sibling rebuild step above is"
+              echo "where it failed."
             } >> "$GITHUB_STEP_SUMMARY"
           fi
 

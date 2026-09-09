@@ -26,7 +26,7 @@ cp .env.example .env             # then edit; the app reads .env at startup
 
 Run the CLI as `ffstartsit <cmd>` (venv active), `.venv/bin/ffstartsit <cmd>`, or
 `python -m ff_startsit <cmd>`. CI (`.github/workflows/ci.yml`) runs `pytest` on
-Python 3.10/3.11/3.12; keep changes compatible with 3.10.
+Python 3.10 through 3.14; keep changes compatible with 3.10.
 
 **Tests are offline by design** — they run against saved fixtures in
 `tests/fixtures/`, never live APIs. Anything that hits the network (ECR/Vegas/
