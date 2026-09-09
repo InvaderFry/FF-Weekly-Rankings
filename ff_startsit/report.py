@@ -131,7 +131,8 @@ def rank_each_position(settings: Settings, players: Sequence[Player], week: int,
     for pos in {p.position for p in players}:
         cands = [p for p in players if p.position == pos]
         recs[pos] = recommend(settings, cands, week, signals=signals,
-                              command="report", log=log)
+                              command="report", log=log,
+                              exclude_unavailable=True)
     return recs
 
 
@@ -162,7 +163,7 @@ def rank_pooled(settings: Settings, cands: Sequence[Player], week: int,
         return None, "no live ECR signal to pool"
 
     rec = recommend(settings, cands, week, signals=pooled_signals,
-                    command=command, log=False)
+                    command=command, log=False, exclude_unavailable=True)
 
     covered = sum(1 for s in rec.scores
                   if (v := s.raw.get("ecr")) is not None and v.available)

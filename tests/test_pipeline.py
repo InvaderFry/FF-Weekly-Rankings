@@ -304,3 +304,82 @@ def test_an_unlabeled_run_writes_an_empty_league_rather_than_omitting_it(tmp_pat
 
     row = json.loads(settings.results_log_path.read_text().strip().splitlines()[-1])
     assert row["league"] == ""
+
+
+class FakeInjury(Signal):
+    """Real ``InjurySignal`` semantics without the Sleeper blob: a 0.0
+    availability score means the designation ruled him out."""
+    name = "injury"
+    higher_is_better = True
+
+    def __init__(self, scores):
+        self.scores = scores
+
+    def is_available(self):
+        return True
+
+    def fetch(self, week, players):
+        return {p.key: SignalValue(self.scores[p.key]) for p in players}
+
+    def rules_out(self, value):
+        return value.available and value.raw == 0.0
+
+
+def _ir_roster():
+    """Charlie is on IR and unranked, but owns the best Vegas read — the live
+    Week 1 shape where an IR back scored 70.0 and outranked two healthy ones."""
+    players = [
+        Player(key="1", name="Alpha", team="KC", position="RB"),
+        Player(key="2", name="Bravo", team="CHI", position="RB"),
+        Player(key="3", name="Charlie", team="DET", position="RB"),
+    ]
+    signals = [FakeECR({"1": 1.0, "2": 8.0, "3": 99.0}),
+               FakeInjury({"1": 100.0, "2": 100.0, "3": 0.0})]
+    return players, signals
+
+
+def _final(rec, key):
+    return next(s.final for s in rec.scores if s.player.key == key)
+
+
+def test_start_sit_holds_a_ruled_out_player_out_of_the_ranking(tmp_path):
+    settings = Settings(weights={"ecr": 0.60, "injury": 0.12}, data_dir=tmp_path)
+    players, signals = _ir_roster()
+
+    rec = recommend(settings, players, week=1, signals=signals, log=False,
+                    exclude_unavailable=True)
+
+    assert _final(rec, "3") is None
+    assert rec.scores[-1].player.key == "3"          # sunk to the bottom
+    assert _final(rec, "1") is not None
+
+
+def test_waiver_pass_still_scores_a_ruled_out_player(tmp_path):
+    """Default off: ``find_stashes`` suggests stashing exactly these players."""
+    settings = Settings(weights={"ecr": 0.60, "injury": 0.12}, data_dir=tmp_path)
+    players, signals = _ir_roster()
+
+    rec = recommend(settings, players, week=1, signals=signals, log=False)
+
+    assert _final(rec, "3") is not None
+
+
+def test_a_signal_without_rules_out_is_tolerated(tmp_path):
+    """``signals`` is duck-typed, so a caller may pass an object predating the
+    hook — it must be skipped, not crash the run."""
+    class _Legacy:
+        name = "ecr"
+        higher_is_better = False
+
+        def is_available(self):
+            return True
+
+        def fetch(self, week, players):
+            return {p.key: SignalValue(1.0) for p in players}
+
+    settings = Settings(weights={"ecr": 0.60}, data_dir=tmp_path)
+    players = [Player(key="1", name="Alpha", team="KC", position="RB")]
+
+    rec = recommend(settings, players, week=1, signals=[_Legacy()], log=False,
+                    exclude_unavailable=True)
+    assert rec.scores[0].final is not None

@@ -70,7 +70,8 @@ def test_build_digest_monkeypatched(monkeypatch):
         Player("3", "Quincy", "BUF", "QB"),
     ]
 
-    def fake_recommend(settings, cands, week, command="", log=True, signals=None):
+    def fake_recommend(settings, cands, week, command="", log=True, signals=None,
+                       **kwargs):
         scores = [_ps(p.key, p.name, p.position, 100 - i * 10, team=p.team)
                   for i, p in enumerate(cands)]
         return _rec(*scores)

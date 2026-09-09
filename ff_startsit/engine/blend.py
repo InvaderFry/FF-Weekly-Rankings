@@ -62,6 +62,8 @@ def blend(
     close_call_threshold: float,
     min_disagree_weight: float = 0.0,
     close_call_raw_gaps: Optional[Mapping[str, float]] = None,
+    unavailable_keys: Iterable[str] = (),
+    disagree_exempt: Iterable[str] = (),
 ) -> Recommendation:
     """Combine per-signal readings into a ranked, flagged recommendation.
 
@@ -72,13 +74,34 @@ def blend(
     ``close_call_raw_gaps`` maps a signal name to the raw separation below which it
     is treated as not separating the top two at all. ``None`` (the default) skips
     the raw-scale check entirely, so existing callers keep their exact behavior.
+
+    ``unavailable_keys`` names players who cannot play at all (an OUT/IR-type
+    designation). They are held out of normalization and left unscored rather
+    than dropped from the output: ``to_0_100`` is min-max *within the candidate
+    set*, so a ruled-out player who happens to hold a signal's extreme rescales
+    everyone else against a man who will not take a snap. They still appear,
+    carrying their raw values and flags, and sink to the bottom on ``final is
+    None`` — visible on your roster, never startable. Callers who *want* those
+    players scored (the waiver pass ranks them to suggest stashes) pass nothing.
+
+    ``disagree_exempt`` names signals whose disagreement counts regardless of
+    ``min_disagree_weight``. A signal must still carry non-zero weight to flag
+    anything, so a signal weighted to 0 stays silent whether exempt or not.
     """
     players = list(players)
+    ruled_out = set(unavailable_keys)
+    playable = [p for p in players if p.key not in ruled_out]
+    # Guard: if every candidate is ruled out there is nothing to rescale against,
+    # so score them normally rather than returning an empty ranking. "All my RBs
+    # are out" is a real week, and an empty table answers it worse than a bad one.
+    if not playable:
+        ruled_out = set()
 
-    # 1. Normalize each signal within the candidate set.
+    # 1. Normalize each signal within the candidate set (ruled-out players excluded).
     normalized: dict[str, dict[str, float]] = {}
     for sig_name, values in signal_values.items():
-        raw = {pk: sv.raw if sv.available else None for pk, sv in values.items()}
+        raw = {pk: sv.raw if sv.available else None
+               for pk, sv in values.items() if pk not in ruled_out}
         normalized[sig_name] = to_0_100(raw, higher_is_better.get(sig_name, True))
 
     # 2. Build a PlayerScore per player.
@@ -96,6 +119,11 @@ def blend(
             if norm is None:
                 continue
             ps.normalized[sig_name] = norm
+        if p.key in ruled_out:
+            # Held out above, so ``normalized`` is empty and ``final`` is None.
+            # Say *why* rather than leaving a blank score that reads like a
+            # failed fetch — the two look identical in every renderer.
+            ps.flags.append("not startable: ruled out this week")
         ps.final = weighted_final(ps.normalized, weights)
         scores.append(ps)
 
@@ -104,13 +132,14 @@ def blend(
 
     rec = Recommendation(week=week, scoring=scoring, weights=dict(weights), scores=scores)
     _flag_close_call(rec, normalized, close_call_threshold, min_disagree_weight,
-                     close_call_raw_gaps)
+                     close_call_raw_gaps, disagree_exempt)
     return rec
 
 
 def _flag_close_call(rec: Recommendation, normalized: Mapping[str, Mapping[str, float]],
                      threshold: float, min_disagree_weight: float = 0.0,
-                     raw_gaps: Optional[Mapping[str, float]] = None) -> None:
+                     raw_gaps: Optional[Mapping[str, float]] = None,
+                     disagree_exempt: Iterable[str] = ()) -> None:
     scored = [s for s in rec.scores if s.final is not None]
     if len(scored) < 2:
         return
@@ -124,6 +153,7 @@ def _flag_close_call(rec: Recommendation, normalized: Mapping[str, Mapping[str, 
         )
 
     total_weight = sum(w for w in rec.weights.values() if w > 0)
+    exempt = set(disagree_exempt)
 
     def _share(sig_name: str) -> float:
         return (rec.weights.get(sig_name, 0.0) / total_weight) if total_weight > 0 else 0.0
@@ -132,6 +162,17 @@ def _flag_close_call(rec: Recommendation, normalized: Mapping[str, Mapping[str, 
     # runner-up meaningfully above the leader? Both floors matter — without them
     # a 0.01-point flip on a zero-weight signal flags as loudly as ECR does, and
     # a flag that fires on everything tells the user nothing.
+    #
+    # ``exempt`` is the deliberate hole in the weight floor. Blend weight is a
+    # poor proxy for how much a *status* signal's disagreement is worth: injury
+    # is weighted low precisely because it is uninformative in the common case
+    # (everyone healthy, so it says nothing and normalizes to a tie), which is
+    # the opposite of what its weight should mean on the rare week it does
+    # disagree. At 0.12 against a 0.15 floor it could never flag, so a
+    # Questionable leader over a healthy runner-up passed silently — the exact
+    # coin-flip this module exists to surface. The zero-weight check below is
+    # kept for the case CLAUDE.md warns about: a learned-weights file that
+    # zeroes a signal must silence it, exemption or not.
     for sig_name, norms in normalized.items():
         a = norms.get(top.player.key)
         b = norms.get(second.player.key)
@@ -143,7 +184,10 @@ def _flag_close_call(rec: Recommendation, normalized: Mapping[str, Mapping[str, 
         # two identically as "favoring" the runner-up.
         if b <= a or b - a < threshold:
             continue
-        if _share(sig_name) < min_disagree_weight:
+        share = _share(sig_name)
+        if share <= 0:
+            continue  # a signal carrying no weight never flags, exempt or not
+        if share < min_disagree_weight and sig_name not in exempt:
             continue  # too lightly weighted to have plausibly changed the pick
         rec.close_call = True
         rec.notes.append(

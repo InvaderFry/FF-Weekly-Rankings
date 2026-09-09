@@ -81,6 +81,17 @@ class Settings:
     # `_validate_weights` is untouched.
     close_call_raw_gaps: dict[str, float] = field(
         default_factory=lambda: {"ecr": 3.0, "vegas": 1.5})
+    # Signals whose disagreement flags a close call regardless of
+    # `min_disagree_weight`. Injury is weighted low because it is uninformative
+    # in the common case — everyone healthy normalizes to a tie — so its weight
+    # understates what a disagreement from it means. At 0.12 against a 0.15 floor
+    # it could never flag, which silently withheld the warning on the shape that
+    # most deserves it: a Questionable leader over a healthy runner-up. A signal
+    # weighted to 0 is still silent (see `_flag_close_call`), so this cannot
+    # resurrect a signal the calibrator zeroed. Not a blend weight — the "four
+    # places" rule does not apply and `_validate_weights` is untouched.
+    disagree_exempt: frozenset = field(
+        default_factory=lambda: frozenset({"injury"}))
     #: Which league this Settings copy is scoring, written to each logged decision
     #: so a multi-league corpus stays segmentable later. Set by ``cli`` per league,
     #: never from the environment. Empty means a row predates the field; the
@@ -475,6 +486,16 @@ def load_settings(env_file: str | os.PathLike | None = None) -> Settings:
         "vegas": _f("FF_CLOSE_RAW_GAP_VEGAS", 1.5),
     })
 
+    # Comma-separated signal names, e.g. "injury" or "injury,weather". Empty
+    # ("FF_DISAGREE_EXEMPT=") turns the exemption off and restores a pure
+    # weight-floor rule; unset keeps the default. Names are not validated against
+    # the signal registry on purpose: an unknown name is inert here (nothing ever
+    # looks it up), so warning would be noise, and `load_settings` must never raise.
+    _exempt_raw = os.getenv("FF_DISAGREE_EXEMPT")
+    disagree_exempt = (frozenset({"injury"}) if _exempt_raw is None else
+                       frozenset(n.strip().lower() for n in _exempt_raw.split(",")
+                                 if n.strip()))
+
     roster_ttl = _f("FF_ROSTER_TTL", 12 * 3600)
     if roster_ttl < 0:
         _warn("FF_ROSTER_TTL is negative; using 43200 (12h) instead.")
@@ -514,6 +535,7 @@ def load_settings(env_file: str | os.PathLike | None = None) -> Settings:
         close_call_threshold=threshold,
         min_disagree_weight=min_disagree,
         close_call_raw_gaps=raw_gaps,
+        disagree_exempt=disagree_exempt,
         preferred_experts=os.getenv("FF_PREFERRED_EXPERTS", "").strip(),
         injury_enabled=_b("FF_INJURY", True),
         weather_enabled=_b("FF_WEATHER", True),
