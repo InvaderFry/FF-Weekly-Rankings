@@ -310,14 +310,16 @@ one forecast and one lookup, read at the actual kickoff hour (`timezone=UTC` end
 to end, so there is no local-time or DST arithmetic anywhere). With no schedule,
 no kickoff, an unknown venue, a failed fetch, or a forecast that doesn't reach the
 game, it is unavailable — and each of those arms carries **its own note**
-(`_compute_game`). They all render as the same blank column, but they are four
-different things to do about it: file a stadium, wait for the schedule, retry, or
-wait for the week. Week 1 showed both sides of one matchup reading "no forecast"
-with nothing to say which it was — the same "distinguishable failures rendering
-identically" bug `no_trades_reason` and the lone-candidate note each fixed
-elsewhere. Note a roofed venue is *not* one of these: it scores `DOME_SCORE`
-without a network call, so a dome never reads as a failure. There is deliberately **no** fallback to "the windiest day in the
-horizon" — that invented risk from weather unrelated to the game.
+(`_compute_game`; "no schedule" and "not scheduled" come one step earlier, in
+`is_available` and `fetch`). They all render as the same blank column, but they
+are different things to do about it: file a stadium, wait for the schedule,
+retry, or wait for the week. Week 1 showed both sides of one matchup reading "no
+forecast" with nothing to say which it was — the same "distinguishable failures
+rendering identically" bug `no_trades_reason` and the lone-candidate note each
+fixed elsewhere. Note a roofed venue is *not* one of these: it scores
+`DOME_SCORE` without a network call, so a dome never reads as a failure. There is
+deliberately **no** fallback to "the windiest day in the horizon" — that invented
+risk from weather unrelated to the game.
 
 `VegasSignal` uses the same provider to filter events: the odds endpoint takes no
 week parameter and returns every upcoming game, so once next week's lines post a
@@ -571,7 +573,14 @@ deploy leaves the live site standing, which beats replacing it with half of one.
 
 `output/` renders the same `Recommendation` to a rich table, markdown, CSV/JSON
 (`render.py`), a self-contained HTML dashboard (`html.py`), and a Discord webhook
-payload (`discord.py`).
+payload (`discord.py`). `report.py` builds whole-roster digests and the shared
+lineup builder. `publish` does one scoring pass and fans out to all three outputs
+(this is what the weekly GitHub Action runs). The waiver pass renders the same
+three ways from `WaiverBundle` (`waivers/render.py`, `html.build_waivers_html`,
+`discord.build_waiver_payload`), reusing the Discord budgeting helpers so a
+multi-league message still fits Discord's 10-embed / 6000-char limits.
+`chatops.py` parses `/rank RB`-style issue comments into CLI argv for the Actions
+bot (`/waivers` and `/waivers all` included).
 
 **`Recommendation.lone_candidate` collapses a section that carries no reading.**
 A position with one rostered player rendered as a header, a table whose every
@@ -584,11 +593,4 @@ on a lone candidate). It is deliberately stricter than `unranked`, which is also
 true for one healthy body beside two on IR: those rows carry "not startable:
 ruled out this week", which is exactly what a roster owner needs to see, so that
 table stays. The interactive `render_table` keeps its table too — someone who
-typed `rank TE` asked for it. `report.py` builds whole-roster digests and the shared
-lineup builder. `publish` does one scoring pass and fans out to all three outputs
-(this is what the weekly GitHub Action runs). The waiver pass renders the same
-three ways from `WaiverBundle` (`waivers/render.py`, `html.build_waivers_html`,
-`discord.build_waiver_payload`), reusing the Discord budgeting helpers so a
-multi-league message still fits Discord's 10-embed / 6000-char limits.
-`chatops.py` parses `/rank RB`-style issue comments into CLI argv for the Actions
-bot (`/waivers` and `/waivers all` included).
+typed `rank TE` asked for it.
