@@ -13,11 +13,12 @@ permissions:
   contents: read
   issues: write
 
-# Slash commands fired in quick succession would otherwise run concurrently and
-# race each other on the shared .cache directory.
+# Serialize command execution and load per issue. Each runner has its own cache.
 concurrency:
   group: chatops-${{ github.event.issue.number }}
   cancel-in-progress: false
+  # Up to 100 waiting runs; order is when runs start waiting, not comment arrival.
+  queue: max
 
 jobs:
   run:

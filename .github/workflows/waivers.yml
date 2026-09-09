@@ -34,6 +34,8 @@ permissions:
 concurrency:
   group: ff-startsit-pages
   cancel-in-progress: false
+  # Up to 100 waiting runs; order is when runs start waiting, not comment arrival.
+  queue: max
 
 jobs:
   waivers:
