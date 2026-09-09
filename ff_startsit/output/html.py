@@ -267,6 +267,8 @@ def build_dashboard_html(week: int, scoring: str,
         f"<h1>🏈 Week {escape(str(week))} start/sit — {escape(scoring.upper())}{label_suffix}</h1>",
         f"<div class='meta'>Generated {escape(generated_on)}</div>",
     ]
+    from ..data_status import single_status
+    sections.append(single_status(week, label, recs).html())
     sections += _dashboard_body(lineup, recs, banner=banner, journalists=journalists)
     title = "Week " + escape(str(week)) + " start/sit" + (f" · {escape(label)}" if label else "")
     return _document(title, "\n".join(sections))
@@ -285,6 +287,10 @@ def build_multi_dashboard_html(week: int, bundles: Sequence["LeagueBundle"],
         f"<div class='meta'>Generated {escape(generated_on)} · "
         f"{len(bundles)} league(s)</div>",
     ]
+    from ..data_status import bundle_status
+    status = bundle_status(bundles)
+    if status:
+        sections.append(status.html())
     for b in bundles:
         sections.append("<details class='league' open>")
         sections.append(
@@ -459,6 +465,10 @@ def build_waivers_html(week: int, bundles: Sequence, generated_on: str) -> str:
     if not bundles:
         sections.append("<p class='note'>No configured league could be scored.</p>")
 
+    from ..data_status import bundle_status
+    status = bundle_status(bundles)
+    if status:
+        sections.append(status.html())
     multi = len(bundles) > 1
     for b in bundles:
         if multi:

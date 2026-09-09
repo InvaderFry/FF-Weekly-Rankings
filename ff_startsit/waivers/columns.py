@@ -32,6 +32,7 @@ section, which is why it is fetched last and gated behind ``FF_COLUMN_SCRAPE``.
 from __future__ import annotations
 
 import html as html_mod
+import json
 import re
 import sys
 from dataclasses import dataclass
@@ -91,25 +92,51 @@ def strip_tags(raw: str) -> str:
     return _WS_RE.sub(" ", html_mod.unescape(text)).strip()
 
 
-def find_column_url(index_html: str, base_url: str, week: int) -> Optional[str]:
+def find_column_url(index_html: str, base_url: str, week: int,
+                    season: Optional[int] = None) -> Optional[str]:
     """Pick this week's waiver column out of an author index page (pure).
 
-    Prefer a link naming the week. A link naming a different week is never a
-    fallback; an undated waiver link can still be the current column.
+    Require a link naming the requested week. Undated links cannot establish
+    current-week identity and are not silently substituted.
     """
     week_pat = re.compile(rf"week[-_]?0*{int(week)}(?!\d)", re.IGNORECASE)
-    fallback: Optional[str] = None
     for href in _HREF_RE.findall(index_html or ""):
         if "waiver" not in href.lower():
             continue
         url = href if href.startswith("http") else base_url.rstrip("/") + "/" + href.lstrip("/")
+        years = re.findall(r"(?<!\d)(20\d{2})(?!\d)", href)
+        if season is not None and years and str(season) not in years:
+            continue
         if week_pat.search(href):
             return url
-        if re.search(r"week[-_]?\d+", href, re.IGNORECASE):
+    # Observed Yahoo author pages expose article links in embedded data, with
+    # escaped quotes rather than href attributes. Only this explicit preseason
+    # headline can be a Week 1 candidate; _article verifies byline/date below.
+    if week == 1 and season is not None and base_url == "https://sports.yahoo.com":
+        for url in re.findall(r'https://sports\.yahoo\.com/fantasy/article/[^"\\<>\s]+', index_html):
+            if "waiver-wire" in url and f"before-the-{season}-season-kicks-off" in url:
+                return url
+    return None
+
+
+def preseason_article_verified(body: str, author: str, season: int) -> bool:
+    """Verify the observed Yahoo Week 1 exception, never infer it from recency alone."""
+    from datetime import datetime, timedelta
+    from ..season import first_kickoff
+    for raw in re.findall(r'<script[^>]*type=["\']application/ld\+json["\'][^>]*>(.*?)</script>', body, re.S):
+        try:
+            data = json.loads(raw)
+            if not isinstance(data, dict) or not isinstance(data.get("author"), dict):
+                continue
+            published = datetime.fromisoformat(data["datePublished"].replace("Z", "+00:00")).date()
+            kickoff = first_kickoff(season)
+            if (data["author"].get("name") == author
+                    and f"before the {season} season kicks off" in data.get("headline", "").lower()
+                    and kickoff - timedelta(days=7) <= published <= kickoff):
+                return True
+        except (ValueError, KeyError, TypeError):
             continue
-        if fallback is None:
-            fallback = url
-    return fallback
+    return False
 
 
 def extract_mentions(text: str, author: str, url: str,
@@ -208,13 +235,12 @@ class ColumnFetcher:
         url, text = article
         found = extract_mentions(text, source.author, url, players)
         if not found:
-            # Usually a paywall interstitial: the page loads, the body doesn't.
-            # Also the ordinary case for a league whose pool happens to contain
-            # none of the players this writer named.
             print(f"warning: {source.author}'s column named no player in this "
-                  f"league's free-agent pool (paywall or layout change?).",
+                  f"league's free-agent pool.",
                   file=sys.stderr)
+            self.unavailable[source.author] = "parsed article has no matching free agents in this league"
             return []
+        self.unavailable.pop(source.author, None)
         if (source.author, url) not in self.read:
             self.read.append((source.author, url))
         return found
@@ -231,7 +257,8 @@ class ColumnFetcher:
         if index is None:
             self.unavailable[source.author] = "author index unavailable"
             return None
-        url = find_column_url(index, source.base_url, week)
+        from ..season import season_year
+        url = find_column_url(index, source.base_url, week, season=season_year())
         if not url:
             self.unavailable[source.author] = f"no current Week {week} waiver column linked"
             print(f"warning: no week-{week} waiver column found for {source.author}.",
@@ -242,7 +269,19 @@ class ColumnFetcher:
             self.unavailable[source.author] = "article unavailable"
             return None
 
-        self._articles[cache_key] = (url, strip_tags(body))
+        if "before-the-" in url and "-season-kicks-off" in url:
+            if not preseason_article_verified(body, source.author, season_year()):
+                self.unavailable[source.author] = "preseason article author/date could not be verified"
+                return None
+        # The live Yahoo article has an article element; omit navigation and
+        # related-story names rather than treating them as column mentions.
+        article = re.search(r"<article\b[^>]*>(.*?)</article>", body, re.S | re.I)
+        text = strip_tags(article.group(1) if article else body)
+        if not text or "subscribe to keep reading" in text.lower():
+            self.unavailable[source.author] = "article text unavailable (empty or paywalled)"
+            print(f"warning: {source.author}: {self.unavailable[source.author]}", file=sys.stderr)
+            return None
+        self._articles[cache_key] = (url, text)
         return self._articles[cache_key]
 
     def _get(self, url: str) -> Optional[str]:

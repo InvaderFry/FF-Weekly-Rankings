@@ -208,6 +208,7 @@ class ECRSignal(Signal):
         #: When set (e.g. ``FLEX_POOL``), fetch one pooled cross-position ranking
         #: instead of one list per position.
         self.pool_position = pool_position
+        self.source_status: list[str] = []
         self.last_source: str = ""  # "api" or "scrape", for diagnostics
         #: True once this signal has served values for a week that is not the week
         #: they describe — the scrape path has no week selector, so a `--week 5`
@@ -277,6 +278,7 @@ class ECRSignal(Signal):
             try:
                 rows = self._fetch_api(position, week)
                 if rows:
+                    self._record_source(position, week, "API (week requested; provider week not independently verified)")
                     self.last_source = "api"
                     return rows
                 self._warn_api_fallback("returned no rankings")
@@ -291,12 +293,21 @@ class ECRSignal(Signal):
             return []  # offline / page unreachable -> signal simply has no data
         self.last_source = "scrape"
         self._warn_if_week_mismatch(week)
+        self._record_source(position, week, "public current-week page (provider week unverified)")
         if not rows:
             # Reached the page but parsed nothing: the embedded ecrData blob is
             # gone or changed shape. Warn so a silently-broken scrape is visible.
             print(f"warning: FantasyPros scrape for {position} returned no "
                   "rankings — the page format may have changed.", file=sys.stderr)
         return rows
+
+    def _record_source(self, position, week, source):
+        from datetime import datetime, timezone
+        self.source_status.append(
+            f"ECR {position}: {source}; requested Week {week}; "
+            f"fetched {datetime.now(timezone.utc).isoformat(timespec='seconds')}")
+        if self.served_wrong_week:
+            self.source_status.append(f"ECR requested Week {week} differs from the current-week scrape; not historical rankings")
 
     def _warn_api_fallback(self, reason: str) -> None:
         """Say so when a *configured* API key doesn't work.

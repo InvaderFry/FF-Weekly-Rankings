@@ -119,7 +119,8 @@ def test_build_dashboard_html_no_label_unchanged():
     html = build_dashboard_html(3, "ppr", [("RB", rb.scores[0])], {"RB": rb},
                                 generated_on="2026-06-24")
     assert "<title>Week 3 start/sit</title>" in html
-    assert "·" not in html
+    assert "start/sit — PPR</h1>" in html
+    assert "Data status" in html
 
 
 def test_build_multi_dashboard_html_one_section_per_league():

@@ -164,6 +164,15 @@ def recommend(
         starter_count=starter_count,
     )
 
+    for sig in signals:
+        for detail in getattr(sig, "source_status", []):
+            if detail not in rec.source_status:
+                rec.source_status.append(detail)
+        schedule = getattr(sig, "schedule", None)
+        for detail in getattr(schedule, "source_status", []):
+            if detail not in rec.source_status:
+                rec.source_status.append(detail)
+
     # The fourth kind of run that is never logged, for the same reason as the
     # three above: the row would not mean what it claims. `calibrate` scores
     # *pairwise* concordance within one decision and `backtest` reports top-pick
