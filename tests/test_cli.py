@@ -1,3 +1,4 @@
+import json
 import os
 from pathlib import Path
 
@@ -600,3 +601,165 @@ def test_network_failure_is_reported_not_raised(monkeypatch, capsys):
     rc = cli.main(["sync"])
     assert rc == 2
     assert "network request failed" in capsys.readouterr().err
+
+
+# --- rank: the flagship command, end to end --------------------------------
+# `rank` is the one user-facing command with no CLI-level test — `publish`,
+# `compare`, `notify`, `journalists` and the waiver commands all have one. The
+# pipeline underneath is well covered, so what is pinned here is the wiring:
+# the DST/DEF fold, the empty-position exit, and the export flags.
+
+class _RankSignal:
+    """A signal serving canned ranks, injected in place of the live set."""
+
+    name = "ecr"
+    higher_is_better = False
+    is_sample = False
+    served_wrong_week = False
+
+    def __init__(self, ranks):
+        self.ranks = ranks
+
+    def is_available(self):
+        return True
+
+    def fetch(self, week, players):
+        from ff_startsit.models import SignalValue
+        return {p.key: SignalValue(self.ranks[p.key]) if p.key in self.ranks
+                else SignalValue(None, available=False, note="no rank")
+                for p in players}
+
+
+def _rank_roster():
+    return [
+        Player("1", "Runner One", "KC", "RB"),
+        Player("2", "Runner Two", "SF", "RB"),
+        Player("3", "Passer Three", "BUF", "QB"),
+        Player("KC", "Kansas City", "KC", "DEF"),
+    ]
+
+
+def _rank_args(pos="RB", **kw):
+    import argparse
+    base = dict(pos=pos, week=5, md=False, csv=None, json=None, source=None,
+                league=None, team=None, league_name=None)
+    base.update(kw)
+    return argparse.Namespace(**base)
+
+
+@pytest.fixture
+def _ranked(monkeypatch, tmp_path):
+    """Stub the roster and the live signal set; everything between stays real."""
+    from ff_startsit import pipeline
+
+    # The banner is date-driven and covered by test_preseason.py; silencing it
+    # keeps these assertions about `rank`'s own output in every calendar month.
+    monkeypatch.setattr(cli, "_print_preseason_banner", lambda *a, **kw: None)
+    monkeypatch.setattr(cli, "_get_roster",
+                        lambda args, settings, profile=None: _rank_roster())
+    monkeypatch.setattr(pipeline, "build_signals",
+                        lambda *a, **kw: [_RankSignal({"1": 4.0, "2": 19.0,
+                                                       "KC": 6.0})])
+    return _settings(data_dir=tmp_path, weights={"ecr": 1.0})
+
+
+def test_rank_prints_the_position_it_was_asked_for(_ranked, capsys):
+    rc = cli.cmd_rank(_rank_args("RB"), _ranked)
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "Runner One" in out and "Runner Two" in out
+    assert "Passer Three" not in out          # a different position entirely
+
+
+def test_rank_accepts_dst_as_a_spelling_of_def(_ranked, capsys):
+    """Every source names team defenses differently and DST is what users type;
+    rejecting it would say "no DST players on your roster" to somebody holding
+    one."""
+    assert cli.cmd_rank(_rank_args("DST"), _ranked) == 0
+    assert "Kansas City" in capsys.readouterr().out
+
+
+def test_rank_is_case_insensitive(_ranked, capsys):
+    assert cli.cmd_rank(_rank_args("rb"), _ranked) == 0
+    assert "Runner One" in capsys.readouterr().out
+
+
+def test_rank_of_an_empty_position_exits_nonzero_with_a_next_step(_ranked, capsys):
+    """An empty table would read as "nobody is startable" rather than "the roster
+    never loaded"."""
+    rc = cli.cmd_rank(_rank_args("TE"), _ranked)
+    assert rc == 1
+    err = capsys.readouterr().err
+    assert "No TE players" in err
+    assert "sync" in err                      # says what to do about it
+
+
+def test_rank_markdown_is_a_table_not_a_rendered_one(_ranked, capsys):
+    cli.cmd_rank(_rank_args("RB", md=True), _ranked)
+    out = capsys.readouterr().out
+    assert out.lstrip().startswith("### Week 5 RB")   # a markdown heading
+    assert "|" in out and "Runner One" in out
+
+
+def test_rank_writes_the_csv_it_was_asked_for(_ranked, tmp_path, capsys):
+    """`--csv`/`--json` are the machine-readable surface and the only callers of
+    `render.to_rows`."""
+    import csv as csv_mod
+
+    out_path = tmp_path / "nested" / "rb.csv"
+    assert cli.cmd_rank(_rank_args("RB", csv=out_path), _ranked) == 0
+    assert f"Wrote {out_path}" in capsys.readouterr().out
+
+    rows = list(csv_mod.DictReader(out_path.open()))
+    assert [r["player"] for r in rows] == ["Runner One", "Runner Two"]
+    assert [r["rank"] for r in rows] == ["1", "2"]
+    assert rows[0]["norm_ecr"]                 # the per-signal columns are there
+
+
+def test_rank_writes_the_json_it_was_asked_for(_ranked, tmp_path, capsys):
+    out_path = tmp_path / "nested" / "rb.json"
+    assert cli.cmd_rank(_rank_args("RB", json=out_path), _ranked) == 0
+    assert f"Wrote {out_path}" in capsys.readouterr().out
+
+    payload = json.loads(out_path.read_text())
+    assert payload["week"] == 5
+    assert payload["scoring"] == _ranked.scoring
+    assert payload["weights"] == {"ecr": 1.0}
+    assert [s["player"] for s in payload["scores"]] == ["Runner One", "Runner Two"]
+    assert isinstance(payload["close_call"], bool)
+
+
+def test_a_ranked_player_missing_a_signal_still_exports(_ranked, monkeypatch,
+                                                       tmp_path):
+    """A bye-week player has no ECR at all, so the exports have to tolerate a
+    ragged set of per-signal columns rather than assuming every row has each."""
+    import csv as csv_mod
+
+    from ff_startsit import pipeline
+
+    roster = _rank_roster() + [Player("9", "Bye Body", None, "RB")]
+    monkeypatch.setattr(cli, "_get_roster",
+                        lambda args, settings, profile=None: roster)
+    monkeypatch.setattr(pipeline, "build_signals",
+                        lambda *a, **kw: [_RankSignal({"1": 4.0, "2": 19.0})])
+
+    out_path = tmp_path / "ragged.csv"
+    assert cli.cmd_rank(_rank_args("RB", csv=out_path), _ranked) == 0
+
+    rows = list(csv_mod.DictReader(out_path.open()))
+    assert {r["player"] for r in rows} == {"Runner One", "Runner Two", "Bye Body"}
+    bye = next(r for r in rows if r["player"] == "Bye Body")
+    assert bye["final"] == "" and bye["norm_ecr"] == ""
+    assert bye["flags"]                       # it says why, rather than ranking last
+
+
+def test_rank_logs_one_decision_per_run(_ranked):
+    """`rank` is a logged command — it is where most of the calibration corpus
+    comes from."""
+    from ff_startsit.calibrate.log_reader import load_decisions
+
+    cli.cmd_rank(_rank_args("RB"), _ranked)
+    decisions = load_decisions(_ranked.results_log_path)
+    assert len(decisions) == 1
+    assert decisions[0].week == 5
+    assert {c.name for c in decisions[0].candidates} == {"Runner One", "Runner Two"}
