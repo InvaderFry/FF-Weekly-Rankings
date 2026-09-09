@@ -343,3 +343,69 @@ def test_build_lineup_honors_a_leagues_own_slots():
     # Default call is unchanged — one QB, and the spare stays on the bench.
     assert "qb2" not in {pick.player.key
                          for _, pick in report.build_lineup(by_pos) if pick}
+
+
+# --- the whole-roster pass opts in to holding out unavailable players -------
+
+class _FakeECR:
+    name = "ecr"
+    higher_is_better = False
+    is_sample = False
+    served_wrong_week = False
+
+    def __init__(self, ranks):
+        self.ranks = ranks
+
+    def is_available(self):
+        return True
+
+    def fetch(self, week, players):
+        from ff_startsit.models import SignalValue
+        return {p.key: (SignalValue(self.ranks[p.key]) if p.key in self.ranks
+                        else SignalValue(None, available=False, note="no ECR rank"))
+                for p in players}
+
+
+class _FakeInjury:
+    name = "injury"
+    higher_is_better = True
+    is_sample = False
+    served_wrong_week = False
+
+    def __init__(self, scores):
+        self.scores = scores
+
+    def is_available(self):
+        return True
+
+    def fetch(self, week, players):
+        from ff_startsit.models import SignalValue
+        return {p.key: SignalValue(self.scores.get(p.key, 100.0)) for p in players}
+
+    def rules_out(self, value):
+        return value.available and value.raw == 0.0
+
+
+def test_rank_each_position_holds_out_a_player_who_cannot_play(tmp_path):
+    """Pins the `publish`/dashboard call site, which is the one a scheduled run
+    uses — the engine being capable of this is not the same as it being wired."""
+    from ff_startsit.config import Settings
+    from ff_startsit.models import Player
+    from ff_startsit.report import rank_each_position
+
+    settings = Settings(data_dir=tmp_path,
+                        weights={"ecr": 0.60, "injury": 0.12})
+    players = [
+        Player("1", "Healthy Back", "KC", "RB"),
+        Player("2", "IR Back", "DET", "RB"),
+    ]
+    signals = [_FakeECR({"1": 4.0}), _FakeInjury({"1": 100.0, "2": 0.0})]
+
+    recs = rank_each_position(settings, players, week=1, log=False,
+                              signals=signals)
+    by_key = {s.player.key: s for s in recs["RB"].scores}
+
+    assert by_key["2"].final is None
+    assert any("not startable" in f for f in by_key["2"].flags)
+    assert by_key["1"].final is not None
+    assert recs["RB"].scores[0].player.key == "1"

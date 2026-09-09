@@ -763,3 +763,63 @@ def test_rank_logs_one_decision_per_run(_ranked):
     assert len(decisions) == 1
     assert decisions[0].week == 5
     assert {c.name for c in decisions[0].candidates} == {"Runner One", "Runner Two"}
+
+
+class _RankInjury:
+    """Injury readings with the real ``rules_out`` semantics (0.0 = cannot play)."""
+
+    name = "injury"
+    higher_is_better = True
+    is_sample = False
+    served_wrong_week = False
+
+    def __init__(self, scores):
+        self.scores = scores
+
+    def is_available(self):
+        return True
+
+    def fetch(self, week, players):
+        from ff_startsit.models import SignalValue
+        return {p.key: SignalValue(self.scores.get(p.key, 100.0)) for p in players}
+
+    def rules_out(self, value):
+        return value.available and value.raw == 0.0
+
+
+@pytest.fixture
+def _ranked_with_an_ir_back(monkeypatch, tmp_path):
+    """Runner Two is on IR and unranked but owns the best Vegas-ish read.
+
+    The live Week 1 shape: with ECR missing its 0.60 is re-normalized away and
+    the remaining signals rank a player who cannot take a snap.
+    """
+    from ff_startsit import pipeline
+
+    monkeypatch.setattr(cli, "_print_preseason_banner", lambda *a, **kw: None)
+    monkeypatch.setattr(cli, "_get_roster",
+                        lambda args, settings, profile=None: _rank_roster())
+    monkeypatch.setattr(pipeline, "build_signals", lambda *a, **kw: [
+        _RankSignal({"1": 4.0}),                       # only Runner One is ranked
+        _RankInjury({"1": 100.0, "2": 0.0}),           # Runner Two is out
+    ])
+    return _settings(data_dir=tmp_path,
+                     weights={"ecr": 0.60, "injury": 0.12})
+
+
+def test_rank_does_not_rank_a_player_who_cannot_play(_ranked_with_an_ir_back,
+                                                     capsys):
+    """Pins the call site, not just the engine: `cmd_rank` must opt in to
+    `exclude_unavailable`, or an IR player is ranked and startable again."""
+    # Markdown, not the rich table: the table truncates the flags column to fit
+    # the terminal, which would make this assertion about width, not behaviour.
+    assert cli.cmd_rank(_rank_args("RB", md=True), _ranked_with_an_ir_back) == 0
+    out = capsys.readouterr().out
+
+    # He is still listed — this is your roster, he should not vanish...
+    assert "Runner Two" in out
+    # ...but he is not the pick, and he is marked as unstartable.
+    assert "not startable" in out
+    one = out.index("Runner One")
+    two = out.index("Runner Two")
+    assert one < two, "the healthy, ranked back must outrank the IR one"
