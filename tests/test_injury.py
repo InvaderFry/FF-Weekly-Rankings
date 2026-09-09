@@ -1,11 +1,13 @@
 import json
 from pathlib import Path
 
-from ff_startsit.models import Player
+from ff_startsit.models import Player, SignalValue
 from ff_startsit.sources.injury import (
+    INJURY_SCORES,
     InjurySignal,
     assign,
     is_noteworthy,
+    is_ruled_out,
     parse_injury_rows,
     score_for_status,
 )
@@ -99,3 +101,48 @@ def test_signal_fetch_uses_injected_meta_and_caches():
     # Second fetch reuses the cached metadata (one network call only).
     sig.fetch(3, players)
     assert client.calls == 1
+
+
+# --- is_ruled_out / rules_out ----------------------------------------------
+
+def test_is_ruled_out_only_for_designations_that_mean_not_this_week():
+    for status in ("OUT", "IR", "PUP", "SUS", "NA", "COV", "DNR", "out", " ir "):
+        assert is_ruled_out(status), status
+    # Likely-to-probably playing: these sink in the ranking, they do not leave it.
+    for status in ("Questionable", "Doubtful", "Active", "", None, "Probable"):
+        assert not is_ruled_out(status), status
+
+
+def test_is_ruled_out_tracks_the_score_table_rather_than_a_second_list():
+    """A designation added at 0.0 is ruled out with no second edit."""
+    INJURY_SCORES["MADEUP"] = 0.0
+    try:
+        assert is_ruled_out("MADEUP")
+    finally:
+        del INJURY_SCORES["MADEUP"]
+
+
+def test_signal_rules_out_reads_the_score_not_the_note():
+    sig = InjurySignal(Path("."), enabled=True, client=object())
+    assert sig.rules_out(SignalValue(0.0)) is True
+    assert sig.rules_out(SignalValue(75.0)) is False          # Questionable
+    assert sig.rules_out(SignalValue(100.0)) is False         # healthy
+    # An unavailable reading is not a claim that he is out.
+    assert sig.rules_out(SignalValue(None, available=False)) is False
+
+
+def test_other_signals_rule_nobody_out_by_default():
+    """The base-class default is what keeps ECR/Vegas/weather from ever
+    declaring a player unavailable — a low score is a different claim."""
+    from ff_startsit.sources.base import Signal
+
+    class _Bare(Signal):
+        name = "bare"
+
+        def is_available(self):
+            return True
+
+        def fetch(self, week, players):
+            return {}
+
+    assert _Bare().rules_out(SignalValue(0.0)) is False

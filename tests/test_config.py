@@ -168,3 +168,30 @@ def test_the_waiver_knobs_are_not_blend_weights(monkeypatch):
     monkeypatch.setenv("FF_WAIVER_LIMIT", "40")
     monkeypatch.setenv("FF_TRADE_SUGGESTIONS", "0")
     assert set(load_settings().weights) == {"ecr", "vegas", "injury", "weather"}
+
+
+def test_disagree_exempt_defaults_to_injury(tmp_path, monkeypatch):
+    _clear_weight_env(monkeypatch)
+    monkeypatch.delenv("FF_DISAGREE_EXEMPT", raising=False)
+    monkeypatch.setenv("FF_DATA_DIR", str(tmp_path))
+    assert load_settings().disagree_exempt == frozenset({"injury"})
+
+
+def test_disagree_exempt_can_be_set_and_emptied(tmp_path, monkeypatch):
+    _clear_weight_env(monkeypatch)
+    monkeypatch.setenv("FF_DATA_DIR", str(tmp_path))
+
+    monkeypatch.setenv("FF_DISAGREE_EXEMPT", " Injury , weather ")
+    assert load_settings().disagree_exempt == frozenset({"injury", "weather"})
+
+    # Explicitly empty restores a pure weight-floor rule — distinct from unset.
+    monkeypatch.setenv("FF_DISAGREE_EXEMPT", "")
+    assert load_settings().disagree_exempt == frozenset()
+
+
+def test_a_junk_disagree_exempt_entry_does_not_raise(tmp_path, monkeypatch):
+    """`load_settings` must never raise; an unknown name is inert, not fatal."""
+    _clear_weight_env(monkeypatch)
+    monkeypatch.setenv("FF_DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("FF_DISAGREE_EXEMPT", "not_a_signal,,,")
+    assert load_settings().disagree_exempt == frozenset({"not_a_signal"})

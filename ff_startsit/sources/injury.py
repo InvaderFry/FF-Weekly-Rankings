@@ -50,6 +50,22 @@ def is_noteworthy(status: Optional[str]) -> bool:
     return (status or "").strip().upper() in INJURY_SCORES
 
 
+def is_ruled_out(status: Optional[str]) -> bool:
+    """True when a designation means the player cannot play at all.
+
+    Derived from the score table rather than kept as a second list of statuses,
+    so a designation added to ``INJURY_SCORES`` at 0.0 is ruled out without a
+    second edit — drift between two hand-maintained lists is exactly the kind of
+    silent gap the "four places" rule elsewhere in this repo warns about.
+
+    ``Questionable`` and ``Doubtful`` are deliberately *not* ruled out: they
+    score low and sink in the ranking, which is the right treatment for a player
+    who is likely-to-probably playing. Only a designation that means "not this
+    week" (OUT/IR/PUP/SUS/...) takes a player out of the candidate set.
+    """
+    return score_for_status(status) == 0.0
+
+
 def parse_injury_rows(meta: dict) -> list[ExternalRow]:
     """Turn the Sleeper player-metadata blob into injury ExternalRows (pure)."""
     rows: list[ExternalRow] = []
@@ -112,6 +128,12 @@ class InjurySignal(Signal):
 
     def is_available(self) -> bool:
         return self.enabled
+
+    def rules_out(self, value: SignalValue) -> bool:
+        """An OUT/IR-type designation means he cannot play — not merely that he
+        scores badly. Reads the availability score rather than the note text,
+        since the score is what ``score_for_status`` already normalized."""
+        return value.available and value.raw is not None and value.raw == 0.0
 
     def fetch(self, week: int, players: Iterable[Player]) -> dict[str, SignalValue]:
         players = list(players)

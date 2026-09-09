@@ -30,6 +30,20 @@ class Signal(ABC):
     def is_available(self) -> bool:
         """Whether this signal can produce data at all (e.g. has a key)."""
 
+    def rules_out(self, value: SignalValue) -> bool:
+        """Whether this reading means the player **cannot play at all**.
+
+        Default ``False``: most signals rank players, they do not declare them
+        unavailable, and a low score is not the same claim as "he is on IR".
+        A signal that *can* make that claim (injury) overrides this, and the
+        start/sit path then drops those players from the candidate set instead
+        of ranking them — see ``pipeline.recommend``'s ``exclude_unavailable``.
+
+        It lives here rather than in ``engine/blend.py`` so the engine stays
+        signal-agnostic: blend is handed a set of keys, never a signal name.
+        """
+        return False
+
     @abstractmethod
     def fetch(self, week: int, players: Iterable[Player]) -> dict[str, SignalValue]:
         """Return ``{player.key: SignalValue}`` for the given players and week.

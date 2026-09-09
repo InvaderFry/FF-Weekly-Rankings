@@ -79,8 +79,18 @@ def recommend(
     signals: Optional[Iterable[Signal]] = None,
     command: str = "",
     log: bool = True,
+    exclude_unavailable: bool = False,
 ) -> Recommendation:
-    """Fetch every available signal for ``players`` and blend into a ranking."""
+    """Fetch every available signal for ``players`` and blend into a ranking.
+
+    ``exclude_unavailable`` holds players a signal has ruled out (an OUT/IR-type
+    designation) out of the candidate set: they keep their flags and appear
+    unscored at the bottom rather than being ranked. It defaults **off** because
+    the waiver pass needs those players scored — ``find_stashes`` recommends
+    stashing exactly the players who cannot play this week. The start/sit
+    commands, where "can he play" and "should I start him" are the same
+    question, pass ``True``.
+    """
     signals = list(signals) if signals is not None else build_signals(settings)
 
     # Sample (preseason) runs must never feed the #7 calibration log — the
@@ -115,6 +125,22 @@ def recommend(
               "for a different week, which would mislead `calibrate` and "
               "`backtest` permanently.", file=sys.stderr)
 
+    # Which players a signal says cannot play at all. Asked of the signals rather
+    # than decided here, so `engine/` and `pipeline` both stay signal-agnostic and
+    # a future availability signal needs no edit in either — see Signal.rules_out.
+    # ``getattr`` for the same reason ``is_sample`` and ``served_wrong_week``
+    # above use it: ``signals`` is duck-typed, so a caller may pass something
+    # that is not a ``Signal`` subclass and predates this hook.
+    unavailable_keys: set[str] = set()
+    if exclude_unavailable:
+        for sig in signals:
+            rules_out = getattr(sig, "rules_out", None)
+            if rules_out is None:
+                continue
+            for pkey, sv in signal_values.get(sig.name, {}).items():
+                if rules_out(sv):
+                    unavailable_keys.add(pkey)
+
     rec = blend(
         week=week,
         scoring=settings.scoring,
@@ -125,7 +151,19 @@ def recommend(
         close_call_threshold=settings.close_call_threshold,
         min_disagree_weight=settings.min_disagree_weight,
         close_call_raw_gaps=settings.close_call_raw_gaps,
+        unavailable_keys=unavailable_keys,
+        disagree_exempt=settings.disagree_exempt,
     )
+
+    # The fourth kind of run that is never logged, for the same reason as the
+    # three above: the row would not mean what it claims. `calibrate` scores
+    # *pairwise* concordance within one decision and `backtest` reports top-pick
+    # hit-rate, so a lone candidate contributes no pair and a pick that was the
+    # only option — while still counting toward the `--min-decisions` floor and
+    # inflating the hit rate. Week 1 logged 30 such rows out of 54: a corpus that
+    # looked twice the size of the evidence in it.
+    if log and rec.unranked:
+        log = False
 
     if log:
         log_recommendation(rec, settings.results_log_path, command=command,

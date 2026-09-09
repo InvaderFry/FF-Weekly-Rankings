@@ -68,6 +68,18 @@ class LeagueRules:
     #: lineup builder at once.
     flex_slots: dict[str, int] = field(default_factory=dict)
 
+    @property
+    def superflex(self) -> bool:
+        """True when quarterbacks carry starter value beyond a single slot.
+
+        One definition, read by ``trades.suggest_trades`` (which refuses these
+        leagues) and by ``WaiverBundle.no_trades_reason`` (which explains the
+        refusal). Two copies of this condition would drift into a section that
+        is empty for a reason the report states incorrectly.
+        """
+        return bool(self.flex_slots.get("SUPER_FLEX")
+                    or self.roster_slots.get("QB", 1) > 1)
+
     def faab_remaining(self, spent: Optional[float]) -> Optional[float]:
         """Budget left for a team, or None when we don't know the budget."""
         if self.faab_budget is None:
@@ -181,6 +193,11 @@ class WaiverBundle:
     adds: list[WaiverTarget] = field(default_factory=list)
     drops: list[DropCandidate] = field(default_factory=list)
     trades: list[TradeIdea] = field(default_factory=list)
+    #: Whether ``suggest_trades`` actually ran. An empty ``trades`` otherwise
+    #: cannot be told apart from a section that was never built (``--no-trades``,
+    #: ``FF_TRADE_SUGGESTIONS=0``, or a run that could not identify your team),
+    #: and "no trade is worth making" is a claim about a search that happened.
+    trades_considered: bool = False
     stashes: list[StashIdea] = field(default_factory=list)
     byes: list[ByeGap] = field(default_factory=list)
     sources: list[tuple[str, str]] = field(default_factory=list)  # (author, url)
@@ -252,6 +269,33 @@ class WaiverBundle:
             return ("Nothing on the wire beats anyone you could drop this week "
                     f"(ranked {ranked} of {self.pool_size} free agents).")
         return "Nothing on the wire beats anyone you could drop this week."
+
+    def no_trades_reason(self) -> Optional[str]:
+        """Why the trade section is empty — a refusal, an outage, or a quiet league.
+
+        The same argument as ``no_adds_reason`` above, applied to the section
+        that had no equivalent: all three renderers dropped the trade block
+        silently when ``trades`` was empty, so a league this tool *declines* to
+        price looked exactly like a league where nothing was worth doing. Week 1
+        produced three empty sections and no word about any of them.
+
+        ``None`` means say nothing, because something else already accounts for
+        it: a banner, a caveat (which is what a rest-of-season ranking outage
+        sets, and ROS ranks are what a trade is priced on), a ``league_notes``
+        line naming an unidentified team, or the user having turned the section
+        off.
+        """
+        if self.banner or self.caveat or not self.trades_considered:
+            return None
+        if self.rules.superflex:
+            return ("Trade ideas are not offered in superflex/two-QB leagues — "
+                    "quarterbacks are worth more there than the rest-of-season "
+                    "ranks used to price a swap can show.")
+        if (self.rules.team_count or 0) < 2:
+            return ("No other team's roster could be read, so there was nobody "
+                    "to trade with. This is a data outage, not a quiet league.")
+        return ("No one-for-one swap makes both starting lineups better at a "
+                "fair price this week.")
 
     def roster_by_position(self) -> list[tuple[str, list[Player]]]:
         """The drafted roster grouped for display, in lineup order.

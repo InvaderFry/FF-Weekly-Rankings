@@ -263,7 +263,8 @@ def cmd_rank(args, settings: Settings) -> int:
 
     week = _resolve_week(args, settings)
     _print_preseason_banner(settings, md=args.md)
-    rec = recommend(settings, candidates, week, command=f"rank --pos {pos}")
+    rec = recommend(settings, candidates, week, command=f"rank --pos {pos}",
+                    exclude_unavailable=True)
     title = _titled(f"Week {week} {pos} • {settings.scoring.upper()}", profile)
     if args.md:
         print(render.render_markdown(rec, title=title))
@@ -297,7 +298,8 @@ def cmd_compare(args, settings: Settings) -> int:
     positions = {p.position for p in candidates}
     note = None
     if len(positions) == 1:
-        rec = recommend(settings, candidates, week, command="compare")
+        rec = recommend(settings, candidates, week, command="compare",
+                        exclude_unavailable=True)
     elif positions <= set(report.FLEX_POSITIONS):
         # Per-position ECR ranks are not comparable — an RB1 and a WR1 both
         # normalize to 100 — so a mixed flex-eligible set has to be scored

@@ -72,7 +72,11 @@ def _drops_table(bundle: WaiverBundle) -> list[str]:
 
 def _trades_section(bundle: WaiverBundle) -> list[str]:
     if not bundle.trades:
-        return []
+        # Same contract as the adds section above: the bundle owns what an empty
+        # section means, so all three renderers say the same thing, and None
+        # means something else already explains the silence.
+        reason = bundle.no_trades_reason()
+        return ["### Trade ideas", "", f"_{reason}_", ""] if reason else []
     lines = ["### Trade ideas", ""]
     for idea in bundle.trades:
         send = ", ".join(s.player.name for s in idea.you_send)

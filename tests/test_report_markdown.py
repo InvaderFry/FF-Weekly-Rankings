@@ -70,7 +70,8 @@ def test_build_digest_monkeypatched(monkeypatch):
         Player("3", "Quincy", "BUF", "QB"),
     ]
 
-    def fake_recommend(settings, cands, week, command="", log=True, signals=None):
+    def fake_recommend(settings, cands, week, command="", log=True, signals=None,
+                       **kwargs):
         scores = [_ps(p.key, p.name, p.position, 100 - i * 10, team=p.team)
                   for i, p in enumerate(cands)]
         return _rec(*scores)
@@ -342,3 +343,104 @@ def test_build_lineup_honors_a_leagues_own_slots():
     # Default call is unchanged — one QB, and the spare stays on the bench.
     assert "qb2" not in {pick.player.key
                          for _, pick in report.build_lineup(by_pos) if pick}
+
+
+# --- the whole-roster pass opts in to holding out unavailable players -------
+
+class _FakeECR:
+    name = "ecr"
+    higher_is_better = False
+    is_sample = False
+    served_wrong_week = False
+
+    def __init__(self, ranks):
+        self.ranks = ranks
+
+    def is_available(self):
+        return True
+
+    def fetch(self, week, players):
+        from ff_startsit.models import SignalValue
+        return {p.key: (SignalValue(self.ranks[p.key]) if p.key in self.ranks
+                        else SignalValue(None, available=False, note="no ECR rank"))
+                for p in players}
+
+
+class _FakeInjury:
+    name = "injury"
+    higher_is_better = True
+    is_sample = False
+    served_wrong_week = False
+
+    def __init__(self, scores):
+        self.scores = scores
+
+    def is_available(self):
+        return True
+
+    def fetch(self, week, players):
+        from ff_startsit.models import SignalValue
+        return {p.key: SignalValue(self.scores.get(p.key, 100.0)) for p in players}
+
+    def rules_out(self, value):
+        return value.available and value.raw == 0.0
+
+
+def test_rank_each_position_holds_out_a_player_who_cannot_play(tmp_path):
+    """Pins the `publish`/dashboard call site, which is the one a scheduled run
+    uses — the engine being capable of this is not the same as it being wired."""
+    from ff_startsit.config import Settings
+    from ff_startsit.models import Player
+    from ff_startsit.report import rank_each_position
+
+    settings = Settings(data_dir=tmp_path,
+                        weights={"ecr": 0.60, "injury": 0.12})
+    players = [
+        Player("1", "Healthy Back", "KC", "RB"),
+        Player("2", "IR Back", "DET", "RB"),
+    ]
+    signals = [_FakeECR({"1": 4.0}), _FakeInjury({"1": 100.0, "2": 0.0})]
+
+    recs = rank_each_position(settings, players, week=1, log=False,
+                              signals=signals)
+    by_key = {s.player.key: s for s in recs["RB"].scores}
+
+    assert by_key["2"].final is None
+    assert any("not startable" in f for f in by_key["2"].flags)
+    assert by_key["1"].final is not None
+    assert recs["RB"].scores[0].player.key == "1"
+
+
+# --- a lone candidate is not a ranking -------------------------------------
+
+def test_unranked_is_about_what_could_be_compared():
+    from ff_startsit.models import PlayerScore
+    lone = _rec(_ps("1", "Only Tight End", "TE", 50.0))
+    assert lone.unranked is True
+    assert _rec(_ps("1", "Alpha", "RB", 90.0),
+                _ps("2", "Bravo", "RB", 10.0)).unranked is False
+    # An unscored second body is not a comparison either.
+    unscored = PlayerScore(player=Player("2", "IR Guy", "KC", "TE"))
+    assert _rec(_ps("1", "Only Tight End", "TE", 50.0), unscored).unranked is True
+
+
+def test_a_lone_candidate_renders_no_placeholder_signal_columns():
+    """`to_0_100` returns the midpoint for an empty range, so the shipped Week 1
+    tables read `ECR 50 | INJURY 50 | VEGAS 50 | WEATHER 50` for a player whose
+    real ECR may have been TE1 — four placeholders shaped like readings."""
+    from ff_startsit.output.render import UNRANKED_NOTE
+
+    lone = _rec(_ps("1", "Only Tight End", "TE", 50.0))
+    md = render_markdown(lone, title="TE")
+
+    assert "| 1 | Only Tight End | TE | KC | 50.0 | — |" in md
+    assert "| 50 |" not in md
+    assert UNRANKED_NOTE in md
+    # The pick still stands: he is the only option and has to be startable.
+    assert "✅ **Start:** Only Tight End" in md
+
+
+def test_a_real_ranking_still_shows_its_signal_columns():
+    md = render_markdown(_rec(_ps("1", "Alpha", "RB", 90.0),
+                              _ps("2", "Bravo", "RB", 10.0)), title="RB")
+    assert "| 90 |" in md and "| 10 |" in md

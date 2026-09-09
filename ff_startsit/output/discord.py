@@ -250,6 +250,11 @@ def _waiver_add_lines(bundle) -> list[str]:
 
 
 def _waiver_trade_lines(bundle) -> list[str]:
+    if not bundle.trades:
+        # A league this tool declines to price must not read like a league where
+        # nothing was worth doing — same contract as the adds description above.
+        reason = bundle.no_trades_reason()
+        return [reason] if reason else []
     lines: list[str] = []
     for idea in bundle.trades:
         send = ", ".join(s.player.name for s in idea.you_send)

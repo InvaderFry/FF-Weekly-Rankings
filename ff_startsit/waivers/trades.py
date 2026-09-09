@@ -131,7 +131,10 @@ def suggest_trades(teams: Sequence[FantasyTeam], index: dict[str, PlayerScore],
     if mine_team is None:
         return []
     # This feed is for ordinary redraft leagues, not superflex or two-QB values.
-    if rules.flex_slots.get("SUPER_FLEX") or rules.roster_slots.get("QB", 1) > 1:
+    # ``LeagueRules.superflex`` is shared with ``WaiverBundle.no_trades_reason``,
+    # which explains this refusal to the reader — two copies would drift into a
+    # section that is empty for a reason the report states incorrectly.
+    if rules.superflex:
         return []
     # Resolve at call time to reuse the same full-lineup protection as waivers.
     from .build import _lineup_keys

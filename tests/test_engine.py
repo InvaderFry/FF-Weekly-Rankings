@@ -259,3 +259,150 @@ def test_an_unavailable_raw_value_abstains_rather_than_blocking():
         close_call_raw_gaps=RAW_GAPS,
     )
     assert rec.close_call is True
+
+
+# --- ruled-out players (unavailable_keys) ----------------------------------
+
+def _three():
+    return [
+        Player(key="1", name="Alpha", team="KC", position="RB"),
+        Player(key="2", name="Bravo", team="CHI", position="RB"),
+        Player(key="3", name="Charlie", team="DET", position="RB"),
+    ]
+
+
+def _ruled_out_setup():
+    """Charlie holds the best Vegas read but cannot play.
+
+    Mirrors the live Week 1 shape that motivated this: a player with no ECR and
+    an IR designation blended on Vegas alone and outranked healthy, ranked backs.
+    """
+    return _three(), {
+        "ecr": {"1": SignalValue(1.0), "2": SignalValue(8.0),
+                "3": SignalValue(None, available=False, note="no ECR rank")},
+        "vegas": {"1": SignalValue(20.0), "2": SignalValue(21.0),
+                  "3": SignalValue(30.0)},
+    }
+
+
+def _blend_three(unavailable_keys=()):
+    players, signal_values = _ruled_out_setup()
+    return blend(
+        week=1, scoring="ppr", players=players, signal_values=signal_values,
+        higher_is_better={"ecr": False, "vegas": True},
+        weights={"ecr": 0.60, "vegas": 0.18},
+        close_call_threshold=5.0,
+        unavailable_keys=unavailable_keys,
+    )
+
+
+def test_ruled_out_player_is_listed_but_never_ranked():
+    rec = _blend_three(unavailable_keys={"3"})
+    by_key = {s.player.key: s for s in rec.scores}
+    # Still present — this is your roster, he should not silently vanish...
+    assert set(by_key) == {"1", "2", "3"}
+    # ...but unscored, and therefore last and unstartable.
+    assert by_key["3"].final is None
+    assert rec.scores[-1].player.key == "3"
+    assert any("not startable" in f for f in by_key["3"].flags)
+
+
+def test_ruled_out_player_does_not_rescale_the_others():
+    """The point of holding him out, not merely of unscoring him.
+
+    ``to_0_100`` is min-max within the candidate set, so leaving Charlie in it
+    anchors Vegas' maximum on a player who will not take a snap and drags every
+    survivor's normalized value down.
+    """
+    kept = _blend_three()                              # Charlie scored
+    held = _blend_three(unavailable_keys={"3"})        # Charlie held out
+
+    kept_vegas = {s.player.key: s.normalized["vegas"] for s in kept.scores}
+    held_vegas = {s.player.key: s.normalized["vegas"]
+                  for s in held.scores if s.final is not None}
+
+    # With Charlie in the set he owns the top of the Vegas scale.
+    assert kept_vegas["3"] == 100.0
+    assert kept_vegas["2"] < 100.0
+    # With him out, the best *available* Vegas read is Bravo's.
+    assert held_vegas["2"] == 100.0
+    assert held_vegas["1"] == 0.0
+
+
+def test_ruled_out_is_opt_in_so_the_waiver_pass_still_scores_him():
+    """``find_stashes`` recommends exactly the players who cannot play, so the
+    waiver pass must keep scoring them. Default off is what protects it."""
+    rec = _blend_three()
+    assert all(s.final is not None for s in rec.scores)
+    assert not any("not startable" in f for s in rec.scores for f in s.flags)
+
+
+def test_every_candidate_ruled_out_still_produces_a_ranking():
+    """"All my RBs are out" is a real week; an empty table answers it worse."""
+    rec = _blend_three(unavailable_keys={"1", "2", "3"})
+    assert {s.player.key for s in rec.scores} == {"1", "2", "3"}
+    assert all(s.final is not None for s in rec.scores)
+    # And nothing is mislabelled as held out when nothing could be held out.
+    assert not any("not startable" in f for s in rec.scores for f in s.flags)
+
+
+# --- disagree_exempt -------------------------------------------------------
+
+#: The shipped defaults. ``_share`` divides by the *total*, so these tests only
+#: mean anything against a weight set that sums to 1.0 the way production's does:
+#: with just ecr+injury, injury's share is 0.12/0.72 = 0.167 and clears the floor
+#: it is supposed to fail.
+_DEFAULT_WEIGHTS = {"ecr": 0.60, "vegas": 0.18, "injury": 0.12, "weather": 0.10}
+
+
+def _disagreement(injury_weight, disagree_exempt=()):
+    """ECR puts Alpha well ahead; ``injury`` favours Bravo (Questionable leader)."""
+    players = _players()
+    signal_values = {
+        "ecr": {"1": SignalValue(1.0), "2": SignalValue(8.0)},
+        "injury": {"1": SignalValue(75.0), "2": SignalValue(100.0)},
+    }
+    weights = dict(_DEFAULT_WEIGHTS, injury=injury_weight)
+    return blend(
+        week=1, scoring="ppr", players=players, signal_values=signal_values,
+        higher_is_better={"ecr": False, "injury": True},
+        weights=weights, close_call_threshold=5.0,
+        min_disagree_weight=0.15, disagree_exempt=disagree_exempt,
+    )
+
+
+def test_injury_below_the_weight_floor_cannot_flag_without_the_exemption():
+    """The bug: at 0.12 against a 0.15 floor, a Questionable leader passed
+    silently over a healthy runner-up."""
+    rec = _disagreement(0.12)
+    assert rec.close_call is False
+
+
+def test_exempt_injury_flags_despite_carrying_less_than_the_floor():
+    rec = _disagreement(0.12, disagree_exempt={"injury"})
+    assert rec.close_call is True
+    assert any("injury favors Bravo" in n for n in rec.notes)
+
+
+def test_exemption_does_not_resurrect_a_zero_weight_signal():
+    """CLAUDE.md's explicit warning: a learned-weights file that zeroes a signal
+    must silence it, exemption or not."""
+    rec = _disagreement(0.0, disagree_exempt={"injury"})
+    assert rec.close_call is False
+
+
+def test_exemption_is_per_signal_and_does_not_widen_the_floor():
+    """Exempting injury must not also let weather (0.10) through."""
+    players = _players()
+    signal_values = {
+        "ecr": {"1": SignalValue(1.0), "2": SignalValue(8.0)},
+        "weather": {"1": SignalValue(40.0), "2": SignalValue(90.0)},
+    }
+    rec = blend(
+        week=1, scoring="ppr", players=players, signal_values=signal_values,
+        higher_is_better={"ecr": False, "weather": True},
+        weights=_DEFAULT_WEIGHTS,
+        close_call_threshold=5.0, min_disagree_weight=0.15,
+        disagree_exempt={"injury"},
+    )
+    assert rec.close_call is False
