@@ -12,6 +12,7 @@ from dataclasses import dataclass, field
 from typing import Optional
 
 from ..models import Player, PlayerScore
+from ..data_status import DataStatus
 
 #: ``LeagueRules.acquisition_type`` values. "unknown" is a real answer, not a
 #: failure: ESPN and Sleeper both hide this behind optional settings blobs, and
@@ -263,6 +264,9 @@ class WaiverBundle:
     #: ``no_adds_at_positions``: it is what lets an empty RB row say whether forty
     #: ranked backs lost the comparison or none were ranked at all.
     considered_adds: dict[str, int] = field(default_factory=dict)
+
+    data_status: Optional["DataStatus"] = None
+    recs: dict = field(default_factory=dict)
 
     def no_adds_reason(self) -> Optional[str]:
         """Why the adds section is empty — an outage, a thin read, or a quiet wire.

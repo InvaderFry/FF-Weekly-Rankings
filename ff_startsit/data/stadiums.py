@@ -7,11 +7,12 @@ venue. Roofed stadiums play in controlled conditions, so the weather signal scor
 them neutral and never makes a network call for them.
 
 Coordinates are approximate stadium centers — precise enough for a city-level
-forecast. Home team is the lookup; a player's game is at their team's stadium.
+forecast. The schedule selects the actual home or neutral venue for both teams.
 """
 
 from __future__ import annotations
 
+import unicodedata
 from dataclasses import dataclass
 from typing import Optional
 
@@ -62,8 +63,18 @@ STADIUMS: dict[str, Stadium] = {
 
 
 def _venue_key(name: str) -> str:
-    """Normalize a venue name for lookup: lowercase alphanumerics only."""
-    return "".join(ch for ch in (name or "").lower() if ch.isalnum())
+    """Normalize a venue name for lookup: lowercase alphanumerics, unaccented.
+
+    The accent strip is load-bearing, not tidiness. ESPN writes these venues
+    both ways across seasons and endpoints — ``Santiago Bernabéu`` in the 2026
+    scoreboard, ``Santiago Bernabeu Stadium`` in an earlier one — and a
+    lookup keyed on the raw codepoints treats those as unrelated venues. A miss
+    here is silent: it falls through to ``None`` and the weather signal reports
+    an unknown venue for a stadium that is sitting in this table.
+    """
+    stripped = unicodedata.normalize("NFKD", name or "")
+    return "".join(ch for ch in stripped.lower()
+                   if ch.isalnum() and not unicodedata.combining(ch))
 
 
 # Neutral-site venues, keyed by normalized name. The league plays a handful of
@@ -72,15 +83,27 @@ def _venue_key(name: str) -> str:
 # Jacksonville). Anything not listed resolves to None so the weather signal marks
 # itself unavailable instead of inventing conditions.
 NEUTRAL_VENUES: dict[str, Stadium] = {
+    # City of Melbourne location pin (rounded); ESPN identifies this as outdoors.
+    # https://whatson.melbourne.vic.gov.au/things-to-do/melbourne-cricket-ground-mcg
+    _venue_key("Melbourne Cricket Ground"): Stadium(-37.8202, 144.9817, dome=False),
+    _venue_key("Stade de France"): Stadium(48.9245, 2.3602, dome=False),
+    _venue_key("Maracanã Stadium"): Stadium(-22.9122, -43.2302, dome=False),
+    _venue_key("Estadio Banorte"): Stadium(19.3029, -99.1505, dome=False),
     _venue_key("Tottenham Hotspur Stadium"): Stadium(51.6043, -0.0665, dome=False),
     _venue_key("Wembley Stadium"): Stadium(51.5560, -0.2795, dome=False),
+    _venue_key("FC Bayern Munich Stadium"): Stadium(48.2188, 11.6247, dome=False),
     _venue_key("Allianz Arena"): Stadium(48.2188, 11.6247, dome=False),
     _venue_key("Deutsche Bank Park"): Stadium(50.0686, 8.6455, dome=False),
     _venue_key("Estadio Azteca"): Stadium(19.3029, -99.1505, dome=False),
     _venue_key("Croke Park"): Stadium(53.3607, -6.2512, dome=False),
     _venue_key("Arena Corinthians"): Stadium(-23.5453, -46.4742, dome=False),
     _venue_key("Neo Quimica Arena"): Stadium(-23.5453, -46.4742, dome=False),
-    _venue_key("Santiago Bernabeu Stadium"): Stadium(40.4531, -3.6883, dome=False),
+    # Retractable roof, and ESPN flags the 2026 game `indoor: true`. Both names
+    # it has used must agree: the feed's own flag wins in `venue_for`, so this
+    # entry is only consulted when the feed is silent — and answering "outdoor"
+    # there would send a forecast request for a game played under a closed roof.
+    _venue_key("Santiago Bernabéu"): Stadium(40.4531, -3.6883, dome=True),
+    _venue_key("Santiago Bernabeu Stadium"): Stadium(40.4531, -3.6883, dome=True),
 }
 
 

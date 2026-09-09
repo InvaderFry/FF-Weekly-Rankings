@@ -12,6 +12,7 @@ from datetime import date
 from typing import Optional, Sequence
 
 from .config import Settings
+from .data_status import DataStatus, single_status
 from .models import Player, PlayerScore, Recommendation
 from .output.render import LINEUP_UNSCORED_NOTE, lineup_unscored_keys, md_cell, render_markdown
 from .pipeline import build_signals, recommend
@@ -153,6 +154,7 @@ class LeagueBundle:
     lineup: "Lineup"
     banner: Optional[str] = None
     journalists: Optional[JournalistView] = None
+    data_status: Optional["DataStatus"] = None
 
 
 def rank_each_position(settings: Settings, players: Sequence[Player], week: int,
@@ -468,6 +470,7 @@ def render_digest(week: int, scoring: str, recs: dict[str, Recommendation],
         f"_Generated {date.today().isoformat()}._",
         "",
     ]
+    lines += [single_status(week, label, recs).markdown(), ""]
     lines += _digest_body(recs, banner=banner, journalists=journalists, lineup=lineup)
     return "\n".join(lines)
 
@@ -479,6 +482,10 @@ def render_multi_digest(week: int, bundles: Sequence[LeagueBundle]) -> str:
         f"_Generated {date.today().isoformat()} · {len(bundles)} league(s)._",
         "",
     ]
+    from .data_status import bundle_status
+    status = bundle_status(bundles)
+    if status:
+        lines += [status.markdown(), ""]
     for b in bundles:
         lines += [f"## {md_cell(b.label)} — {b.scoring.upper()}", ""]
         lines += _digest_body(b.recs, banner=b.banner, journalists=b.journalists,

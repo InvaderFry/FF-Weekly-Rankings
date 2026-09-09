@@ -369,7 +369,9 @@ def test_publish_all_leagues_skips_a_failing_league(tmp_path, monkeypatch):
 
     assert rc == 0                       # the healthy league still publishes
     digest = report_path.read_text()
-    assert "## work — PPR" in digest and "dynasty" not in digest
+    assert "## work — PPR" in digest and "## dynasty —" not in digest
+    assert "Skipped dynasty: cookies expired" in digest
+    assert "1 of 2 included — INCOMPLETE" in digest
 
 
 # --- roster cache freshness ---------------------------------------------

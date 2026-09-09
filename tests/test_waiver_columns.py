@@ -63,9 +63,9 @@ def test_a_different_week_is_never_used_as_the_current_column():
     assert find_column_url(INDEX, "https://www.cbssports.com", 12) is None
 
 
-def test_an_unnamed_week_can_still_supply_the_current_column():
+def test_an_unnamed_week_cannot_prove_current_column():
     html = '<a href="/news/waiver-wire-pickups/">Pickups</a>'
-    assert find_column_url(html, "https://cbs.test", 1) == "https://cbs.test/news/waiver-wire-pickups/"
+    assert find_column_url(html, "https://cbs.test", 1) is None
 
 
 def test_missing_columns_have_reportable_status():
@@ -139,7 +139,8 @@ def test_a_paywall_costs_quotes_and_nothing_else(capsys):
         {SOURCE.index_url: INDEX, url: PAYWALL}))
     assert fetcher.fetch(9, POOL) == []
     assert fetcher.read == []
-    assert "paywall or layout change" in capsys.readouterr().err
+    assert "article text unavailable" in capsys.readouterr().err
+    assert "paywalled" in fetcher.unavailable["Dave Richard"]
 
 
 def test_one_fetcher_serves_every_league_without_refetching():
@@ -197,3 +198,34 @@ def test_the_shipped_sources_are_the_three_the_user_named():
 
     assert [s.author for s in SOURCES] == ["Justin Boone", "Jamey Eisenberg",
                                            "Dave Richard"]
+
+
+def test_previous_season_link_is_not_current():
+    html = '<a href="/2025/week-1-waiver-wire/">Old</a>'
+    assert find_column_url(html, "https://cbs.test", 1, season=2026) is None
+
+
+def test_parsed_article_with_no_pool_match_is_distinct_from_parse_failure(capsys):
+    url = "https://cbs.test/fantasy/football/news/fantasy-football-week-9-waiver-wire-adds/"
+    fetcher = ColumnFetcher([SOURCE], session=_FakeSession({SOURCE.index_url: INDEX, url: COLUMN}))
+    assert fetcher.fetch(9, [Player("x", "Other Player", "KC", "QB")]) == []
+    assert "no player" in capsys.readouterr().err
+    assert "parsed article has no matching" in fetcher.unavailable["Dave Richard"]
+
+
+def test_verified_yahoo_preseason_article_is_a_week_one_exception(monkeypatch):
+    from ff_startsit.waivers.columns import preseason_article_verified
+    monkeypatch.setattr("ff_startsit.season.season_year", lambda: 2026)
+    url = "https://sports.yahoo.com/fantasy/article/fantasy-football-waiver-wire-pickups-to-make-before-the-2026-season-kicks-off-172947063.html"
+    # Yahoo's observed embedded-data link shape, not an href.
+    index = '<script>{\\"url\\":\\"' + url + '\\"}</script>'
+    body = (FIXTURES / "yahoo_preseason_metadata.html").read_text()
+    source = ColumnSource("Justin Boone", "https://sports.yahoo.com/author/justin-boone/", "https://sports.yahoo.com")
+    fetcher = ColumnFetcher([source], session=_FakeSession({source.index_url: index, url: body}))
+    assert find_column_url(index, source.base_url, 1, 2026) == url
+    assert find_column_url(index, source.base_url, 2, 2026) is None
+    assert find_column_url(index, source.base_url, 1, 2027) is None
+    assert fetcher.fetch(1, POOL)[0].player_key == "espn-1"
+    assert preseason_article_verified(body, "Justin Boone", 2026)
+    assert not preseason_article_verified(body, "Dave Richard", 2026)
+    assert not preseason_article_verified(body.replace("2026-09-07", "2025-09-07"), "Justin Boone", 2026)

@@ -702,6 +702,8 @@ def _league_bundles(args, settings: Settings, week: int) -> list:
 
     from .report import LeagueBundle
 
+    from .data_status import DataStatus, finish_status
+    status = DataStatus(season.season_year(), week, [p.name for p in settings.leagues])
     bundles: list = []
     for profile in settings.leagues:
         # Unconditional copy — see `_league_context`. Same-scoring leagues used to
@@ -717,12 +719,13 @@ def _league_bundles(args, settings: Settings, week: int) -> list:
             lineup = report.lineup_from(ws)
             journalists = report.build_journalist_view(lsettings, players, week)
         except (RosterError, SleeperError) as exc:
+            status.skipped[profile.name] = str(exc)
             print(f"warning: skipping league {profile.name!r}: {exc}", file=sys.stderr)
             continue
         bundles.append(LeagueBundle(
             label=profile.name, scoring=lsettings.scoring, recs=recs, lineup=lineup,
             banner=season.preseason_banner(lsettings), journalists=journalists))
-    return bundles
+    return finish_status(status, bundles)
 
 
 def _cmd_publish_all(args, settings: Settings) -> int:
@@ -792,6 +795,8 @@ def _waiver_bundles(args, settings: Settings, week: int) -> list:
     # each and three copies of the same credits line.
     fetcher = ColumnFetcher() if include_columns else None
 
+    from .data_status import DataStatus, finish_status
+    status = DataStatus(season.season_year(), week, [p.name for p in profiles])
     bundles: list = []
     for profile in profiles:
         lsettings = replace(settings, scoring=profile.scoring or settings.scoring,
@@ -800,6 +805,7 @@ def _waiver_bundles(args, settings: Settings, week: int) -> list:
             provider = build_roster_provider(lsettings, args.source, args.league,
                                              args.team, profile=profile)
             if not isinstance(provider, LeagueViewProvider):
+                status.skipped[profile.name] = "source cannot read free agents or other teams"
                 print(f"warning: skipping league {profile.name!r}: the "
                       f"{provider.name!r} source can't see a free-agent pool or "
                       f"other teams.", file=sys.stderr)
@@ -818,9 +824,10 @@ def _waiver_bundles(args, settings: Settings, week: int) -> list:
                 rehearse=getattr(args, "rehearse", False) or None,
             ))
         except (RosterError, SleeperError) as exc:
+            status.skipped[profile.name] = str(exc)
             print(f"warning: skipping league {profile.name!r}: {exc}", file=sys.stderr)
             continue
-    return bundles
+    return finish_status(status, bundles)
 
 
 def cmd_waivers(args, settings: Settings) -> int:

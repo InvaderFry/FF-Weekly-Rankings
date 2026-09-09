@@ -1,0 +1,39 @@
+{
+  "events": [
+    {
+      "date": "2026-09-11T00:35Z",
+      "competitions": [
+        {
+          "date": "2026-09-11T00:35Z",
+          "venue": {
+            "id": "9119",
+            "fullName": "Melbourne Cricket Ground",
+            "address": {
+              "city": "Melbourne",
+              "state": "VIC",
+              "country": "Australia"
+            },
+            "indoor": false
+          },
+          "neutralSite": true,
+          "competitors": [
+            {
+              "homeAway": "home",
+              "team": {
+                "abbreviation": "LAR"
+              }
+            },
+            {
+              "homeAway": "away",
+              "team": {
+                "abbreviation": "SF"
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "source": "https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard?dates=2026&seasontype=2&week=1",
+  "collected_on": "2026-09-09"
+}

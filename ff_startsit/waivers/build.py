@@ -206,7 +206,7 @@ def build_bundle(settings: Settings, label: str, provider: LeagueViewProvider,
     # rehearsal — the sample fill is exactly what it exists to avoid.
     signals = (list(signals) if signals is not None
                else build_signals(settings, preseason=False))
-    _, index = score_positions(settings, candidates, week, signals=signals)
+    recs, index = score_positions(settings, candidates, week, signals=signals)
     try:
         season_ranks = (season_values or SeasonValueProvider()).fetch(candidates, settings.scoring)
     except Exception as exc:
@@ -234,6 +234,7 @@ def build_bundle(settings: Settings, label: str, provider: LeagueViewProvider,
     # is the one thing a waiver report must never say when it cannot see.
     bundle.pool_size = len(pool)
     bundle.coverage = signal_coverage(index, pool_players(pool))
+    bundle.recs = recs
 
     if rehearsing:
         bundle.banner = _rehearsal_banner(index, pool)

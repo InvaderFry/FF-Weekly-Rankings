@@ -162,6 +162,7 @@ class ScheduleProvider:
         self.timeout = timeout
         self.cache_dir = Path(cache_dir) if cache_dir else None
         self._weeks: dict[int, dict[str, GameContext]] = {}
+        self.source_status: list[str] = []
 
     def _season(self) -> int:
         if self.season is None:
@@ -215,14 +216,23 @@ class ScheduleProvider:
             if (time.time() - path.stat().st_mtime) < SCHEDULE_CACHE_TTL:
                 blob = cache.read_json_or_none(path)
                 if blob is not None:
+                    self._record_source(blob, week, datetime.fromtimestamp(path.stat().st_mtime, timezone.utc), "cache file time")
                     return blob      # else: unreadable cache -> refetch
         blob = self._fetch(week)
+        self._record_source(blob, week, datetime.now(timezone.utc), "fetched")
         if path is not None:
             try:
                 cache.write_json(path, blob)
             except OSError:
                 pass  # caching is an optimization, never a hard requirement
         return blob
+
+    def _record_source(self, blob, week, timestamp, kind):
+        week_info = blob.get("week")
+        provider_week = week_info.get("number", "unknown") if isinstance(week_info, dict) else "unknown"
+        self.source_status.append(
+            f"ESPN schedule: requested Week {week}; provider Week {provider_week}; "
+            f"{kind} {timestamp.isoformat(timespec='seconds')}")
 
     def _fetch(self, week: int) -> dict:
         resp = self.session.get(

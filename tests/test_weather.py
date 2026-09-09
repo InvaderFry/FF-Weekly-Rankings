@@ -332,3 +332,31 @@ def test_a_scored_game_does_not_gain_a_failure_note():
     assert out["1"].available
     for word in ("venue", "horizon", "unavailable"):
         assert word not in out["1"].note
+
+
+def test_melbourne_forecast_uses_utc_kickoff_and_one_location():
+    from ff_startsit.sources.schedule import by_team, parse_scoreboard
+    games = by_team(parse_scoreboard(json.loads((FIXTURES / "espn_melbourne.json").read_text())))
+    session = _FakeSession({"hourly": {
+        "time": ["2026-09-11T00:00", "2026-09-11T01:00"],
+        "wind_speed_10m": [5, 15], "precipitation_probability": [0, 50]}})
+    signal = WeatherSignal(session=session, schedule=_FakeSchedule(games))
+    players = [Player("r", "Rams Player", "LAR", "WR"), Player("s", "Niners Player", "SF", "WR")]
+    readings = signal.fetch(1, players)
+    assert readings["r"] == readings["s"]
+    assert readings["r"].raw == score_conditions(15, 50)
+    assert len(session.calls) == 1
+    assert session.calls[0]["latitude"] == -37.8202
+    assert session.calls[0]["longitude"] == 144.9817
+    assert session.calls[0]["timezone"] == "UTC"
+    assert session.calls[0]["start_date"] == "2026-09-11"
+
+
+def test_melbourne_forecast_failure_remains_unavailable(monkeypatch):
+    from ff_startsit.sources.schedule import parse_scoreboard
+    game = parse_scoreboard(json.loads((FIXTURES / "espn_melbourne.json").read_text()))[0]
+    signal = WeatherSignal()
+    def fail(*args):
+        raise RuntimeError("provider down")
+    monkeypatch.setattr(signal, "_fetch_forecast", fail)
+    assert signal._score_for_game(game) == (None, "forecast unavailable")

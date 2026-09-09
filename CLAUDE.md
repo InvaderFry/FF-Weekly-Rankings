@@ -22,7 +22,14 @@ cp .env.example .env             # then edit; the app reads .env at startup
 .venv/bin/python -m pytest                        # full suite (fully offline)
 .venv/bin/python -m pytest tests/test_engine.py   # one file
 .venv/bin/python -m pytest -k close_call          # by name substring
+
+.venv/bin/python scripts/check-workflows.py       # half of the workflow check
+actionlint -ignore 'unexpected key "queue" for "concurrency" section'  # the other half
 ```
+
+`actionlint` runs shellcheck over every `run:` block, so a workflow edit that
+looks fine can still fail CI on shell style. Install it (and shellcheck) or
+expect the `workflows` job to be where you find out.
 
 Run the CLI as `ffstartsit <cmd>` (venv active), `.venv/bin/ffstartsit <cmd>`, or
 `python -m ff_startsit <cmd>`. CI (`.github/workflows/ci.yml`) runs `pytest` on
@@ -373,6 +380,23 @@ wins, then a known neutral-site venue by name, then the home team's stadium, the
 `None`. It returns `None` rather than guessing, because a wrong forecast presented
 as fact is worse than a missing signal — a missing one just re-weights the rest.
 
+The neutral-site table (`data/stadiums.py:NEUTRAL_VENUES`) is keyed by
+**`_venue_key`, which strips accents as well as punctuation**, and that is
+load-bearing rather than tidiness: ESPN writes the same venue both ways across
+seasons and endpoints (`Santiago Bernabéu` in the 2026 scoreboard, `Santiago
+Bernabeu Stadium` in an earlier one), and a lookup keyed on raw codepoints reads
+those as unrelated venues. The miss is silent — it falls through to `None` and
+the weather signal reports an unknown venue for a stadium sitting in the table.
+Where one venue is listed under two names, both entries must agree about the
+roof: the feed's `indoor` flag wins in `venue_for`, so these are consulted only
+when the feed is silent, and one entry answering "outdoor" would send a forecast
+request for a game played under a closed roof. The table covers all nine 2026
+international games, pinned by `tests/fixtures/espn_international_2026.json` (a
+saved public scoreboard response) — the point of that fixture is that every key
+is a *name ESPN was observed to use*, not a name someone guessed. Melbourne is
+the one that taught this: it was missing for Week 1, which is why both sides of
+Rams–49ers read `weather: venue unknown` in live output.
+
 `WeatherSignal` therefore scores *games*, not teams: both sides of a matchup share
 one forecast and one lookup, read at the actual kickoff hour (`timezone=UTC` end
 to end, so there is no local-time or DST arithmetic anywhere). With no schedule,
@@ -653,6 +677,21 @@ Team defenses are excluded outright — a defense is named after its team, and
 prose says team names constantly. One `ColumnFetcher` is shared across every
 league in a run and memoizes per `(author, week)`, including failures.
 
+Column *discovery* fails closed too, and for the reason `_matches_filters` does:
+an undated waiver link is not evidence of the current week's column, so
+`find_column_url` requires a link naming the requested week and rejects one
+naming a different season — it used to fall back to any undated waiver link,
+which is how last week's advice gets published as this week's. There is exactly
+one exception, and it is verified rather than inferred: Yahoo exposes Boone's
+preseason Week 1 column in embedded data rather than an `href`, so
+`preseason_article_verified` accepts it only after checking the byline, the
+season in the headline, and a publication date inside the week before kickoff.
+`ColumnFetcher.unavailable` distinguishes the four outcomes that render
+identically — index unreachable, no current-week link, article text unavailable
+or paywalled, and a parsed article naming nobody in *this* league's pool. The
+last of those is not a failure at all, which is why it stopped being reported as
+"paywall or layout change?".
+
 Both scheduled workflows publish the **whole** `./site` (index.html +
 waivers.html) and share `concurrency: group: ff-startsit-pages`. A Pages deploy
 replaces the site wholesale, so two workflows deploying their own page would each
@@ -703,3 +742,63 @@ untouched — `build_lineup` is still greedy on it, and the player still has to 
 startable — this is a presentation fact, the same kind `unranked` and
 `lone_candidate` already are, just one hop further from the `Recommendation`
 that knows it.
+
+### Run status and the Actions wrappers
+
+`data_status.py` renders the **Data status** block that opens every digest and
+dashboard (`DataStatus.markdown`/`.html`, one object per run, reached by
+renderers through `bundle_status`). It exists because a league that fails is a
+league that *disappears*: `cli._league_bundles` and `_waiver_bundles` catch a
+`RosterError` per league and continue, and before this the only trace was a
+stderr line nobody reads in a scheduled run. So the block names expected vs
+included leagues, every skipped league **with its reason**, and per-signal
+missing-reading counts carrying the signal's *own* note (`venue unknown` and
+`no forecast` stay distinguishable here exactly as they do in `_compute_game`).
+It is **never a scoring input** — `finish_status` only reads what the blend
+already produced.
+
+Two things it must keep doing. It says explicitly that a generation or fetch
+time is **not** the provider's update time, because the one thing a status block
+must not do is imply a freshness it never measured; a cache-file mtime is
+labeled as such. And detail lines are **aggregated, not appended per fetch** —
+`ECRSignal.source_status` is a property over `_source_runs`, one line per
+(transport, week) listing the positions it served, because one line per position
+per league put ~25 near-identical timestamped rows above the tables that decide
+the week. That is the same noise-drowns-signal failure `lone_candidate` fixed one
+level down.
+
+`workflow.py` holds the logic the GitHub workflows used to inline as heredocs,
+for one reason: **behavior in a YAML `run:` block cannot be tested offline.**
+`chatops_reply` (the `SystemExit`-vs-`Exception` distinction argparse forces),
+`verify_site` (the both-pages gate), `run_cli` (stderr mirrored to the Actions
+summary, with configured credentials redacted) and `issue_title` all have real
+tests now, plus `scripts/persist-decision-log.sh` against a temporary bare
+remote. Anything added to a workflow that has a decision in it belongs here.
+
+`issue_title` reads season *and* week out of the rendered Data status line, so
+the title can never disagree with the report it labels, and **refuses** a report
+it cannot read rather than guessing — a guessed week is how a digest lands in the
+wrong week's issue. Because it refuses, the workflow step that calls it is
+`continue-on-error` with a `::warning` follow-up: it sits before the Pages
+verify/deploy and nothing downstream needs its output, so failing hard there
+would trade a missing comment for a missing deploy. The same warn-and-continue
+trade as the decision log, and as Discord. Note the titles are now season-aware
+(`2026 Week 1 start/sit`); pre-existing week-only issues are left standing as
+history and are never reused.
+
+`ARTIFACT_ONLY=true` (the `artifact_only` dispatch input) is the rehearsal for
+publishing, and like the waiver rehearsal it is a *real* run with its effects
+withheld rather than a mock: `run_cli` strips `--discord` and `--log`, and the
+workflows skip the issue post, the `calibration-data` push and the Pages
+upload/deploy while still requiring both pages to build. It cannot prove
+production permissions or delivery — only a real run does that.
+
+CI runs `actionlint` and `scripts/check-workflows.py` over the workflows, and
+installs the built wheel into a clean venv to run the suite from outside the
+repo import path. The two workflow checks are one check split in half: the
+pinned actionlint release predates GitHub's `concurrency.queue`, so its
+unsupported-key diagnostic is the *only* one ignored and the Python script
+validates that key instead. Drop the script when a pinned actionlint knows the
+key. `queue: max` itself is what keeps a burst of ChatOps commands from
+cancelling each other — the default retains a single pending run, which is why
+`cancel-in-progress: false` alone did not save them.

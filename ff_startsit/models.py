@@ -139,6 +139,7 @@ class Recommendation:
     #: into config. Empty for callers that pass no gaps, which keeps every
     #: existing construction of this class valid.
     raw_gaps: dict[str, float] = field(default_factory=dict)
+    source_status: list[str] = field(default_factory=list)
 
     @property
     def unranked(self) -> bool:

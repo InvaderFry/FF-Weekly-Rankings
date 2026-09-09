@@ -183,6 +183,8 @@ def test_all_leagues_skips_a_failing_league_and_still_reports(
     captured = capsys.readouterr()
     assert "skipping league 'broken'" in captured.err
     assert "work" in captured.out
+    assert "Skipped broken: ESPN denied access (401/403)" in captured.out
+    assert "1 of 2 included — INCOMPLETE" in captured.out
 
 
 def test_no_scoreable_league_exits_nonzero(monkeypatch, tmp_path):

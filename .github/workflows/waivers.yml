@@ -12,6 +12,10 @@ on:
     - cron: "0 0 * * 3"
   workflow_dispatch:
     inputs:
+      artifact_only:
+        description: "Build both pages as run artifacts without production publishing"
+        type: boolean
+        default: false
       week:
         description: "NFL week (blank = auto-detect)"
         required: false
@@ -34,12 +38,14 @@ permissions:
 concurrency:
   group: ff-startsit-pages
   cancel-in-progress: false
+  # Up to 100 waiting runs; order is when runs start waiting, not comment arrival.
+  queue: max
 
 jobs:
   waivers:
     runs-on: ubuntu-latest
     environment:
-      name: github-pages
+      name: ${{ inputs.artifact_only && 'publishing-test' || 'github-pages' }}
       url: ${{ steps.deployment.outputs.page_url }}
     env:
       FF_ROSTER_SOURCE: espn
@@ -61,6 +67,7 @@ jobs:
       # are what the waiver report scores adds against. See docs/SETUP.md.
       FF_PREFERRED_EXPERTS: ${{ vars.FF_PREFERRED_EXPERTS || secrets.FF_PREFERRED_EXPERTS }}
       DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+      ARTIFACT_ONLY: ${{ inputs.artifact_only || false }}
       INPUT_WEEK: ${{ github.event.inputs.week }}
       INPUT_REHEARSE: ${{ github.event.inputs.rehearse }}
     steps:
@@ -78,20 +85,20 @@ jobs:
       # (see cli.cmd_waivers), so there is no log for this workflow to carry.
       - name: Waiver wire & trades
         run: |
-          WEEK_ARG=""
-          if [ -n "$INPUT_WEEK" ]; then WEEK_ARG="--week $INPUT_WEEK"; fi
+          WEEK_ARGS=()
+          if [ -n "$INPUT_WEEK" ]; then WEEK_ARGS=(--week "$INPUT_WEEK"); fi
           # Only the manual run can force a rehearsal. The scheduled run needs no
           # flag: build_bundle detects the pre-kickoff window itself, so exactly
           # one cron a season rehearses and the rest stay refusals.
-          REHEARSE_ARG=""
-          if [ "$INPUT_REHEARSE" = "true" ]; then REHEARSE_ARG="--rehearse"; fi
+          REHEARSE_ARGS=()
+          if [ "$INPUT_REHEARSE" = "true" ]; then REHEARSE_ARGS=(--rehearse); fi
           # Deterministic project Pages URL: Discord fires before the deploy step
           # below finishes, so the link can't come from the deploy's output.
           OWNER="${GITHUB_REPOSITORY%%/*}"; REPO="${GITHUB_REPOSITORY##*/}"
           WAIVERS_URL="https://${OWNER,,}.github.io/${REPO}/waivers.html"
-          python -m ff_startsit waivers $WEEK_ARG $REHEARSE_ARG --all-leagues \
+          python -m ff_startsit.workflow run waivers "${WEEK_ARGS[@]}" "${REHEARSE_ARGS[@]}" --all-leagues --discord \
             --report waivers.md --dashboard ./site/waivers.html \
-            --discord --url "$WAIVERS_URL"
+            --url "$WAIVERS_URL"
           cat waivers.md >> "$GITHUB_STEP_SUMMARY"
 
       # A Pages deploy replaces the entire site, so this run has to rebuild the
@@ -100,17 +107,26 @@ jobs:
       - name: Rebuild start/sit page (so the deploy doesn't drop it)
         continue-on-error: true
         run: |
-          WEEK_ARG=""
-          if [ -n "$INPUT_WEEK" ]; then WEEK_ARG="--week $INPUT_WEEK"; fi
-          python -m ff_startsit publish $WEEK_ARG --all-leagues \
-            --dashboard ./site/index.html
+          WEEK_ARGS=()
+          if [ -n "$INPUT_WEEK" ]; then WEEK_ARGS=(--week "$INPUT_WEEK"); fi
+          python -m ff_startsit.workflow run publish "${WEEK_ARGS[@]}" --all-leagues \
+            --report report.md --dashboard ./site/index.html
+          cat report.md >> "$GITHUB_STEP_SUMMARY"
 
+      # `identity` refuses a report whose season/week it cannot read, which is
+      # the right answer for *which issue to post into* and the wrong one for
+      # the run: this step sits before the Pages verify/deploy, has no output
+      # anything else depends on, and the digest is already mirrored to the run
+      # summary. Failing hard here would trade a missing comment for a missing
+      # deploy. The start/sit workflow makes the same trade.
       - name: Post / update issue
+        id: issue
+        if: ${{ !inputs.artifact_only }}
+        continue-on-error: true
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          WEEK=$(grep -oE 'Week [0-9]+' waivers.md | head -1 | grep -oE '[0-9]+' || true)
-          TITLE="Week ${WEEK:-?} waiver wire"
+          TITLE=$(python -m ff_startsit.workflow identity waivers.md "waiver wire")
           NUM=$(gh issue list --state open --search "in:title \"$TITLE\"" \
                 --json number,title --jq ".[] | select(.title==\"$TITLE\") | .number" | head -1)
           if [ -n "$NUM" ]; then
@@ -121,6 +137,18 @@ jobs:
             gh issue create --title "$TITLE" --body-file waivers.md
           fi
 
+      - name: Report issue failure
+        if: always() && steps.issue.outcome == 'failure'
+        run: |
+          echo "::warning title=Issue not posted::The waiver report was not posted or updated. The digest is in this run's summary; the site deploy below was unaffected."
+          {
+            echo "### Issue not posted"
+            echo
+            echo "The waiver report could not be posted to an issue — most likely its"
+            echo "season/week identity could not be read, which \`identity\` refuses"
+            echo "rather than guess at. The digest below is complete."
+          } >> "$GITHUB_STEP_SUMMARY"
+
       # A Pages deploy replaces the whole site, so uploading a directory that is
       # missing a page silently deletes that page from the live site. The sibling
       # rebuild above is `continue-on-error`, which is exactly how ./site ends up
@@ -129,35 +157,30 @@ jobs:
       - name: Verify the site is complete
         id: site
         run: |
-          if [ -s ./site/index.html ] && [ -s ./site/waivers.html ]; then
-            echo "complete=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "complete=false" >> "$GITHUB_OUTPUT"
-            ls -l ./site || true
-            # An annotation, not just a step-summary line: skipping the deploy
-            # leaves the *previous* site standing, so the run is still a success
-            # and shows a green check. Without this the only symptom of "we
-            # stopped publishing" is a page that quietly goes stale, which is
-            # exactly the failure the sibling rebuild's continue-on-error makes
-            # possible in the first place.
-            echo "::warning title=Pages deploy skipped::./site is missing a page, so the live site was left as-is and is now stale. Check the sibling rebuild step above."
-            {
-              echo "### Pages deploy skipped"
-              echo
-              echo "\`./site\` is missing a page, so deploying would have deleted the"
-              echo "live copy of it. The previously deployed site is left untouched"
-              echo "and is therefore **stale** — the sibling rebuild step above is"
-              echo "where it failed."
-            } >> "$GITHUB_STEP_SUMMARY"
-          fi
+          python -m ff_startsit.workflow site
 
       - name: Upload Pages artifact
-        if: steps.site.outputs.complete == 'true'
+        if: steps.site.outputs.complete == 'true' && !inputs.artifact_only
         uses: actions/upload-pages-artifact@v5
         with:
           path: ./site
 
       - name: Deploy to GitHub Pages
-        if: steps.site.outputs.complete == 'true'
+        if: steps.site.outputs.complete == 'true' && !inputs.artifact_only
         id: deployment
         uses: actions/deploy-pages@v5
+
+      - name: Upload test artifacts
+        if: inputs.artifact_only && steps.site.outputs.complete == 'true'
+        uses: actions/upload-artifact@v7
+        with:
+          name: publishing-test
+          path: |
+            site/
+            report.md
+            waivers.md
+          retention-days: 7
+
+      - name: Require complete test site
+        if: inputs.artifact_only && steps.site.outputs.complete != 'true'
+        run: exit 1

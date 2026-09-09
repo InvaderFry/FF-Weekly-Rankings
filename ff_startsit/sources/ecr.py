@@ -208,6 +208,9 @@ class ECRSignal(Signal):
         #: When set (e.g. ``FLEX_POOL``), fetch one pooled cross-position ranking
         #: instead of one list per position.
         self.pool_position = pool_position
+        #: One entry per (transport, week), each accumulating the positions it
+        #: served — see the ``source_status`` property.
+        self._source_runs: dict[tuple[str, int], list] = {}
         self.last_source: str = ""  # "api" or "scrape", for diagnostics
         #: True once this signal has served values for a week that is not the week
         #: they describe — the scrape path has no week selector, so a `--week 5`
@@ -277,6 +280,7 @@ class ECRSignal(Signal):
             try:
                 rows = self._fetch_api(position, week)
                 if rows:
+                    self._record_source(position, week, "API (week requested; provider week not independently verified)")
                     self.last_source = "api"
                     return rows
                 self._warn_api_fallback("returned no rankings")
@@ -291,12 +295,44 @@ class ECRSignal(Signal):
             return []  # offline / page unreachable -> signal simply has no data
         self.last_source = "scrape"
         self._warn_if_week_mismatch(week)
+        self._record_source(position, week, "public current-week page (provider week unverified)")
         if not rows:
             # Reached the page but parsed nothing: the embedded ecrData blob is
             # gone or changed shape. Warn so a silently-broken scrape is visible.
             print(f"warning: FantasyPros scrape for {position} returned no "
                   "rankings — the page format may have changed.", file=sys.stderr)
         return rows
+
+    def _record_source(self, position, week, source):
+        """Note which transport served a position, folded into one line per run.
+
+        Deliberately aggregated rather than appended per position. This is one
+        fetch per position group, so a three-league digest recorded ~25 near-
+        identical timestamped lines at the top of the report — the Data status
+        section is there to make a *gap* visible, and burying it under one line
+        per successful fetch is the same noise-drowns-signal failure that
+        `lone_candidate` collapsed in the position tables.
+        """
+        from datetime import datetime, timezone
+        run = self._source_runs.setdefault(
+            (source, week),
+            [[], datetime.now(timezone.utc).isoformat(timespec="seconds")])
+        if position not in run[0]:
+            run[0].append(position)
+
+    @property
+    def source_status(self) -> list[str]:
+        lines = []
+        for (source, week), (positions, fetched) in self._source_runs.items():
+            lines.append(f"ECR {', '.join(positions)}: {source}; "
+                         f"requested Week {week}; fetched {fetched}")
+        # Once, however many transports were tried: it is a fact about the run,
+        # not about a fetch.
+        if self.served_wrong_week and self._source_runs:
+            week = next(iter(self._source_runs))[1]
+            lines.append(f"ECR requested Week {week} differs from the "
+                         "current-week scrape; not historical rankings")
+        return lines
 
     def _warn_api_fallback(self, reason: str) -> None:
         """Say so when a *configured* API key doesn't work.

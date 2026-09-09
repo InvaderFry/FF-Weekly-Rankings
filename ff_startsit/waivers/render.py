@@ -202,6 +202,10 @@ def render_waiver_digest(week: int, bundles: Sequence[WaiverBundle],
         lines += ["No configured league could be scored.", ""]
         return "\n".join(lines)
 
+    from ..data_status import bundle_status
+    status = bundle_status(bundles)
+    if status:
+        lines += [status.markdown(), ""]
     multi = len(bundles) > 1
     for bundle in bundles:
         lines += render_bundle(bundle, heading="##" if multi else "###")

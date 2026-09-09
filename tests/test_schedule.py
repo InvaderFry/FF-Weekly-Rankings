@@ -203,3 +203,37 @@ def test_foreign_country_still_marks_neutral_site():
     game = parse_scoreboard(blob)[0]
     assert game.neutral_site is True
     assert venue_for(game).lat > 51.0
+
+
+def test_live_melbourne_fixture_resolves_both_teams():
+    blob = json.loads((FIXTURES / "espn_melbourne.json").read_text())
+    games = by_team(parse_scoreboard(blob))
+    assert games["LAR"] is games["SF"]
+    game = games["SF"]
+    assert game.neutral_site and not game.indoor
+    assert game.kickoff == datetime(2026, 9, 11, 0, 35, tzinfo=timezone.utc)
+    venue = venue_for(game)
+    assert (venue.lat, venue.lon, venue.dome) == (-37.8202, 144.9817, False)
+
+
+def test_all_nine_2026_international_games_have_venue_coverage():
+    from ff_startsit.data.stadiums import neutral_venue
+    games = parse_scoreboard(json.loads((FIXTURES / "espn_international_2026.json").read_text()))
+    assert len(games) == 9
+    for game in games:
+        assert game.neutral_site
+        assert neutral_venue(game.venue_name) is not None, game.venue_name
+        assert venue_for(game) is not None
+
+
+def test_venue_names_match_however_espn_spells_the_accents():
+    """ESPN has written this venue both with and without its accent."""
+    from ff_startsit.data.stadiums import neutral_venue
+    for name in ("Santiago Bernabéu", "Santiago Bernabeu",
+                 "Santiago Bernabéu Stadium", "Santiago Bernabeu Stadium"):
+        venue = neutral_venue(name)
+        assert venue is not None, name
+        # And they agree about the roof: the one consulted when the feed is
+        # silent must not contradict the one consulted when it isn't.
+        assert (venue.lat, venue.dome) == (40.4531, True), name
+    assert neutral_venue("Maracana Stadium") == neutral_venue("Maracanã Stadium")
