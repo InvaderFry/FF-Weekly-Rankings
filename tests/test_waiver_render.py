@@ -423,3 +423,68 @@ def test_html_league_notes_render_inside_their_own_details_block():
     assert html.index("314/330") < html.rindex("</details>")
     # ...and the run-wide note trails every league section.
     assert html.index("Shared methodology note") > html.rindex("</details>")
+
+
+# --- no_trades_reason ------------------------------------------------------
+
+def _no_trade_bundle(**rules_kw):
+    """A bundle whose trade search ran and came back empty."""
+    b = WaiverBundle(label="work", scoring="ppr", week=9,
+                     rules=LeagueRules(team_count=12, **rules_kw))
+    b.trades_considered = True
+    return b
+
+
+def test_no_trades_reason_names_the_superflex_refusal():
+    """`suggest_trades` declines these leagues outright; the reader could not
+    tell that from a section that simply wasn't there."""
+    b = _no_trade_bundle(flex_slots={"SUPER_FLEX": 1})
+    assert "superflex" in b.no_trades_reason()
+
+    b = _no_trade_bundle(roster_slots={"QB": 2})
+    assert "superflex" in b.no_trades_reason()
+
+
+def test_no_trades_reason_distinguishes_an_outage_from_a_quiet_league():
+    outage = WaiverBundle(label="w", scoring="ppr", week=9,
+                          rules=LeagueRules(team_count=1))
+    outage.trades_considered = True
+    assert "data outage" in outage.no_trades_reason()
+
+    quiet = _no_trade_bundle()
+    reason = quiet.no_trades_reason()
+    assert "data outage" not in reason
+    assert "both starting lineups better" in reason
+
+
+def test_no_trades_reason_is_silent_when_something_else_explains_it():
+    # Never searched: --no-trades, FF_TRADE_SUGGESTIONS=0, or an unknown team
+    # (which build_bundle already covers with a league_note).
+    never = WaiverBundle(label="w", scoring="ppr", week=9)
+    assert never.no_trades_reason() is None
+
+    for field, value in (("banner", "preseason"), ("caveat", "ROS ranks are out")):
+        b = _no_trade_bundle()
+        setattr(b, field, value)
+        assert b.no_trades_reason() is None, field
+
+
+def test_league_rules_superflex_matches_what_suggest_trades_refuses():
+    """One predicate, so the refusal and its explanation cannot disagree."""
+    from ff_startsit.waivers.trades import suggest_trades
+    from ff_startsit.waivers.models import FantasyTeam
+
+    rules = LeagueRules(team_count=12, flex_slots={"SUPER_FLEX": 1})
+    assert rules.superflex
+    teams = [FantasyTeam(team_id="1", name="Mine", is_mine=True, players=[])]
+    assert suggest_trades(teams, {}, rules) == []
+
+
+def test_all_three_renderers_explain_an_empty_trade_section():
+    b = _no_trade_bundle(flex_slots={"SUPER_FLEX": 1})
+    expected = b.no_trades_reason()
+
+    assert expected in render_waiver_digest(9, [b])
+    assert expected in build_waivers_html(9, [b], "2026-09-09")
+    payload = json.dumps(build_waiver_payload(9, [b]))
+    assert "superflex" in payload

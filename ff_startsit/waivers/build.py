@@ -285,6 +285,7 @@ def build_bundle(settings: Settings, label: str, provider: LeagueViewProvider,
             )
         else:
             # The trade builder protects the full lineup on both sides.
+            bundle.trades_considered = True
             bundle.trades = suggest_trades(teams, index, rules,
                                            max_ideas=max_trades)
             if bundle.trades:

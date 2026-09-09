@@ -383,3 +383,35 @@ def test_a_signal_without_rules_out_is_tolerated(tmp_path):
     rec = recommend(settings, players, week=1, signals=[_Legacy()], log=False,
                     exclude_unavailable=True)
     assert rec.scores[0].final is not None
+
+
+def _log_lines(settings):
+    p = settings.results_log_path
+    return p.read_text().strip().splitlines() if p.exists() else []
+
+
+def test_a_lone_candidate_is_not_logged(tmp_path):
+    """The fourth never-logged run. `calibrate` scores pairwise concordance
+    within one decision and `backtest` reports top-pick hit-rate, so a decision
+    with one candidate contributes no pair and a pick that was the only option —
+    while still counting toward the `--min-decisions` floor."""
+    settings = Settings(weights={"ecr": 1.0}, data_dir=tmp_path)
+    players = [Player(key="1", name="Only TE", team="KC", position="TE")]
+
+    rec = recommend(settings, players, week=1, signals=[FakeECR({"1": 3.0})],
+                    command="report")
+
+    assert rec.scores[0].final is not None      # still scored and startable
+    assert _log_lines(settings) == []           # but not evidence
+
+
+def test_two_candidates_are_still_logged(tmp_path):
+    """Guard against the skip swallowing real decisions."""
+    settings = Settings(weights={"ecr": 1.0}, data_dir=tmp_path)
+    players = [Player(key="1", name="Alpha", team="KC", position="RB"),
+               Player(key="2", name="Bravo", team="CHI", position="RB")]
+
+    recommend(settings, players, week=1, signals=[FakeECR({"1": 1.0, "2": 8.0})],
+              command="report")
+
+    assert len(_log_lines(settings)) == 1

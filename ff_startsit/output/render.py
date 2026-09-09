@@ -14,6 +14,10 @@ from ..models import Recommendation
 _console = Console()
 
 
+#: Shown under a table with a single candidate. See ``Recommendation.unranked``.
+UNRANKED_NOTE = ("Only one candidate here, so there is nothing to rank against — the per-signal columns are blank rather than showing a midpoint placeholder.")
+
+
 def render_table(rec: Recommendation, title: str = "") -> None:
     """Print a ranked start/sit table, then any close-call notes."""
     signal_names = sorted({name for s in rec.scores for name in s.normalized})
@@ -34,12 +38,15 @@ def render_table(rec: Recommendation, title: str = "") -> None:
         row = [str(i), s.player.name, s.player.position, s.player.team or "BYE", verdict]
         for name in signal_names:
             n = s.normalized.get(name)
-            row.append("—" if n is None else f"{n:.0f}")
+            row.append("—" if n is None or rec.unranked else f"{n:.0f}")
         row.append("; ".join(s.flags))
         style = "bold green" if i == 1 and s.final is not None else None
         table.add_row(*row, style=style)
 
     _console.print(table)
+
+    if rec.unranked and rec.scores:
+        _console.print(f"[dim]{UNRANKED_NOTE}[/dim]")
 
     if rec.close_call:
         _console.print("[bold yellow]⚠ Close call[/bold yellow] — lean, don't bank on it:")
@@ -78,11 +85,14 @@ def render_markdown(rec: Recommendation, title: str = "") -> str:
                  md_cell(s.player.team or "BYE"), verdict]
         for name in signal_names:
             n = s.normalized.get(name)
-            cells.append("—" if n is None else f"{n:.0f}")
+            cells.append("—" if n is None or rec.unranked else f"{n:.0f}")
         cells.append(md_cell("; ".join(s.flags)))
         lines.append("| " + " | ".join(cells) + " |")
 
     lines.append("")
+    if rec.unranked and rec.scores:
+        lines.append(f"_{UNRANKED_NOTE}_")
+        lines.append("")
     if rec.close_call:
         lines.append("> ⚠️ **Close call** — lean, don't bank on it:")
         for note in rec.notes:

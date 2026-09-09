@@ -409,3 +409,38 @@ def test_rank_each_position_holds_out_a_player_who_cannot_play(tmp_path):
     assert any("not startable" in f for f in by_key["2"].flags)
     assert by_key["1"].final is not None
     assert recs["RB"].scores[0].player.key == "1"
+
+
+# --- a lone candidate is not a ranking -------------------------------------
+
+def test_unranked_is_about_what_could_be_compared():
+    from ff_startsit.models import PlayerScore
+    lone = _rec(_ps("1", "Only Tight End", "TE", 50.0))
+    assert lone.unranked is True
+    assert _rec(_ps("1", "Alpha", "RB", 90.0),
+                _ps("2", "Bravo", "RB", 10.0)).unranked is False
+    # An unscored second body is not a comparison either.
+    unscored = PlayerScore(player=Player("2", "IR Guy", "KC", "TE"))
+    assert _rec(_ps("1", "Only Tight End", "TE", 50.0), unscored).unranked is True
+
+
+def test_a_lone_candidate_renders_no_placeholder_signal_columns():
+    """`to_0_100` returns the midpoint for an empty range, so the shipped Week 1
+    tables read `ECR 50 | INJURY 50 | VEGAS 50 | WEATHER 50` for a player whose
+    real ECR may have been TE1 — four placeholders shaped like readings."""
+    from ff_startsit.output.render import UNRANKED_NOTE
+
+    lone = _rec(_ps("1", "Only Tight End", "TE", 50.0))
+    md = render_markdown(lone, title="TE")
+
+    assert "| 1 | Only Tight End | TE | KC | 50.0 | — |" in md
+    assert "| 50 |" not in md
+    assert UNRANKED_NOTE in md
+    # The pick still stands: he is the only option and has to be startable.
+    assert "✅ **Start:** Only Tight End" in md
+
+
+def test_a_real_ranking_still_shows_its_signal_columns():
+    md = render_markdown(_rec(_ps("1", "Alpha", "RB", 90.0),
+                              _ps("2", "Bravo", "RB", 10.0)), title="RB")
+    assert "| 90 |" in md and "| 10 |" in md

@@ -155,6 +155,16 @@ def recommend(
         disagree_exempt=settings.disagree_exempt,
     )
 
+    # The fourth kind of run that is never logged, for the same reason as the
+    # three above: the row would not mean what it claims. `calibrate` scores
+    # *pairwise* concordance within one decision and `backtest` reports top-pick
+    # hit-rate, so a lone candidate contributes no pair and a pick that was the
+    # only option — while still counting toward the `--min-decisions` floor and
+    # inflating the hit rate. Week 1 logged 30 such rows out of 54: a corpus that
+    # looked twice the size of the evidence in it.
+    if log and rec.unranked:
+        log = False
+
     if log:
         log_recommendation(rec, settings.results_log_path, command=command,
                            league=settings.league_label)

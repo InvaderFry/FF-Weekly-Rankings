@@ -15,6 +15,7 @@ from html import escape
 from typing import TYPE_CHECKING, Optional, Sequence
 
 from ..models import PlayerScore, Recommendation
+from .render import UNRANKED_NOTE
 from ..sources.journalists import JournalistView
 
 if TYPE_CHECKING:                    # the duck-typed bundle, named for the reader
@@ -103,12 +104,18 @@ def _position_table(rec: Recommendation) -> str:
                f"<td class='num'>{escape(verdict)}</td>"]
         for name in signal_names:
             n = s.normalized.get(name)
-            tds.append(f"<td class='num'>{'—' if n is None else f'{n:.0f}'}</td>")
+            blank = n is None or rec.unranked
+            tds.append(f"<td class='num'>{'—' if blank else f'{n:.0f}'}</td>")
         flag_html = escape("; ".join(s.flags))
         tds.append(f"<td class='flag'>{flag_html}</td>")
         rows.append(f"<tr{cls}>" + "".join(tds) + "</tr>")
 
-    return "<table>" + "".join(rows) + "</table>"
+    table = "<table>" + "".join(rows) + "</table>"
+    if rec.unranked and rec.scores:
+        # Same note the digest and the terminal table carry — a lone candidate
+        # has no range to normalize against, so the columns are blanked.
+        table += f"<p class='note'>{escape(UNRANKED_NOTE)}</p>"
+    return table
 
 
 def _position_section(pos: str, rec: Recommendation) -> str:
@@ -312,7 +319,11 @@ def _waiver_drops_table(bundle) -> str:
 
 def _waiver_trades(bundle) -> str:
     if not bundle.trades:
-        return ""
+        # One shared definition, as with the adds table above; None means a
+        # banner or caveat is standing and already says why there is nothing here.
+        reason = bundle.no_trades_reason()
+        return (f"<h3>Trade ideas</h3><p class='note'>{escape(reason)}</p>"
+                if reason else "")
     items = ["<h3>Trade ideas</h3>", "<ul class='ideas'>"]
     for idea in bundle.trades:
         send = ", ".join(s.player.name for s in idea.you_send)

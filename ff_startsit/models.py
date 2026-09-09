@@ -118,3 +118,20 @@ class Recommendation:
     scores: list[PlayerScore]          # ordered best -> worst by ``final``
     close_call: bool = False
     notes: list[str] = field(default_factory=list)
+
+    @property
+    def unranked(self) -> bool:
+        """True when there was nothing to rank this candidate against.
+
+        ``normalize.to_0_100`` is min-max *within the candidate set*, so a lone
+        candidate has an empty range and every signal comes back at the midpoint.
+        A table then reads ``ECR 50 | INJURY 50 | VEGAS 50 | WEATHER 50`` for a
+        player whose real ECR may be TE1 — four placeholders wearing the shape of
+        readings. Renderers blank the per-signal columns on this rather than
+        print them.
+
+        Deliberately a *presentation* fact, not a scoring one: ``final`` stays a
+        number because ``report.build_lineup`` fills slots from it, and your only
+        tight end still has to be startable.
+        """
+        return len([s for s in self.scores if s.final is not None]) < 2
