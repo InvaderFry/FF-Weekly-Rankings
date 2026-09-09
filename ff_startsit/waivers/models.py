@@ -199,10 +199,21 @@ class WaiverBundle:
     #: ``build_bundle`` was ever called. Empty before the draft, which is exactly
     #: when there is no team to show.
     roster: list[Player] = field(default_factory=list)
-    #: Run-level footnotes. Reach the digest and the dashboard but **not** the
-    #: Discord embed, which renders ``banner`` and ``caveat`` only — so anything a
-    #: reader must not miss belongs in one of those instead.
+    #: Run-level footnotes, shared across every league in the run and rendered
+    #: once in a common footer. Reach the digest and the dashboard but **not**
+    #: the Discord embed, which renders ``banner`` and ``caveat`` only — so
+    #: anything a reader must not miss belongs in one of those instead.
+    #:
+    #: Only put a note here when its text is the same for every league. The
+    #: footer is deduplicated by exact string, which is what makes a *league*
+    #: fact wrong to place in it: three leagues each reporting their own
+    #: coverage produced three near-identical unattributed sentences at the
+    #: bottom of the page, and a reader could not tell whose was whose.
     notes: list[str] = field(default_factory=list)
+    #: Footnotes about *this* league, rendered inside its own section. Anything
+    #: carrying a league-specific number or an outcome one league can hit while
+    #: its siblings don't belongs here rather than in ``notes``.
+    league_notes: list[str] = field(default_factory=list)
     #: signal name -> how many pool players it covered, from
     #: ``score.signal_coverage``. Populated every in-season run, not only the
     #: rehearsal, because an empty adds list is otherwise indistinguishable from a

@@ -215,8 +215,12 @@ def build_bundle(settings: Settings, label: str, provider: LeagueViewProvider,
     for key, score in index.items():
         score.season_rank = season_ranks.get(key)
     if season_ranks:
-        bundle.sources.append(("FantasyPros rest-of-season rankings", URLS[settings.scoring]))
-        bundle.notes.append(f"Season-long ranks cover {len(season_ranks)}/{len(candidates)} "
+        # The scoring belongs in the *label*: the footer dedupes on (label, url),
+        # so three leagues at two scorings rendered two links reading exactly
+        # "FantasyPros rest-of-season rankings" side by side.
+        bundle.sources.append((f"FantasyPros rest-of-season rankings "
+                               f"({settings.scoring.upper()})", URLS[settings.scoring]))
+        bundle.league_notes.append(f"Season-long ranks cover {len(season_ranks)}/{len(candidates)} "
                             f"players. Top {protected_rank(rules.team_count)} overall players "
                             "and players without a season rank are protected from drops. "
                             "Kickers and defenses are same-position streaming swaps only.")
@@ -275,7 +279,7 @@ def build_bundle(settings: Settings, label: str, provider: LeagueViewProvider,
 
     if include_trades:
         if my_team is None:
-            bundle.notes.append(
+            bundle.league_notes.append(
                 "Trade ideas need to know which team is yours — set ESPN_TEAM_ID "
                 "or check your SWID cookie."
             )

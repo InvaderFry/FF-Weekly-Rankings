@@ -154,3 +154,80 @@ def test_signal_filters_to_the_requested_week():
     out = sig.fetch(5, players)
     assert out["1"].available and out["1"].raw == 25.5
     assert not out["2"].available          # not playing this week
+
+
+class _CountingSession:
+    """Counts HTTP calls so a test can assert the cache actually saved one."""
+
+    def __init__(self, payload):
+        self.payload = payload
+        self.calls = 0
+
+    def get(self, *a, **kw):
+        self.calls += 1
+        session = self
+
+        class _Resp:
+            def raise_for_status(self): pass
+            def json(self): return session.payload
+
+        return _Resp()
+
+
+def _one_event():
+    return [{
+        "home_team": "Kansas City Chiefs", "away_team": "Denver Broncos",
+        "commence_time": "2026-09-13T17:00:00Z",
+        "bookmakers": [{"markets": [
+            {"key": "totals", "outcomes": [{"name": "Over", "point": 47.0}]},
+            {"key": "spreads", "outcomes": [{"name": "Kansas City Chiefs",
+                                             "point": -6.0}]},
+        ]}],
+    }]
+
+
+def test_the_odds_payload_is_cached_across_signal_instances(tmp_path):
+    """One Odds API call per run, not one per league.
+
+    ``build_signals`` runs per league and each workflow run scores every league
+    twice, so six instances used to mean six identical fetches of a document
+    that varies by neither. The API bills two credits a call against a 500/month
+    free tier, which made the duplication the running cost of the whole feed.
+    """
+    payload = _one_event()
+    sessions = []
+    for _ in range(6):
+        sess = _CountingSession(payload)
+        sessions.append(sess)
+        sig = VegasSignal(api_key="k", session=sess, cache_dir=tmp_path)
+        assert len(sig._fetch_games()) == 1
+    assert sessions[0].calls == 1
+    assert [s.calls for s in sessions[1:]] == [0, 0, 0, 0, 0]
+    assert (tmp_path / "odds_nfl.json").exists()
+
+
+def test_a_corrupt_odds_cache_is_a_miss_not_a_crash(tmp_path):
+    (tmp_path / "odds_nfl.json").write_text("{ truncated")
+    sess = _CountingSession(_one_event())
+    sig = VegasSignal(api_key="k", session=sess, cache_dir=tmp_path)
+    assert len(sig._fetch_games()) == 1
+    assert sess.calls == 1
+
+
+def test_a_stale_odds_cache_is_refetched(tmp_path, monkeypatch):
+    import ff_startsit.sources.vegas as vegas
+    sess = _CountingSession(_one_event())
+    VegasSignal(api_key="k", session=sess, cache_dir=tmp_path)._fetch_games()
+    assert sess.calls == 1
+    monkeypatch.setattr(vegas, "ODDS_CACHE_TTL", -1)   # everything on disk is old
+    sess2 = _CountingSession(_one_event())
+    VegasSignal(api_key="k", session=sess2, cache_dir=tmp_path)._fetch_games()
+    assert sess2.calls == 1
+
+
+def test_without_a_cache_dir_the_signal_still_works(tmp_path):
+    sess = _CountingSession(_one_event())
+    sig = VegasSignal(api_key="k", session=sess)
+    assert len(sig._fetch_games()) == 1
+    assert sess.calls == 1
+    assert list(tmp_path.iterdir()) == []

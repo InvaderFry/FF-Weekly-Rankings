@@ -384,3 +384,42 @@ def test_a_drop_without_a_season_rank_renders_an_em_dash():
     bundle = WaiverBundle(label="L", scoring="half", week=3,
                           drops=[DropCandidate(score, "RB depth")])
     assert "—" in render_waiver_digest(3, [bundle])
+
+
+def test_league_notes_render_inside_their_own_league_section():
+    """A note carrying one league's numbers must be attributable to that league.
+
+    Pooled into the shared footer, three leagues' coverage lines became three
+    near-identical unattributed sentences at the bottom of the page, split apart
+    by the run-wide notes that happened to be interleaved with them.
+    """
+    a = _bundle(label="workTG")
+    a.league_notes.append("Season-long ranks cover 270/278 players.")
+    a.notes.append("Scores are normalized within each position's candidate set.")
+    b = _bundle(label="AaronRun")
+    b.league_notes.append("Season-long ranks cover 314/330 players.")
+    b.notes.append("Scores are normalized within each position's candidate set.")
+
+    out = render_waiver_digest(1, [a, b])
+    footer = out.index("\n---\n")
+    # Each league's own line sits above the footer, under its own heading...
+    assert out.index("270/278") < out.index("## AaronRun") < out.index("314/330")
+    assert out.index("314/330") < footer
+    # ...and the note both leagues share is deduped into the footer, once.
+    assert out.count("Scores are normalized") == 1
+    assert out.index("Scores are normalized") > footer
+
+
+def test_html_league_notes_render_inside_their_own_details_block():
+    a = _bundle(label="workTG")
+    a.league_notes.append("Season-long ranks cover 270/278 players.")
+    b = _bundle(label="AaronRun")
+    b.league_notes.append("Season-long ranks cover 314/330 players.")
+    b.notes.append("Shared methodology note.")
+
+    html = build_waivers_html(1, [a, b], "2026-09-08")
+    # Each coverage line lands before its league's </details> closes...
+    assert html.index("270/278") < html.index("AaronRun")
+    assert html.index("314/330") < html.rindex("</details>")
+    # ...and the run-wide note trails every league section.
+    assert html.index("Shared methodology note") > html.rindex("</details>")

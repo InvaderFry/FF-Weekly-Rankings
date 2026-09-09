@@ -12,21 +12,37 @@ totals are flattened. Without a schedule it falls back to first-occurrence-wins,
 which given the API's kickoff ordering still means the sooner game.
 
 Parsing is separated from HTTP so it can be tested against a saved API fixture.
+
+The response is **disk-cached**, unlike most per-instance memoization in this
+package, because the payload is the one thing here that does not vary by league:
+``cli._league_bundles`` builds a fresh signal set per league, and each workflow
+run scores every league twice (the pass itself, plus the sibling page rebuild
+that keeps a Pages deploy from dropping the other page). That is six identical
+fetches of one league-independent document per run — and The Odds API bills two
+credits a call, one per market, against a 500/month free tier. The cache makes a
+whole run cost one call.
 """
 
 from __future__ import annotations
 
+import time
+from pathlib import Path
 from statistics import mean
 from typing import Iterable, Mapping, Optional
 
 import requests
 
+from .. import cache
 from ..data.teams import normalize_team
 from ..models import Game, GameContext, Player, SignalValue
 from .base import Signal
 from .schedule import ScheduleProvider, parse_kickoff
 
 ODDS_URL = "https://api.the-odds-api.com/v4/sports/americanfootball_nfl/odds"
+#: Seconds a cached odds payload stays usable. Deliberately short: lines really
+#: do move, and the only duplication this needs to absorb is within a single
+#: workflow run, whose fetches land minutes apart.
+ODDS_CACHE_TTL = 30 * 60
 
 
 def parse_odds_response(events: list[dict]) -> list[Game]:
@@ -110,11 +126,13 @@ class VegasSignal(Signal):
     higher_is_better = True  # a higher implied total is a better scoring spot
 
     def __init__(self, api_key: str = "", session: Optional[requests.Session] = None,
-                 timeout: int = 20, schedule: Optional[ScheduleProvider] = None):
+                 timeout: int = 20, schedule: Optional[ScheduleProvider] = None,
+                 cache_dir: Optional[Path] = None):
         self.api_key = api_key
         self.session = session or requests.Session()
         self.timeout = timeout
         self.schedule = schedule
+        self.cache_dir = Path(cache_dir) if cache_dir else None
         self._games: Optional[list[Game]] = None  # per-instance cache
 
     def is_available(self) -> bool:
@@ -153,6 +171,40 @@ class VegasSignal(Signal):
         # so one fetch serves a whole-roster pass; cache it on the instance.
         if self._games is not None:
             return self._games
+        self._games = parse_odds_response(self._load())
+        return self._games
+
+    # --- fetching -------------------------------------------------------
+    def _cache_path(self) -> Optional[Path]:
+        # No week and no league in the name because the payload has neither: the
+        # endpoint takes no week parameter, and odds are the same document for
+        # every league. Freshness is the TTL's job, not the filename's.
+        if self.cache_dir is None:
+            return None
+        return self.cache_dir / "odds_nfl.json"
+
+    def _load(self) -> list[dict]:
+        """The cached raw event list if fresh, else fetch and cache it.
+
+        The *raw* payload is cached rather than the parsed games, so a parser
+        change doesn't require busting the cache — same contract as
+        ``ScheduleProvider._load``.
+        """
+        path = self._cache_path()
+        if path is not None and path.exists():
+            if (time.time() - path.stat().st_mtime) < ODDS_CACHE_TTL:
+                blob = cache.read_json_or_none(path)
+                if isinstance(blob, list):
+                    return blob      # else: unreadable cache -> refetch
+        blob = self._fetch()
+        if path is not None:
+            try:
+                cache.write_json(path, blob)
+            except OSError:
+                pass  # caching is an optimization, never a hard requirement
+        return blob
+
+    def _fetch(self) -> list[dict]:
         resp = self.session.get(
             ODDS_URL,
             params={
@@ -164,5 +216,4 @@ class VegasSignal(Signal):
             timeout=self.timeout,
         )
         resp.raise_for_status()
-        self._games = parse_odds_response(resp.json())
-        return self._games
+        return resp.json()

@@ -177,7 +177,24 @@ def test_an_unidentifiable_team_explains_why_there_are_no_trades(tmp_path):
              FantasyTeam("2", "Rival FC", tuple(THEIRS))]
     b = _build(tmp_path, provider=_Provider(teams=teams))
     assert b.trades == []
-    assert any("which team is yours" in n for n in b.notes)
+    # league_notes, not notes: one league can fail team detection while its
+    # siblings don't, so the reason has to render under the league it explains.
+    assert any("which team is yours" in n for n in b.league_notes)
+    assert not any("which team is yours" in n for n in b.notes)
+
+
+def test_league_specific_coverage_is_a_league_note_not_a_shared_footnote(tmp_path):
+    """The coverage line carries this league's own numerator and denominator.
+
+    Pooled into the run-wide footer it became one of several unattributed
+    near-identical sentences at the bottom of a multi-league page.
+    """
+    b = _build(tmp_path)
+    coverage = [n for n in b.league_notes if n.startswith("Season-long ranks cover")]
+    assert len(coverage) == 1
+    assert not any(n.startswith("Season-long ranks cover") for n in b.notes)
+    # The methodological note is identical for every league, so it stays shared.
+    assert any("normalized within each position" in n for n in b.notes)
 
 
 def test_bye_holes_are_found_from_the_schedule(tmp_path):
