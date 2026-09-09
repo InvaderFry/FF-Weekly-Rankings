@@ -195,3 +195,27 @@ def test_a_junk_disagree_exempt_entry_does_not_raise(tmp_path, monkeypatch):
     monkeypatch.setenv("FF_DATA_DIR", str(tmp_path))
     monkeypatch.setenv("FF_DISAGREE_EXEMPT", "not_a_signal,,,")
     assert load_settings().disagree_exempt == frozenset({"not_a_signal"})
+
+
+# --- F1: weather gains a raw gap ------------------------------------------
+
+def test_weather_raw_gap_defaults_to_twelve(tmp_path, monkeypatch):
+    monkeypatch.delenv("FF_CLOSE_RAW_GAP_WEATHER", raising=False)
+    monkeypatch.setenv("FF_DATA_DIR", str(tmp_path))
+    assert load_settings().close_call_raw_gaps == {"ecr": 3.0, "vegas": 1.5,
+                                                    "weather": 12.0}
+
+
+def test_weather_raw_gap_env_override(tmp_path, monkeypatch):
+    monkeypatch.setenv("FF_DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("FF_CLOSE_RAW_GAP_WEATHER", "20")
+    assert load_settings().close_call_raw_gaps["weather"] == 20.0
+
+
+def test_a_negative_weather_raw_gap_falls_back_to_the_default(tmp_path, monkeypatch):
+    """Same fail-loud-but-graceful contract as the ecr/vegas gaps: a negative
+    value would silently disable the floor, which is the failure this setting
+    exists to prevent."""
+    monkeypatch.setenv("FF_DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("FF_CLOSE_RAW_GAP_WEATHER", "-5")
+    assert load_settings().close_call_raw_gaps["weather"] == 12.0

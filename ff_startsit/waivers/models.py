@@ -123,6 +123,14 @@ class WaiverTarget:
     margin: Optional[float] = None
     drop: Optional[PlayerScore] = None
     pool: Optional[PoolPlayer] = None
+    #: The ratio ``pick_adds`` actually ordered and gated this add on
+    #: (``score.depth_ratio``) — positional rank over what the league starts
+    #: there. The one number comparable across positions, unlike ``score.final``,
+    #: which is min-maxed *within* a position and meaningless read down a mixed
+    #: table. ``None`` for a target built outside ``pick_adds`` (e.g. directly in
+    #: a test); renderers must tolerate that the same way they do a missing
+    #: season rank.
+    depth_ratio: Optional[float] = None
     #: Average FantasyPros rank across the preferred journalists, when ranked.
     journalist_avg: Optional[float] = None
     mentions: tuple["ColumnMention", ...] = ()

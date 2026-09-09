@@ -93,6 +93,14 @@ def test_send_discord_posts_json_payload():
     assert sent["raised"] is True
 
 
+def test_lineup_lines_blank_a_fabricated_midpoint_score():
+    lone = _rec(_ps("1", "Lone Tight End", "TE", 50.0))
+    payload = build_discord_payload(3, "ppr", [("TE", lone.scores[0])], {"TE": lone})
+    description = payload["embeds"][0]["description"]
+    assert "Lone Tight End (KC) — —" in description
+    assert "50.0" not in description
+
+
 def test_embed_surfaces_the_lineup_caveat():
     """How the FLEX pick was decided has to reach Discord readers too.
 

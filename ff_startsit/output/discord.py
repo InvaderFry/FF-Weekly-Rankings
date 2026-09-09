@@ -16,6 +16,7 @@ from typing import TYPE_CHECKING, Optional, Sequence
 import requests
 
 from ..models import PlayerScore, Recommendation
+from .render import LINEUP_UNSCORED_NOTE, lineup_unscored_keys
 
 if TYPE_CHECKING:                    # the duck-typed bundle, named for the reader
     from ..report import LeagueBundle
@@ -43,14 +44,23 @@ _COMMANDS_NOTE = ("`/lineup`, `/report`, `/rank RB`, `/compare A | B` work as "
                   "comments on the weekly GitHub issue — not here in Discord.")
 
 
-def _lineup_lines(lineup: Sequence[tuple[str, Optional[PlayerScore]]]) -> str:
+def _lineup_lines(lineup: Sequence[tuple[str, Optional[PlayerScore]]],
+                  unscored: frozenset = frozenset()) -> str:
     lines: list[str] = []
+    any_unscored = False
     for slot, pick in lineup:
         if pick is None:
             lines.append(f"**{slot}** — _(no option)_")
         else:
             team = pick.player.team or "BYE"
-            lines.append(f"**{slot}** {pick.player.name} ({team}) — {pick.final:.1f}")
+            if pick.player.key in unscored:
+                any_unscored = True
+                verdict = "—"
+            else:
+                verdict = f"{pick.final:.1f}"
+            lines.append(f"**{slot}** {pick.player.name} ({team}) — {verdict}")
+    if any_unscored:
+        lines.append(f"-# {LINEUP_UNSCORED_NOTE}")
     return "\n".join(lines)
 
 
@@ -80,7 +90,7 @@ def _build_embed(week: int, scoring: str,
                  label: str = "") -> dict:
     """Build one league's embed (title, lineup description, alerts field)."""
     label_suffix = f" · {label}" if label else ""
-    description = _lineup_lines(lineup)
+    description = _lineup_lines(lineup, unscored=lineup_unscored_keys(recs))
     # How the FLEX slot was decided travels with the lineup everywhere else, so
     # it has to reach Discord readers too — otherwise they see an incomparable
     # FLEX score, or a template fallback, with nothing saying so.

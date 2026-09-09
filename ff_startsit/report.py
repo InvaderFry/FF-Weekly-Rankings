@@ -13,7 +13,7 @@ from typing import Optional, Sequence
 
 from .config import Settings
 from .models import Player, PlayerScore, Recommendation
-from .output.render import md_cell, render_markdown
+from .output.render import LINEUP_UNSCORED_NOTE, lineup_unscored_keys, md_cell, render_markdown
 from .pipeline import build_signals, recommend
 from .season import preseason_banner
 from .sources.journalists import JournalistFetcher, JournalistView, parse_experts
@@ -39,6 +39,20 @@ POSITION_ORDER = ["QB", "RB", "WR", "TE", "K", "DEF"]
 # Position precedence for FLEX tie-breaks. Arbitrary but fixed, and derived from
 # POSITION_ORDER so the file keeps one ordering convention rather than two.
 _FLEX_ORDER = {pos: i for i, pos in enumerate(FLEX_POSITIONS)}
+
+#: How many starters each position gets in ``LINEUP_SLOTS`` (FLEX excluded --
+#: it isn't a position). Derived rather than hand-maintained so it can't drift
+#: from the template it describes: ``{"QB": 1, "RB": 2, "WR": 2, "TE": 1, "K": 1,
+#: "DEF": 1}``. Feeds ``rank_each_position``'s ``starter_count``, which is what
+#: lets the close-call flag additionally check the pair straddling the last
+#: starting slot (rank N vs N+1) rather than only the overall top two — the
+#: decision that actually sets a 2-WR league's lineup at WR2/WR3, not WR1/WR2.
+#: A hardcoded default like the rest of this template, not a per-league read.
+STARTER_COUNTS: dict[str, int] = {}
+for _slot in LINEUP_SLOTS:
+    if _slot not in SLOT_POSITIONS:
+        STARTER_COUNTS[_slot] = STARTER_COUNTS.get(_slot, 0) + 1
+del _slot
 
 #: Fraction of the flex pool that must carry an ECR value for the pooled ranking
 #: to be trusted. Below this the pooled blend is running on Vegas/injury/weather
@@ -132,7 +146,8 @@ def rank_each_position(settings: Settings, players: Sequence[Player], week: int,
         cands = [p for p in players if p.position == pos]
         recs[pos] = recommend(settings, cands, week, signals=signals,
                               command="report", log=log,
-                              exclude_unavailable=True)
+                              exclude_unavailable=True,
+                              starter_count=STARTER_COUNTS.get(pos))
     return recs
 
 
@@ -352,6 +367,7 @@ def _digest_body(recs: dict[str, Recommendation],
     """
     if lineup is None:
         lineup = build_lineup(scored(recs))
+    unscored = lineup_unscored_keys(recs)
     lines: list[str] = []
     if banner:
         lines += [f"> {banner}", ""]
@@ -361,13 +377,20 @@ def _digest_body(recs: dict[str, Recommendation],
         "| Slot | Player | Team | Score |",
         "|---|---|---|---|",
     ]
+    any_unscored = False
     for slot, pick in lineup:
         if pick is None:
             lines.append(f"| {slot} | _(no option)_ | | |")
+        elif pick.player.key in unscored:
+            any_unscored = True
+            lines.append(f"| {md_cell(slot)} | {md_cell(pick.player.name)} "
+                         f"| {md_cell(pick.player.team or 'BYE')} | — |")
         else:
             lines.append(f"| {md_cell(slot)} | {md_cell(pick.player.name)} "
                          f"| {md_cell(pick.player.team or 'BYE')} "
                          f"| {pick.final:.1f} |")
+    if any_unscored:
+        lines += ["", f"_{LINEUP_UNSCORED_NOTE}_"]
 
     if getattr(lineup, "caveat", None):
         lines += ["", f"> ⚠️ {lineup.caveat}"]

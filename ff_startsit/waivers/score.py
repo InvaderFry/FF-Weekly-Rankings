@@ -398,6 +398,7 @@ def pick_adds(index: dict[str, PlayerScore], pool: Sequence[PoolPlayer],
             margin=margin,
             drop=drop.score,
             pool=pp,
+            depth_ratio=ratio,
             journalist_avg=journalist_ranks.get(score.player.key),
             mentions=tuple(mentions.get(score.player.key, ())),
         )
@@ -473,17 +474,10 @@ def add_reasons(target: WaiverTarget, rules: LeagueRules) -> list[str]:
                 f"takes the roster spot from {target.drop.player.name} "
                 f"({target.drop.player.position}), your most droppable player"
             )
-    ecr = target.score.raw.get("ecr")
-    if ecr is not None and ecr.available and ecr.raw is not None:
-        pos = target.score.player.position
-        # "where the league starts 8" reads as though each team starts eight of
-        # them. ``starter_demand`` is a *league-wide* count (team_count x slots),
-        # which is the whole point of the comparison: it is the line between a
-        # startable player and bench depth.
-        reasons.append(
-            f"ranks {pos}{ecr.raw:g} against the {starter_demand(pos, rules)} "
-            f"{pos} the league starts each week"
-        )
+    # No "ranks POSn against the N POS the league starts" line here any more:
+    # that used to be the only place this ratio reached the reader, but the
+    # add table's Depth column now shows the same reading numerically, and a
+    # "why" that repeats the row it sits in isn't a reason.
     if target.journalist_avg is not None:
         reasons.append(f"preferred journalists average him {target.journalist_avg:.1f}")
     if target.mentions:
@@ -560,7 +554,13 @@ def find_stashes(index: dict[str, PlayerScore], pool: Sequence[PoolPlayer],
     "handcuff" is not something it can honestly claim to detect:
 
     * **Hurt but ranked** — a real player carrying an OUT/IR/PUP/SUS tag, who is
-      only in the pool because he's shelved.
+      only in the pool because he's shelved, has an NFL team, and has a
+      rest-of-season rank saying he is expected back on it. Without both gates
+      this recommended Tyreek Hill (unsigned, rehabbing, no guarantee he plays
+      again in 2026 at all) identically to Zach Charbonnet (rostered, on PUP,
+      ranked, and projected back around Week 5) — "stash while he's cheap" read
+      the same for a real return date and for a coin flip on whether there is
+      one at all.
     * **On bye** — ranked, healthy, and invisible this week purely because his
       team isn't playing. He is the cheapest good player on the wire today.
     """
@@ -582,7 +582,15 @@ def find_stashes(index: dict[str, PlayerScore], pool: Sequence[PoolPlayer],
             continue
         status = (pp.injury_status or "").upper()
         if status in _STASH_STATUSES:
-            out.append(StashIdea(score=score, reason=f"{status} — stash while he's cheap"))
+            if not pp.player.team or score.season_rank is None:
+                # No NFL team (unsigned, like Hill) or no rest-of-season rank:
+                # this app has no return-date model, and a missing ROS rank is
+                # not evidence he plays again this season — the same discipline
+                # `has_ecr` already applies to adds and drops.
+                continue
+            out.append(StashIdea(
+                score=score,
+                reason=f"{status} — stash while he's cheap (ROS rank {score.season_rank:g})"))
         elif pp.player.team and pp.player.team in bye_teams and has_ecr(score):
             out.append(StashIdea(score=score,
                                  reason="on bye this week — ranked, and nobody else is looking"))

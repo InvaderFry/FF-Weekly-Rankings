@@ -28,7 +28,7 @@ from __future__ import annotations
 
 from typing import Callable, Iterable, Mapping, Optional
 
-from ..models import Player, PlayerScore, Recommendation, SignalValue
+from ..models import Player, PlayerScore, Recommendation, SignalValue, _fmt_raw
 from .normalize import to_0_100
 
 
@@ -64,6 +64,7 @@ def blend(
     close_call_raw_gaps: Optional[Mapping[str, float]] = None,
     unavailable_keys: Iterable[str] = (),
     disagree_exempt: Iterable[str] = (),
+    starter_count: Optional[int] = None,
 ) -> Recommendation:
     """Combine per-signal readings into a ranked, flagged recommendation.
 
@@ -84,9 +85,16 @@ def blend(
     None`` — visible on your roster, never startable. Callers who *want* those
     players scored (the waiver pass ranks them to suggest stashes) pass nothing.
 
-    ``disagree_exempt`` names signals whose disagreement counts regardless of
-    ``min_disagree_weight``. A signal must still carry non-zero weight to flag
-    anything, so a signal weighted to 0 stays silent whether exempt or not.
+    ``disagree_exempt`` names signals whose disagreement is detected regardless
+    of ``min_disagree_weight``, but that detection alone no longer sets
+    ``close_call`` — see ``_flag_close_call``. A signal must still carry
+    non-zero weight to do anything, so a signal weighted to 0 stays silent
+    whether exempt or not.
+
+    ``starter_count``, when given, additionally flags the pair straddling the
+    last starting slot at this position (rank N vs N+1), not just the overall
+    top two. ``None`` (the default) skips this — purely additive, so every
+    caller that doesn't pass it is unaffected.
     """
     players = list(players)
     ruled_out = set(unavailable_keys)
@@ -133,14 +141,15 @@ def blend(
     rec = Recommendation(week=week, scoring=scoring, weights=dict(weights),
                          scores=scores, raw_gaps=dict(close_call_raw_gaps or {}))
     _flag_close_call(rec, normalized, close_call_threshold, min_disagree_weight,
-                     close_call_raw_gaps, disagree_exempt)
+                     close_call_raw_gaps, disagree_exempt, starter_count)
     return rec
 
 
 def _flag_close_call(rec: Recommendation, normalized: Mapping[str, Mapping[str, float]],
                      threshold: float, min_disagree_weight: float = 0.0,
                      raw_gaps: Optional[Mapping[str, float]] = None,
-                     disagree_exempt: Iterable[str] = ()) -> None:
+                     disagree_exempt: Iterable[str] = (),
+                     starter_count: Optional[int] = None) -> None:
     scored = [s for s in rec.scores if s.final is not None]
     if len(scored) < 2:
         return
@@ -153,6 +162,8 @@ def _flag_close_call(rec: Recommendation, normalized: Mapping[str, Mapping[str, 
             f"{second.player.name} ({second.final}) within {threshold} pts."
         )
 
+    _flag_starter_boundary(rec, scored, threshold, starter_count)
+
     total_weight = sum(w for w in rec.weights.values() if w > 0)
     exempt = set(disagree_exempt)
 
@@ -164,16 +175,23 @@ def _flag_close_call(rec: Recommendation, normalized: Mapping[str, Mapping[str, 
     # a 0.01-point flip on a zero-weight signal flags as loudly as ECR does, and
     # a flag that fires on everything tells the user nothing.
     #
-    # ``exempt`` is the deliberate hole in the weight floor. Blend weight is a
-    # poor proxy for how much a *status* signal's disagreement is worth: injury
-    # is weighted low precisely because it is uninformative in the common case
-    # (everyone healthy, so it says nothing and normalizes to a tie), which is
-    # the opposite of what its weight should mean on the rare week it does
-    # disagree. At 0.12 against a 0.15 floor it could never flag, so a
-    # Questionable leader over a healthy runner-up passed silently — the exact
-    # coin-flip this module exists to surface. The zero-weight check below is
-    # kept for the case CLAUDE.md warns about: a learned-weights file that
-    # zeroes a signal must silence it, exemption or not.
+    # ``exempt`` (injury, by default) is a deliberate hole in the weight floor
+    # for *detecting* a disagreement, not for what that disagreement does. Blend
+    # weight is a poor proxy for how much a status signal's disagreement is
+    # worth: injury is weighted low precisely because it is uninformative in the
+    # common case (everyone healthy, so it says nothing and normalizes to a
+    # tie), which is the opposite of what its weight should mean on the rare
+    # week it does disagree. But treating every such disagreement as
+    # close-call-worthy over-fired in practice — 5 of 9 multi-candidate groups
+    # in one run, most not real coin flips, on nothing more than a Questionable
+    # tag on the favorite. So an exempt signal below the real floor still gets a
+    # note (logged either way, for the #7 corpus), but does *not* set
+    # ``close_call`` on its own; only a signal that clears
+    # ``min_disagree_weight`` for real does that. The designation itself is
+    # never hidden by this — it is already on the player's own ``flags``,
+    # rendered in every table regardless of ``close_call``. The zero-weight
+    # check below is kept for the case CLAUDE.md warns about: a learned-weights
+    # file that zeroes a signal must silence it, exemption or not.
     for sig_name, norms in normalized.items():
         a = norms.get(top.player.key)
         b = norms.get(second.player.key)
@@ -188,15 +206,42 @@ def _flag_close_call(rec: Recommendation, normalized: Mapping[str, Mapping[str, 
         share = _share(sig_name)
         if share <= 0:
             continue  # a signal carrying no weight never flags, exempt or not
-        if share < min_disagree_weight and sig_name not in exempt:
-            continue  # too lightly weighted to have plausibly changed the pick
-        rec.close_call = True
-        rec.notes.append(
-            f"Signals disagree: {sig_name} favors {second.player.name} "
-            f"while the blend favors {top.player.name}."
-        )
+        note = (f"Signals disagree: {sig_name} favors {second.player.name} "
+                f"while the blend favors {top.player.name}.")
+        if share >= min_disagree_weight:
+            rec.close_call = True
+            rec.notes.append(note)
+        elif sig_name in exempt:
+            rec.notes.append(note)          # demoted: real, but not on its own
+        # else: too lightly weighted and not exempt -- silent, as before.
 
     _flag_raw_dead_heat(rec, top, second, raw_gaps or {}, min_disagree_weight, _share)
+
+
+def _flag_starter_boundary(rec: Recommendation, scored: list[PlayerScore],
+                           threshold: float, starter_count: Optional[int]) -> None:
+    """Flag the pair straddling the last starting slot, not just the top two.
+
+    In a league starting N at a position, the decision that actually sets the
+    lineup is rank N vs N+1. The top-two check above answers a different
+    question once N > 1, and a real Week 1 decision (Nabers 45.5 Q vs Burden
+    42.9 Q, the WR2/WR3 boundary) sat exactly there and never tripped it.
+
+    ``starter_count`` is optional and additive: ``None`` (the default, used by
+    every caller except ``report.rank_each_position``) skips this entirely, so
+    ``weighted_final`` stays untouched and every existing logged row and
+    caller is unaffected. ``starter_count <= 1`` is skipped too — that pair is
+    identical to ``top``/``second``, already checked above.
+    """
+    if not starter_count or starter_count < 2 or len(scored) <= starter_count:
+        return
+    a, b = scored[starter_count - 1], scored[starter_count]
+    if abs(a.final - b.final) <= threshold:
+        rec.close_call = True
+        rec.notes.append(
+            f"Last starting spot is a coin flip: {a.player.name} ({a.final}) vs "
+            f"{b.player.name} ({b.final}) within {threshold} pts."
+        )
 
 
 def _flag_raw_dead_heat(rec: Recommendation, top: PlayerScore, second: PlayerScore,
@@ -223,7 +268,7 @@ def _flag_raw_dead_heat(rec: Recommendation, top: PlayerScore, second: PlayerSco
         voted = True
         if abs(a.raw - b.raw) > gap:
             return  # this signal genuinely separates them
-        separations.append(f"{sig_name} {a.raw:g} vs {b.raw:g}")
+        separations.append(f"{sig_name} {_fmt_raw(a.raw)} vs {_fmt_raw(b.raw)}")
 
     if not voted:
         return

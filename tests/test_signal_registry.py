@@ -80,7 +80,13 @@ def test_the_weights_are_a_usable_blend(tmp_path):
 
 
 def test_the_raw_gap_floors_name_only_real_signals(tmp_path):
-    """`close_call_raw_gaps` is deliberately a *subset* — injury and weather are
-    bucketed statuses that abstain — but a floor keyed to a signal that does not
-    exist is a veto that can never fire, which reads as a working guard."""
+    """`close_call_raw_gaps` is deliberately a *subset* — injury is a bucketed
+    status with no continuous scale, so it stays absent and abstains — but a
+    floor keyed to a signal that does not exist is a veto that can never fire,
+    which reads as a working guard. Weather carries a gap now (PR2's fix for
+    the presentational blind spot in `Recommendation.flat_signals`), but its
+    0.10 blend weight still can't clear `min_disagree_weight`, so the gap can
+    only feed that presentational note, never the flag itself."""
     assert set(Settings().close_call_raw_gaps) <= _registered_names(tmp_path)
+    assert "injury" not in Settings().close_call_raw_gaps
+    assert "weather" in Settings().close_call_raw_gaps

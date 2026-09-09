@@ -281,6 +281,41 @@ def test_a_player_already_recommended_as_an_add_is_not_also_a_stash():
     assert find_stashes(index, pool, taken={"f1"}, bye_teams=set()) == []
 
 
+def test_a_hurt_stash_names_its_ros_rank():
+    pool = [PoolPlayer(_p("f1", "Shelved", "RB"), injury_status="IR")]
+    _, index = _score([pool[0].player, _p("r1", "R", "RB")], {"f1": 40, "r1": 10})
+    stashes = find_stashes(index, pool, taken=set(), bye_teams=set())
+    assert "ROS rank 40" in stashes[0].reason
+
+
+def test_an_unsigned_free_agent_is_not_offered_as_a_stash():
+    """Tyreek Hill: unsigned, rehabbing, no guarantee he plays at all in
+    2026 -- `find_stashes` used to recommend him identically to a rostered
+    player genuinely working back from injury."""
+    pool = [PoolPlayer(_p("f1", "Unsigned Guy", "RB", team=None), injury_status="IR")]
+    _, index = _score([pool[0].player, _p("r1", "R", "RB")], {"f1": 40, "r1": 10})
+    assert find_stashes(index, pool, taken=set(), bye_teams=set()) == []
+
+
+def test_a_rostered_but_unranked_ir_player_is_not_a_stash():
+    """No rest-of-season rank is not evidence he plays again this season --
+    the same discipline `has_ecr` already applies elsewhere, reused rather
+    than inventing a return-date model the app has no data for."""
+    pool = [PoolPlayer(_p("f1", "Shelved", "RB"), injury_status="IR")]
+    _, index = _score([pool[0].player, _p("r1", "R", "RB")], {"f1": 40, "r1": 10})
+    index["f1"].season_rank = None
+    assert find_stashes(index, pool, taken=set(), bye_teams=set()) == []
+
+
+def test_a_rostered_ranked_hurt_player_is_still_a_stash():
+    """The regression this must not cause: Zach Charbonnet -- rostered, on
+    PUP, ranked, and returning around Week 5 -- must keep being offered."""
+    pool = [PoolPlayer(_p("f1", "On Pup", "RB", team="SEA"), injury_status="PUP")]
+    _, index = _score([pool[0].player, _p("r1", "R", "RB")], {"f1": 40, "r1": 10})
+    stashes = find_stashes(index, pool, taken=set(), bye_teams=set())
+    assert [s.score.player.key for s in stashes] == ["f1"]
+
+
 def test_bye_gaps_flag_a_week_you_cannot_field_a_position():
     roster = [_p("r1", "A", "RB", team="SF"), _p("r2", "B", "RB", team="SF")]
     gaps = bye_gaps(roster, LeagueRules(roster_slots={"RB": 2}), 9,
@@ -484,6 +519,21 @@ def test_roster_filler_is_not_offered_however_good_his_pool_looks():
     assert pick_adds(index, pool, drops, _LEAGUE) == []
 
 
+def test_pick_adds_records_the_depth_ratio_it_ordered_on():
+    """F3: the add table shows Depth, not Score, so the ratio the list is
+    actually sorted by has to live on the target — not just inside the
+    sort key that built the list."""
+    roster = [_p("r1", "Stud", "WR"), _p("r2", "Solid", "WR"), _p("r3", "Bench", "WR")]
+    pool = [PoolPlayer(_p("f1", "Better", "WR"), percent_owned=30.0)]
+    ranks = {"r1": 3, "r2": 10, "r3": 70, "f1": 25}
+    _, index = _score(roster + [pp.player for pp in pool], ranks)
+    rules = LeagueRules(roster_slots={"WR": 2}, team_count=12)
+    drops = droppable([index[p.key] for p in roster], rules)
+    adds = pick_adds(index, pool, drops, rules)
+
+    assert adds[0].depth_ratio == depth_ratio(index["f1"], rules)
+
+
 def test_streamers_are_listed_after_skill_players():
     """The failure this fixes, in the shape it actually appeared.
 
@@ -531,12 +581,12 @@ def test_streamer_ordering_does_not_reorder_skill_players_among_themselves():
 
 # --- what an empty position row means --------------------------------------
 
-def test_starter_demand_reason_reads_as_a_league_wide_count():
-    """"ranks DEF2 where the league starts 8" reads as though each team starts
-    eight defenses. ``starter_demand`` is a league-wide count, and that is the
-    whole point of the comparison — it is the line between a startable player
-    and bench depth."""
-    from ff_startsit.waivers.score import add_reasons
+def test_add_reasons_no_longer_repeats_the_depth_column():
+    """"ranks DEF2 where the league starts 8" used to be the only place a
+    free agent's rank-over-demand reached the reader. The add table's Depth
+    column (F3) now shows that same reading numerically, so the "why" text
+    repeating it in words would say the same thing twice in one row."""
+    from ff_startsit.waivers.score import add_reasons, depth_ratio
     players = [_p("f1", "Free Back", "RB"), _p("r1", "Rostered", "RB")]
     _, index = _score(players, {"f1": 20, "r1": 40})
     rules = LeagueRules(roster_slots={"RB": 2}, team_count=10)
@@ -544,8 +594,9 @@ def test_starter_demand_reason_reads_as_a_league_wide_count():
 
     reason = "; ".join(add_reasons(target, rules))
 
-    assert "the 20 RB the league starts each week" in reason
-    assert "where the league starts" not in reason
+    assert "the league starts" not in reason
+    # The reading itself is still there -- just in the Depth column, not prose.
+    assert depth_ratio(index["f1"], rules) == 1.0
 
 
 def test_viable_adds_counts_exactly_what_pick_adds_would_weigh():

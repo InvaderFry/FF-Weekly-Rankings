@@ -75,12 +75,16 @@ class Settings:
     # renders as maximum confidence, and `close_call_threshold`, which lives in
     # that same normalized space, can never trip. These floors read the raw values
     # instead, which is the only scale that knows a tenth of a rank from twenty.
-    # Signals absent here (injury, weather) are bucketed statuses with no
-    # meaningful continuous scale, and a signal with no floor cannot veto the flag.
-    # Not a blend weight: the "four places" rule does not apply and
-    # `_validate_weights` is untouched.
+    # Weather carries one too (12.0 of its 0-100 conditions score) purely for the
+    # *presentational* half of this check (`Recommendation.flat_signals`) — it
+    # still cannot flag or veto a dead heat, since its 0.10 blend weight sits
+    # under `min_disagree_weight` and `_flag_raw_dead_heat` filters voters by
+    # weight share before it ever consults this mapping. Injury is the one signal
+    # still absent here: a bucketed status with no meaningful continuous scale, so
+    # a signal with no floor cannot veto the flag. Not a blend weight: the "four
+    # places" rule does not apply and `_validate_weights` is untouched.
     close_call_raw_gaps: dict[str, float] = field(
-        default_factory=lambda: {"ecr": 3.0, "vegas": 1.5})
+        default_factory=lambda: {"ecr": 3.0, "vegas": 1.5, "weather": 12.0})
     # Signals whose disagreement flags a close call regardless of
     # `min_disagree_weight`. Injury is weighted low because it is uninformative
     # in the common case — everyone healthy normalizes to a tie — so its weight
@@ -373,7 +377,7 @@ def _synthesized_default(roster_source: str, espn_league_id: str, espn_team_id: 
     return LeagueProfile("default", "espn", espn_league_id, espn_team_id)
 
 
-DEFAULT_RAW_GAPS = {"ecr": 3.0, "vegas": 1.5}
+DEFAULT_RAW_GAPS = {"ecr": 3.0, "vegas": 1.5, "weather": 12.0}
 
 
 def _validate_raw_gaps(gaps: dict[str, float]) -> dict[str, float]:
@@ -484,6 +488,7 @@ def load_settings(env_file: str | os.PathLike | None = None) -> Settings:
     raw_gaps = _validate_raw_gaps({
         "ecr": _f("FF_CLOSE_RAW_GAP_ECR", 3.0),
         "vegas": _f("FF_CLOSE_RAW_GAP_VEGAS", 1.5),
+        "weather": _f("FF_CLOSE_RAW_GAP_WEATHER", 12.0),
     })
 
     # Comma-separated signal names, e.g. "injury" or "injury,weather". Empty

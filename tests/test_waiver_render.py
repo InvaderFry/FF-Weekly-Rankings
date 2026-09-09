@@ -51,6 +51,76 @@ def _bundle(label="work", adds=1, trades=1, week=9):
     return b
 
 
+# --- F3: the add table shows Depth, not the unsorted, cross-position Score ---
+
+def _depth_bundle():
+    """A mixed skill/streamer bundle, ordered by depth ratio the way
+    `pick_adds` actually orders it -- includes a `None` depth (a target built
+    without going through `pick_adds`, which renderers must tolerate)."""
+    b = WaiverBundle(label="work", scoring="half", week=9,
+                     rules=LeagueRules(acquisition_type=ACQ_FAAB, faab_budget=100.0))
+    b.adds = [
+        WaiverTarget(score=_ps("f1", "Deep TE", "TE", 76.5), depth_ratio=0.42,
+                    reasons=("takes the roster spot",)),
+        WaiverTarget(score=_ps("f2", "Solid WR", "WR", 84.5), depth_ratio=0.91,
+                    reasons=("takes the roster spot",)),
+        WaiverTarget(score=_ps("f3", "No Ratio", "RB", 50.0), depth_ratio=None,
+                    reasons=("takes the roster spot",)),
+        WaiverTarget(score=_ps("f4", "Streamer Def", "DEF", 91.9), depth_ratio=1.50,
+                    reasons=("takes the roster spot",)),
+    ]
+    return b
+
+
+def _markdown_add_rows(md):
+    """Parse the add table's data rows into stripped cells, by column."""
+    lines = [ln for ln in md.splitlines() if ln.startswith("| **")]
+    return [[c.strip() for c in ln.strip("|").split("|")] for ln in lines]
+
+
+def test_the_add_table_shows_depth_not_the_cross_position_score():
+    """AndyLOT's Week 1 add table read 76.5, 91.9, 84.5 in the Score column --
+    visibly unsorted, because the list is ordered by depth ratio and that
+    column showed `final`, a *within-position* score instead. The fixture's
+    `final` values (76.5, 84.5, 50.0, 91.9) are deliberately not in the
+    fixture's own add order, so a regression that goes back to printing
+    `final` in this column fails the exact-cell check below rather than
+    slipping through by coincidence."""
+    b = _depth_bundle()
+    md = render_waiver_digest(9, [b])
+    assert "| Add | Pos | Depth |" in md
+    assert "| Score |" not in md
+
+    rows = _markdown_add_rows(md)
+    depth_cells = [r[2] for r in rows]        # Add, Pos, Depth, Drop, Bid, Why
+    assert depth_cells == ["0.42", "0.91", "—", "1.50"]
+    numeric = [float(c) for c in depth_cells if c != "—"]
+    assert numeric == sorted(numeric), f"Depth column must read sorted, got {numeric}"
+
+    html = build_waivers_html(9, [b], "2026-09-09")
+    assert "<th class='num'>Depth</th>" in html
+    assert ">Score<" not in html
+    for cell in ("0.42", "0.91", "1.50"):
+        assert f"<td class='num'>{cell}</td>" in html
+
+
+def test_a_none_depth_renders_an_em_dash_not_a_crash():
+    b = _depth_bundle()
+    md = render_waiver_digest(9, [b])
+    html = build_waivers_html(9, [b], "2026-09-09")
+    embed = build_waiver_payload(9, [b])
+    assert "No Ratio" in md and "No Ratio" in html
+    assert "No Ratio" in json.dumps(embed)
+    # The row's depth cell is a plain em dash, not "None".
+    assert "None" not in md and "None" not in html
+
+
+def test_the_depth_legend_explains_the_column():
+    b = _depth_bundle()
+    assert "Below 1.00 is a startable player" in render_waiver_digest(9, [b])
+    assert "Below 1.00 is a startable player" in build_waivers_html(9, [b], "2026-09-09")
+
+
 # --- markdown -------------------------------------------------------------
 def test_markdown_covers_every_section():
     md = render_waiver_digest(9, [_bundle()])

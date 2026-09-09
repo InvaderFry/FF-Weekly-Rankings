@@ -15,7 +15,8 @@ from html import escape
 from typing import TYPE_CHECKING, Optional, Sequence
 
 from ..models import PlayerScore, Recommendation
-from .render import UNRANKED_NOTE, flat_signal_note
+from .render import (DEPTH_LEGEND, LINEUP_UNSCORED_NOTE, UNRANKED_NOTE,
+                     flat_signal_note, lineup_unscored_keys)
 from ..sources.journalists import JournalistView
 
 if TYPE_CHECKING:                    # the duck-typed bundle, named for the reader
@@ -68,20 +69,30 @@ def _signal_names(rec: Recommendation) -> list[str]:
     return sorted({name for s in rec.scores for name in s.normalized})
 
 
-def _lineup_table(lineup: Sequence[tuple[str, Optional[PlayerScore]]]) -> str:
+def _lineup_table(lineup: Sequence[tuple[str, Optional[PlayerScore]]],
+                  unscored: frozenset = frozenset()) -> str:
     rows = ["<tr><th>Slot</th><th>Player</th><th>Team</th>"
             "<th class='num'>Score</th></tr>"]
+    any_unscored = False
     for slot, pick in lineup:
         if pick is None:
             rows.append(f"<tr><td>{escape(slot)}</td><td><em>(no option)</em></td>"
                         "<td></td><td class='num'></td></tr>")
             continue
         team = escape(pick.player.team or "BYE")
+        if pick.player.key in unscored:
+            any_unscored = True
+            verdict = "—"
+        else:
+            verdict = f"{pick.final:.1f}"
         rows.append(
             f"<tr><td>{escape(slot)}</td><td>{escape(pick.player.name)}</td>"
-            f"<td>{team}</td><td class='num'>{pick.final:.1f}</td></tr>"
+            f"<td>{team}</td><td class='num'>{verdict}</td></tr>"
         )
-    return "<table>" + "".join(rows) + "</table>"
+    table = "<table>" + "".join(rows) + "</table>"
+    if any_unscored:
+        table += f"<p class='note'>{escape(LINEUP_UNSCORED_NOTE)}</p>"
+    return table
 
 
 def _position_table(rec: Recommendation) -> str:
@@ -188,7 +199,7 @@ def _dashboard_body(lineup: Sequence[tuple[str, Optional[PlayerScore]]],
         sections.append(f"<div class='callout'><strong>{escape(banner)}</strong></div>")
     sections += [
         "<h2>Suggested lineup</h2>",
-        _lineup_table(lineup),
+        _lineup_table(lineup, unscored=lineup_unscored_keys(recs)),
     ]
     # How the FLEX slot was decided — a pooled cross-position ranking, or the
     # positional fallback whose scores aren't comparable across positions.
@@ -294,16 +305,17 @@ def _waiver_adds_table(bundle) -> str:
         reason = bundle.no_adds_reason()
         return f"<p class='note'>{escape(reason)}</p>" if reason else ""
     rows = [
-        "<table><thead><tr><th>Add</th><th>Pos</th><th class='num'>Score</th>"
+        "<table><thead><tr><th>Add</th><th>Pos</th><th class='num'>Depth</th>"
         "<th>Drop for him</th><th>Bid</th><th>Why</th></tr></thead><tbody>"
     ]
     for t in bundle.adds:
         drop = t.drop.player.name if t.drop else "—"
         why = "; ".join(t.reasons[1:]) or "—"
+        depth = "—" if t.depth_ratio is None else f"{t.depth_ratio:.2f}"
         rows.append(
             f"<tr class='top'><td class='start'>{escape(t.score.player.name)}</td>"
             f"<td>{escape(t.score.player.position)}</td>"
-            f"<td class='num'>{t.score.final:.1f}</td>"
+            f"<td class='num'>{depth}</td>"
             # No margin across positions — the two scores were normalized in
             # separate candidate sets, so their difference isn't a quantity.
             f"<td>{escape(drop)}" + (f" <span class='note'>+{t.margin:.1f}</span>"
@@ -312,6 +324,7 @@ def _waiver_adds_table(bundle) -> str:
             f"<td>{escape(why)}</td></tr>"
         )
     rows.append("</tbody></table>")
+    rows.append(f"<p class='note'>{escape(DEPTH_LEGEND)}</p>")
     # Same sentence the digest and the embed carry: a table of streamers alone
     # says nothing about the positions that decide a week.
     gap = bundle.no_adds_at_positions()

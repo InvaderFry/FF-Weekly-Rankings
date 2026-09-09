@@ -1,4 +1,4 @@
-from ff_startsit.engine.blend import blend
+from ff_startsit.engine.blend import blend, weighted_final
 from ff_startsit.engine.normalize import NEUTRAL, to_0_100
 from ff_startsit.models import Player, SignalValue
 
@@ -223,14 +223,93 @@ def test_a_lightly_weighted_signal_gets_no_vote_either_way():
     assert _two((12.0, 12.1), (27.0, 22.0), weights=light).close_call is True
 
 
+def test_raw_dead_heat_note_formats_raw_values_to_two_decimals():
+    """`:g` defaults to 6 significant figures, so a Vegas implied-total gap of
+    1.222222 used to print verbatim in a close-call note (issue #40) instead of
+    rounding like every other raw value this app shows a reader."""
+    rec = _two((12.0, 12.0), (24.111111, 22.888889))
+    note = " ".join(rec.notes)
+    assert "vegas 24.11 vs 22.89" in note
+    assert "24.111111" not in note and "22.888889" not in note
+
+
 def test_no_raw_gaps_configured_leaves_behavior_exactly_as_before():
     """The mapping defaults to None, so every existing caller is untouched."""
     assert _two((12.0, 12.1), (24.1, 24.0), close_call_raw_gaps=None).close_call is False
 
 
+def test_near_identical_weather_forecasts_produce_zero_final_differential():
+    """PR2's fix, end to end: two forecasts that only differ by wind-measurement
+    noise must not move `final` between two otherwise-identical candidates.
+    Before quantization this is exactly Week 1's shape -- Caleb Williams 93.7
+    vs Ja'Marr Chase 95.5, both clear football weather, rendered 0 vs 28.6.
+    """
+    from ff_startsit.sources.weather import score_conditions
+
+    a_score = score_conditions(9.0, 0.0)
+    b_score = score_conditions(10.4, 0.0)
+    assert a_score == b_score            # same 5-point bucket, per test_weather.py
+
+    players = _players()
+    signal_values = {
+        "ecr": {"1": SignalValue(10.0), "2": SignalValue(10.0)},   # tied elsewhere
+        "weather": {"1": SignalValue(a_score), "2": SignalValue(b_score)},
+    }
+    rec = blend(
+        week=1, scoring="ppr", players=players, signal_values=signal_values,
+        higher_is_better={"ecr": False, "weather": True},
+        weights={"ecr": 0.60, "weather": 0.10},
+        close_call_threshold=5.0,
+    )
+    assert rec.scores[0].final == rec.scores[1].final   # zero differential
+
+
+def test_weather_raw_gap_cannot_flag_or_veto_at_default_weights():
+    """PR2's presentational fix (weather gains a raw gap) must not widen the
+    close-call flag: weather's 0.10 default weight sits under the 0.15
+    `min_disagree_weight` floor, so `_flag_raw_dead_heat` filters it out as a
+    voter before it ever consults the new gap -- it can neither flag a
+    disagreement nor veto (or manufacture) a dead heat. This is the test most
+    likely to rot, per the remediation plan: it pins the *absence* of an
+    effect.
+    """
+    from ff_startsit.config import Settings
+
+    settings = Settings()   # real shipped defaults, not hand-picked test values
+    players = _players()
+    signal_values = {
+        "ecr": {"1": SignalValue(12.0), "2": SignalValue(12.1)},   # a dead heat
+        "weather": {"1": SignalValue(95.0), "2": SignalValue(80.0)},  # a real gap
+    }
+    rec = blend(
+        week=5, scoring="ppr", players=players, signal_values=signal_values,
+        higher_is_better={"ecr": False, "weather": True},
+        weights=settings.weights,
+        close_call_threshold=3.0,
+        min_disagree_weight=settings.min_disagree_weight,
+        close_call_raw_gaps=settings.close_call_raw_gaps,
+    )
+    assert rec.close_call is True                          # ecr alone is a dead heat...
+    assert not any("weather" in n.lower() for n in rec.notes)   # ...but weather never votes
+
+
+def test_replay_guard_pins_historical_normalized_values_through_weighted_final():
+    """Constraint 1: `normalize.to_0_100` and `weighted_final` must never
+    change, because the #7 calibrator re-blends logged `normalized` values
+    from `results_log.jsonl` through `weighted_final` -- changing either makes
+    every historical row unreplayable. This pins a logged decision's
+    `normalized` blob (as `log_recommendation` would have written it) and its
+    `final`, so a future edit to either function that shifts this value fails
+    loudly rather than silently invalidating the calibration corpus.
+    """
+    normalized = {"ecr": 92.31, "vegas": 61.54, "injury": 100.0, "weather": 28.6}
+    weights = {"ecr": 0.60, "vegas": 0.18, "injury": 0.12, "weather": 0.10}
+    assert weighted_final(normalized, weights) == 81.32
+
+
 def test_a_signal_with_no_configured_gap_cannot_veto():
-    """injury and weather are bucketed statuses with no meaningful raw scale, so
-    they are deliberately absent from the mapping and abstain."""
+    """injury is a bucketed status with no meaningful raw scale, so it is
+    deliberately absent from the mapping and abstains."""
     rec = blend(
         week=5, scoring="ppr", players=_players(),
         signal_values={
@@ -378,8 +457,25 @@ def test_injury_below_the_weight_floor_cannot_flag_without_the_exemption():
     assert rec.close_call is False
 
 
-def test_exempt_injury_flags_despite_carrying_less_than_the_floor():
+def test_exempt_injury_disagreement_is_a_note_not_a_close_call():
+    """F5(a): the exemption used to make an injury-only disagreement flag
+    close_call outright — any Questionable tag on the leader tripped it,
+    which over-fired in practice (5 of 9 multi-candidate groups in one real
+    run). It still gets *detected* below the real weight floor, and still
+    gets logged (the note lands in `results_log.jsonl` either way, for later
+    analysis) — it just no longer sets `close_call` on its own. The
+    designation itself is not hidden by this: it's already on the player's
+    own `flags`, shown in every table regardless of `close_call`."""
     rec = _disagreement(0.12, disagree_exempt={"injury"})
+    assert rec.close_call is False
+    assert any("injury favors Bravo" in n for n in rec.notes)
+
+
+def test_a_genuinely_weighted_disagreement_still_flags_even_if_exempt():
+    """The demotion only affects a disagreement that clears the floor *via*
+    the exemption. One that clears it on real weight alone is untouched,
+    exempt or not."""
+    rec = _disagreement(0.40, disagree_exempt={"injury"})
     assert rec.close_call is True
     assert any("injury favors Bravo" in n for n in rec.notes)
 
@@ -405,4 +501,59 @@ def test_exemption_is_per_signal_and_does_not_widen_the_floor():
         close_call_threshold=5.0, min_disagree_weight=0.15,
         disagree_exempt={"injury"},
     )
+    assert rec.close_call is False
+
+
+# --- F5(b): the starter-boundary flag ---------------------------------------
+
+def _four():
+    return [Player(key=str(i), name=f"P{i}", team="KC", position="WR")
+            for i in range(1, 5)]
+
+
+def _blend_four(ranks, starter_count):
+    players = _four()
+    signal_values = {"ecr": {str(i): SignalValue(ranks[i - 1]) for i in range(1, 5)}}
+    return blend(
+        week=1, scoring="ppr", players=players, signal_values=signal_values,
+        higher_is_better={"ecr": False}, weights={"ecr": 1.0},
+        close_call_threshold=1.0, starter_count=starter_count,
+    )
+
+
+def test_starter_boundary_flags_rank_two_vs_three_not_the_top_two():
+    """A league starting 2 WR sets its lineup on the WR2/WR3 decision, not
+    WR1/WR2 -- the top-two check alone never saw workTG's real Week 1 flag."""
+    rec = _blend_four([1.0, 20.0, 20.1, 90.0], starter_count=2)
+    assert rec.close_call is True
+    assert any("Last starting spot" in n for n in rec.notes)
+    assert not any("Too close to call" in n for n in rec.notes)
+
+
+def test_starter_boundary_is_silent_when_that_pair_is_not_close():
+    rec = _blend_four([1.0, 10.0, 60.0, 90.0], starter_count=2)
+    assert rec.close_call is False
+
+
+def test_starter_count_one_does_not_duplicate_the_top_two_note():
+    """N=1 is exactly the top-two pair already checked -- it must not fire a
+    second, redundant note for the identical comparison."""
+    rec = _blend_four([1.0, 1.05, 60.0, 90.0], starter_count=1)
+    assert rec.close_call is True
+    notes = [n for n in rec.notes if "close to call" in n.lower()
+             or "coin flip" in n.lower()]
+    assert len(notes) == 1
+
+
+def test_starter_count_none_leaves_behavior_unchanged():
+    """The default: every existing caller that never passes `starter_count`
+    must see none of this."""
+    rec = _blend_four([1.0, 20.0, 20.1, 90.0], starter_count=None)
+    assert rec.close_call is False
+
+
+def test_starter_boundary_needs_a_body_below_the_line():
+    """Fewer scored candidates than `starter_count + 1` means there's no one
+    to compare the last starter against -- must not crash or flag."""
+    rec = _blend_four([1.0, 20.0, 20.1, 90.0], starter_count=4)
     assert rec.close_call is False
