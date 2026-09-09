@@ -292,6 +292,11 @@ def _build_waiver_embed(bundle) -> dict:
     adds = _waiver_add_lines(bundle)
     if adds:
         description = "\n".join(adds)
+        # This embed is the copy most people actually read, so the positions that
+        # produced no add are worth the two lines here too.
+        gap = bundle.no_adds_at_positions()
+        if gap:
+            description = f"{description}\n\n{gap}"
     else:
         # One shared definition of what an empty section means — an outage reads
         # differently from a quiet wire, and this embed is the copy most people

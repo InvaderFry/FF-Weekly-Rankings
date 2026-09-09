@@ -424,23 +424,123 @@ def test_unranked_is_about_what_could_be_compared():
     assert _rec(_ps("1", "Only Tight End", "TE", 50.0), unscored).unranked is True
 
 
-def test_a_lone_candidate_renders_no_placeholder_signal_columns():
+def test_a_lone_candidate_collapses_to_one_sentence():
     """`to_0_100` returns the midpoint for an empty range, so the shipped Week 1
     tables read `ECR 50 | INJURY 50 | VEGAS 50 | WEATHER 50` for a player whose
-    real ECR may have been TE1 — four placeholders shaped like readings."""
-    from ff_startsit.output.render import UNRANKED_NOTE
+    real ECR may have been TE1 — four placeholders shaped like readings.
 
+    Blanking those columns left a header, an empty table, a note explaining the
+    empty table and a verdict that was never in doubt: nine of the eighteen
+    sections in a three-league digest, none of them carrying a reading. The whole
+    section is now the one sentence that was ever in it.
+    """
     lone = _rec(_ps("1", "Only Tight End", "TE", 50.0))
     md = render_markdown(lone, title="TE")
 
-    assert "| 1 | Only Tight End | TE | KC | 50.0 | — |" in md
-    assert "| 50 |" not in md
-    assert UNRANKED_NOTE in md
+    assert "|" not in md                      # no table at all
+    assert "50" not in md                     # and no placeholder in any form
     # The pick still stands: he is the only option and has to be startable.
     assert "✅ **Start:** Only Tight End" in md
+    assert "only TE" in md                    # and says why nothing was ranked
+
+
+def test_a_lone_candidate_keeps_its_flags():
+    """The flags are the one real reading on a lone candidate — an injury
+    designation or a weather warning survives the collapse."""
+    score = _ps("1", "Only Tight End", "TE", 50.0)
+    score.flags.append("injury: Questionable")
+    md = render_markdown(_rec(score), title="TE")
+    assert "injury: Questionable" in md
+
+
+def test_a_lone_scorer_beside_a_ruled_out_body_keeps_its_table():
+    """``unranked`` is true here too, but the ruled-out row is exactly what a
+    roster owner needs to see — so this table must not collapse."""
+    from ff_startsit.models import PlayerScore
+    out = PlayerScore(player=Player("2", "IR Guy", "KC", "TE"))
+    out.flags.append("not startable: ruled out this week")
+    md = render_markdown(_rec(_ps("1", "Only Tight End", "TE", 50.0), out), title="TE")
+    assert "IR Guy" in md and "not startable" in md
+    assert "| 1 | Only Tight End" in md        # the table survives
+    assert "| 50 |" not in md                  # still no placeholder columns
 
 
 def test_a_real_ranking_still_shows_its_signal_columns():
     md = render_markdown(_rec(_ps("1", "Alpha", "RB", 90.0),
                               _ps("2", "Bravo", "RB", 10.0)), title="RB")
     assert "| 90 |" in md and "| 10 |" in md
+
+
+# --- a 0-100 column can be drawn from almost nothing ------------------------
+
+def _blend_with(vegas_raws, gaps=None):
+    """Blend a candidate set with real raw Vegas values, so the raw scale exists."""
+    from ff_startsit.engine.blend import blend
+    from ff_startsit.models import SignalValue
+    players = [Player(str(i), f"P{i}", "KC", "RB") for i in range(len(vegas_raws))]
+    values = {
+        "vegas": {p.key: SignalValue(raw=v, available=True)
+                  for p, v in zip(players, vegas_raws)},
+        "ecr": {p.key: SignalValue(raw=float(i + 1) * 5, available=True)
+                for i, p in enumerate(players)},
+    }
+    return blend(week=1, scoring="ppr", players=players, signal_values=values,
+                 higher_is_better={"vegas": True, "ecr": False},
+                 weights={"vegas": 0.4, "ecr": 0.6}, close_call_threshold=5.0,
+                 close_call_raw_gaps=gaps if gaps is not None
+                 else {"ecr": 3.0, "vegas": 1.5})
+
+
+def test_a_tiny_raw_spread_is_called_out_under_the_table():
+    """`to_0_100` is min-max within the candidate set with no minimum-span floor,
+    so the best candidate is 100 and the worst is 0 however little separates
+    them. Week 1 put the #1 back at `VEGAS 0` in two leagues; nothing in the
+    table could say whether that was a real fade or half an implied point."""
+    rec = _blend_with([22.0, 21.8, 21.6, 21.5])   # spans 0.5, under the 1.5 gap
+    md = render_markdown(rec, title="RB")
+
+    # The column really does read as a blowout...
+    assert "| 100 |" in md and "| 0 |" in md
+    # ...so the note has to say what it was drawn from.
+    assert "vegas spans 0.5" in md
+    assert "too small to rank on" in md
+
+
+def test_a_real_raw_spread_is_left_alone():
+    """The note must stay rare enough to mean something — a genuine six-point
+    spread in implied totals is exactly the edge the column should show."""
+    rec = _blend_with([27.0, 24.0, 22.0, 21.0])
+    md = render_markdown(rec, title="RB")
+    assert "vegas spans" not in md
+    assert "Read with care" not in md
+
+
+def test_bucketed_signals_abstain_from_the_flat_check():
+    """Injury and weather are bucketed statuses with no continuous scale, so they
+    carry no configured gap and can neither raise nor suppress the note — the
+    same abstention they make in `blend._flag_raw_dead_heat`."""
+    rec = _blend_with([22.0, 21.8], gaps={"vegas": 1.5})
+    assert [name for name, _, _ in rec.flat_signals()] == ["vegas"]
+    no_gaps = _blend_with([22.0, 21.8], gaps={})
+    assert no_gaps.flat_signals() == []
+
+
+def test_one_reading_is_not_a_spread():
+    """With a single usable raw value, `max - min` is 0 — which would sail under
+    any gap and announce a dead heat drawn from one number. A signal that read
+    only one of the candidates has measured no spread at all."""
+    from ff_startsit.engine.blend import blend
+    from ff_startsit.models import SignalValue
+    players = [Player("1", "Has Vegas", "KC", "RB"), Player("2", "On Bye", "", "RB")]
+    values = {
+        "vegas": {"1": SignalValue(raw=22.0, available=True),
+                  "2": SignalValue(raw=None, available=False, note="bye")},
+        "ecr": {"1": SignalValue(raw=5.0, available=True),
+                "2": SignalValue(raw=40.0, available=True)},
+    }
+    rec = blend(week=1, scoring="ppr", players=players, signal_values=values,
+                higher_is_better={"vegas": True, "ecr": False},
+                weights={"vegas": 0.4, "ecr": 0.6}, close_call_threshold=5.0,
+                close_call_raw_gaps={"vegas": 1.5})
+    assert rec.flat_signals() == []
+    assert "vegas spans" not in render_markdown(rec, title="RB")

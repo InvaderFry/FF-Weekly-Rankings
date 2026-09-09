@@ -158,10 +158,19 @@ def recommend(
     # The fourth kind of run that is never logged, for the same reason as the
     # three above: the row would not mean what it claims. `calibrate` scores
     # *pairwise* concordance within one decision and `backtest` reports top-pick
-    # hit-rate, so a lone candidate contributes no pair and a pick that was the
-    # only option — while still counting toward the `--min-decisions` floor and
-    # inflating the hit rate. Week 1 logged 30 such rows out of 54: a corpus that
+    # hit-rate, so a lone candidate contributes no pair and records a pick that
+    # was the only option. Week 1 logged 30 such rows out of 54: a corpus that
     # looked twice the size of the evidence in it.
+    #
+    # Both consumers already refuse these rows on their own — `learner
+    # .join_outcomes` and `backtest` each require two joined candidates before a
+    # decision counts, so the floors and the hit-rate were never actually
+    # inflated by them (`tests/test_calibrate_floors.py` pins that, including for
+    # the rows already on the append-only `calibration-data` branch, which this
+    # guard cannot retract). Not logging them is about the corpus meaning what it
+    # says: a log whose row count is twice its evidence misleads every future
+    # reader of it, starting with the human deciding whether there is enough data
+    # to calibrate on.
     if log and rec.unranked:
         log = False
 

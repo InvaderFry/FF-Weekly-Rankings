@@ -146,6 +146,13 @@ def test_discord_waiver_colour_differs_from_the_startsit_post():
 
 def test_many_leagues_stay_inside_discord_limits():
     bundles = [_bundle(f"league-{i}", adds=8, trades=5) for i in range(25)]
+    # Every league also carrying the per-position "no add here" sentence, which
+    # lands in the embed *description* and so competes for the same budget.
+    for b in bundles:
+        b.rules = LeagueRules(acquisition_type=ACQ_FAAB, faab_budget=100.0,
+                              roster_slots={"QB": 1, "RB": 2, "WR": 2, "TE": 1},
+                              team_count=12)
+        b.considered_adds = {"QB": 7, "RB": 31, "TE": 12}
     payload = build_waiver_payload(9, bundles, dashboard_url="https://x.test/w.html",
                                    commands_url="https://x.test/issues")
     embeds = payload["embeds"]
@@ -488,3 +495,81 @@ def test_all_three_renderers_explain_an_empty_trade_section():
     assert expected in build_waivers_html(9, [b], "2026-09-09")
     payload = json.dumps(build_waiver_payload(9, [b]))
     assert "superflex" in payload
+
+
+# --- a table of streamers still leaves the real positions unexplained -------
+
+def _streamers_only_bundle():
+    """The shipped Week 1 shape: adds exist, but only a kicker and a defense."""
+    b = WaiverBundle(label="work", scoring="half", week=1,
+                     rules=LeagueRules(roster_slots={"QB": 1, "RB": 2, "WR": 2,
+                                                     "TE": 1, "K": 1, "DEF": 1},
+                                       team_count=10))
+    for key, name, pos in (("k1", "Some Kicker", "K"), ("d1", "Some D/ST", "DEF")):
+        b.adds.append(WaiverTarget(score=_ps(key, name, pos, 84.0),
+                                   drop=_ps(f"o{key}", f"Old {pos}", pos, 60.0),
+                                   reasons=("takes the roster spot",)))
+    b.pool_size = 200
+    b.coverage = {"ecr": 180}
+    return b
+
+
+def test_a_streamer_only_table_says_what_happened_at_rb_and_wr():
+    """``no_adds_reason`` only speaks when the table is *entirely* empty, so a
+    report listing a kicker and a defense said nothing about the positions that
+    decide a week — and a reader could not tell a bare wire from a bar set too
+    high. All three renderers carry the same sentence."""
+    b = _streamers_only_bundle()
+    b.considered_adds = {"RB": 12, "WR": 8, "K": 3, "DEF": 4}
+
+    reason = b.no_adds_at_positions()
+    assert reason is not None
+    for pos in ("QB", "RB", "WR", "TE"):
+        assert pos in reason
+    assert "12" in reason and "8" in reason          # what was actually weighed
+    assert "K" not in reason.replace("Kicker", "")   # streamers are not news
+
+    md = render_waiver_digest(1, [b])
+    html = build_waivers_html(1, [b], "2026-09-09")
+    embed = json.dumps(build_waiver_payload(1, [b]))
+    for out in (md, html, embed):
+        assert "beat anyone you could drop" in out
+
+
+def test_it_separates_a_bare_wire_from_a_bar_set_too_high():
+    """Two different silences: nobody at that position was even a candidate, or
+    candidates were weighed and none won. They call for different responses."""
+    weighed = _streamers_only_bundle()
+    weighed.considered_adds = {"RB": 12, "WR": 8, "QB": 4, "TE": 3}
+    assert "ranked and compared" in weighed.no_adds_at_positions()
+
+    bare = _streamers_only_bundle()
+    bare.considered_adds = {}
+    text = bare.no_adds_at_positions()
+    assert "No ranked free agent was available" in text
+    assert "nothing there was compared" in text
+
+
+def test_it_stays_quiet_when_something_else_already_explains_the_silence():
+    """Same contract as ``no_adds_reason``: a banner or a caveat owns the
+    explanation, and an entirely empty table belongs to ``no_adds_reason``."""
+    b = _streamers_only_bundle()
+    b.considered_adds = {"RB": 12}
+
+    b.banner = "Preseason: nothing scored."
+    assert b.no_adds_at_positions() is None
+    b.banner = None
+    b.caveat = "The free-agent pool was unreachable."
+    assert b.no_adds_at_positions() is None
+    b.caveat = None
+    b.adds = []
+    assert b.no_adds_at_positions() is None
+    assert b.no_adds_reason() is not None
+
+
+def test_it_stays_quiet_when_every_starting_position_produced_an_add():
+    b = _streamers_only_bundle()
+    b.rules = LeagueRules(roster_slots={"WR": 2, "K": 1}, team_count=10)
+    b.adds = [WaiverTarget(score=_ps("f1", "A Wideout", "WR", 70.0))]
+    b.considered_adds = {"WR": 9}
+    assert b.no_adds_at_positions() is None

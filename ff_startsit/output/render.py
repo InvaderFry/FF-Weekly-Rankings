@@ -67,12 +67,50 @@ def md_cell(text: str) -> str:
     return str(text).replace("|", "\\|").replace("\r\n", " ").replace("\n", " ")
 
 
+def _lone_candidate_markdown(rec: Recommendation) -> list[str]:
+    """The whole section as one sentence, keeping every reading that was real."""
+    s = rec.scores[0]
+    team = s.player.team or "BYE"
+    lines = ["",
+             f"✅ **Start:** {s.player.name} ({team}) — your only "
+             f"{s.player.position} this week, so there was nothing to rank him "
+             "against and no signal could be scored."]
+    if s.flags:
+        # The flags are the one thing here that is a real reading rather than a
+        # placeholder, so they survive the collapse.
+        lines.append(f"_Flags: {md_cell('; '.join(s.flags))}._")
+    return lines
+
+
+def flat_signal_note(rec: Recommendation) -> str:
+    """One sentence naming columns whose 0-100 spread is drawn from almost nothing.
+
+    Without it the table's most extreme-looking column can be its least
+    meaningful: Week 1 put the #1 back at ``VEGAS 0`` in two leagues, which is
+    what min-max does to the low end of a set that may span half an implied
+    point. The raw units are the only scale that can say which it was.
+    """
+    flat = rec.flat_signals()
+    if not flat:
+        return ""
+    parts = [f"{name} spans {spread:g} (separation threshold {gap:g})"
+             for name, spread, gap in flat]
+    column = "column magnifies" if len(flat) == 1 else "columns magnify"
+    return ("Read with care: " + "; ".join(parts) +
+            f" in raw units across these candidates, so that 0-100 {column} "
+            "a gap too small to rank on.")
+
+
 def render_markdown(rec: Recommendation, title: str = "") -> str:
     """Render a Recommendation as GitHub-flavored markdown (for issues/ChatOps)."""
     signal_names = sorted({name for s in rec.scores for name in s.normalized})
     lines: list[str] = []
     if title:
         lines.append(f"### {title}")
+
+    if rec.lone_candidate:
+        lines.extend(_lone_candidate_markdown(rec))
+        return "\n".join(lines)
 
     header = ["#", "Player", "Pos", "Team", "Score",
               *[md_cell(n.upper()) for n in signal_names], "Flags"]
@@ -92,6 +130,10 @@ def render_markdown(rec: Recommendation, title: str = "") -> str:
     lines.append("")
     if rec.unranked and rec.scores:
         lines.append(f"_{UNRANKED_NOTE}_")
+        lines.append("")
+    flat = flat_signal_note(rec)
+    if flat:
+        lines.append(f"_{flat}_")
         lines.append("")
     if rec.close_call:
         lines.append("> ⚠️ **Close call** — lean, don't bank on it:")

@@ -43,6 +43,13 @@ def _adds_table(bundle: WaiverBundle) -> list[str]:
             f"| {t.score.final:.1f} | {drop} "
             f"| {md_cell(_bid_cell(t))} | {md_cell(why)} |"
         )
+    # A table listing only streamers still leaves the positions that decide a
+    # week unexplained; the bundle owns that sentence too.
+    gap = bundle.no_adds_at_positions()
+    if gap:
+        # Blank line first: without it the italic sits flush against the table
+        # rows and markdown folds it into the table.
+        lines.extend(["", f"_{gap}_"])
     lines.append("")
     return lines
 

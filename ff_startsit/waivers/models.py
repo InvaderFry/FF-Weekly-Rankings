@@ -44,6 +44,14 @@ class FantasyTeam:
     waiver_priority: Optional[int] = None
 
 
+#: Positions a league starts exactly one of and streams week to week. Lives here
+#: rather than in ``score`` because ``WaiverBundle.no_adds_at_positions`` reasons
+#: about them too, and two copies of the set would let a renderer and the scorer
+#: disagree about which empty rows are worth explaining. ``score`` re-exports it
+#: and holds the note on why these positions are an exception to ``depth_ratio``.
+STREAM_POSITIONS = frozenset({"K", "DEF"})
+
+
 @dataclass(frozen=True)
 class LeagueRules:
     """How acquisitions work in one league, as far as we could tell.
@@ -238,6 +246,11 @@ class WaiverBundle:
     coverage: dict[str, int] = field(default_factory=dict)
     #: Free agents actually fetched, the denominator ``coverage`` is counted against.
     pool_size: int = 0
+    #: position -> free agents that were real add candidates, from
+    #: ``score.viable_adds_by_position``. The denominator behind
+    #: ``no_adds_at_positions``: it is what lets an empty RB row say whether forty
+    #: ranked backs lost the comparison or none were ranked at all.
+    considered_adds: dict[str, int] = field(default_factory=dict)
 
     def no_adds_reason(self) -> Optional[str]:
         """Why the adds section is empty — an outage, a thin read, or a quiet wire.
@@ -269,6 +282,58 @@ class WaiverBundle:
             return ("Nothing on the wire beats anyone you could drop this week "
                     f"(ranked {ranked} of {self.pool_size} free agents).")
         return "Nothing on the wire beats anyone you could drop this week."
+
+    def no_adds_at_positions(self) -> Optional[str]:
+        """Which starting positions produced no add, and whether anyone was weighed.
+
+        ``no_adds_reason`` only speaks when the table is *entirely* empty, so a
+        report listing a kicker and a defense and nothing else said nothing about
+        the positions that decide a week. Week 1 did exactly that in all three
+        leagues: every table opened with a streamer, no RB or WR appeared, and a
+        reader could not tell a bare wire from a bar set too high.
+
+        Two different silences, kept apart for the same reason ``no_adds_reason``
+        separates an outage from a quiet wire:
+
+        * nobody at that position was even a candidate — the wire holds no ranked
+          player there (``score.has_ecr`` gates it, and most of a pool is below
+          FantasyPros' line), so nothing was compared;
+        * candidates were weighed and none beat anyone you could drop.
+
+        ``None`` when there is nothing to add to what the report already says: a
+        banner or caveat is standing, the adds table is empty (``no_adds_reason``
+        owns that), or every starting position produced an add. Streaming
+        positions are excluded — a league starts one of each, and their absence
+        from a table is not news.
+        """
+        if self.banner or self.caveat or not self.adds:
+            return None
+        slots = {pos.upper(): n for pos, n in (self.rules.roster_slots or {}).items()
+                 if n and pos.upper() not in STREAM_POSITIONS}
+        if not slots:
+            return None
+        filled = {t.score.player.position.upper() for t in self.adds}
+        weighed: list[str] = []
+        unranked: list[str] = []
+        for pos in ROSTER_ORDER:
+            if pos not in slots or pos in filled:
+                continue
+            n = self.considered_adds.get(pos, 0)
+            (weighed if n else unranked).append(f"{pos} ({n})" if n else pos)
+        if not weighed and not unranked:
+            return None
+        parts = []
+        if weighed:
+            parts.append(
+                f"No add at {_join(weighed)} — free agents there were ranked and "
+                "compared, but none beat anyone you could drop."
+            )
+        if unranked:
+            parts.append(
+                f"No ranked free agent was available at {_join(unranked)}, so "
+                "nothing there was compared."
+            )
+        return " ".join(parts)
 
     def no_trades_reason(self) -> Optional[str]:
         """Why the trade section is empty — a refusal, an outage, or a quiet league.
@@ -313,3 +378,12 @@ class WaiverBundle:
         for _, players in ordered:
             players.sort(key=lambda p: p.name)
         return ordered
+
+
+def _join(items: list[str]) -> str:
+    """Oxford-comma join for the short position lists the reasons above build."""
+    if len(items) == 1:
+        return items[0]
+    if len(items) == 2:
+        return f"{items[0]} and {items[1]}"
+    return f"{', '.join(items[:-1])} and {items[-1]}"
