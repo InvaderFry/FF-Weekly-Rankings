@@ -132,6 +132,19 @@ without touching the pure engine.
   values through `weighted_final`, so changing the transform makes every
   historical row in `results_log.jsonl` unreplayable.
 
+  The same min-max blindness has a second, purely *presentational* consequence,
+  and `Recommendation.flat_signals` is the answer to it. A column can look
+  decisive purely because `to_0_100` stretched a trivial raw spread across the
+  full range: Week 1 put the #1 back at `VEGAS 0` in two leagues, and nothing in
+  the table said whether that was a real fade or half an implied point. So a
+  signal that carries a configured raw gap, reads a raw value for at least two
+  *scored* candidates, and spans no more than that gap across all of them gets a
+  "read with care" line under the table (`render.flat_signal_note`, mirrored in
+  `html.py`). It reuses `close_call_raw_gaps` rather than adding a threshold, and
+  it asks about the whole candidate set rather than the top two — the dead-heat
+  condition already owns that pair. Bucketed signals with no configured gap
+  (injury, weather) abstain here exactly as they do in `_flag_raw_dead_heat`.
+
 ### The self-calibration loop (#7)
 
 Every `rank`/`compare` run appends a row to `.cache/results_log.jsonl`
@@ -178,14 +191,27 @@ differed from the global — fine while scoring was the only per-league field, a
 wrong the moment a second one rides along: every same-scoring league would share
 one `Settings` object and log whichever label was written last.
 
-**Three kinds of run are never logged**, all for the same reason — the row would
+**Four kinds of run are never logged**, all for the same reason — the row would
 not mean what it claims, and the log is append-only: preseason sample runs
-(`pipeline.py`), the pooled FLEX pass (`rank_pooled`), and any run where a signal
-served a week other than the one requested. That last one is `ECRSignal.
+(`pipeline.py`), the pooled FLEX pass (`rank_pooled`), any run where a signal
+served a week other than the one requested, and a lone candidate
+(`Recommendation.unranked`). The week mismatch is `ECRSignal.
 served_wrong_week`: the keyless scrape has no week selector, so `--week 5` returns
 current-week ranks. Show the ranking, warn, withhold the row — a warning the user
 scrolls past is enough for a table they're reading now, not for a row that would
 mislead every future calibration.
+
+The lone-candidate case is the one where it is worth being precise about *what*
+goes wrong, because the obvious answer is wrong. Both consumers already refuse
+these rows on their own — `learner.join_outcomes` and `backtest` each require two
+joined candidates — so they never inflated `--min-decisions` or the hit-rate, and
+`tests/test_calibrate_floors.py` pins that, including for the 30-of-62 such rows
+already sitting on the `calibration-data` branch, which no later guard can
+retract. Not logging them is about the **corpus meaning what it says**: a log
+whose row count is twice its evidence misleads the human reading it to decide
+whether there is enough data to calibrate on. Don't "fix" the old rows by
+rewriting that branch — the readers already handle them, and the log is
+append-only on purpose.
 
 The corpus survives scheduled runs on a `calibration-data` orphan branch
 (`weekly-report.yml`), since `.cache/` dies with the runner. Note
@@ -282,8 +308,15 @@ as fact is worse than a missing signal — a missing one just re-weights the res
 `WeatherSignal` therefore scores *games*, not teams: both sides of a matchup share
 one forecast and one lookup, read at the actual kickoff hour (`timezone=UTC` end
 to end, so there is no local-time or DST arithmetic anywhere). With no schedule,
-no kickoff, an unknown venue, or a forecast that doesn't reach the game, it is
-unavailable. There is deliberately **no** fallback to "the windiest day in the
+no kickoff, an unknown venue, a failed fetch, or a forecast that doesn't reach the
+game, it is unavailable — and each of those arms carries **its own note**
+(`_compute_game`). They all render as the same blank column, but they are four
+different things to do about it: file a stadium, wait for the schedule, retry, or
+wait for the week. Week 1 showed both sides of one matchup reading "no forecast"
+with nothing to say which it was — the same "distinguishable failures rendering
+identically" bug `no_trades_reason` and the lone-candidate note each fixed
+elsewhere. Note a roofed venue is *not* one of these: it scores `DOME_SCORE`
+without a network call, so a dome never reads as a failure. There is deliberately **no** fallback to "the windiest day in the
 horizon" — that invented risk from weather unrelated to the game.
 
 `VegasSignal` uses the same provider to filter events: the odds endpoint takes no
@@ -418,6 +451,23 @@ reason a piece of it is shaped the way it is.
   **every** run rather than only the rehearsal) to pick between an outage, a thin
   read that names its own thinness, and a genuinely quiet wire. `None` means a
   banner is standing and already explains the silence.
+
+  **`no_adds_reason` only speaks when the table is *entirely* empty**, which left
+  the commonest real case unexplained: a table listing a kicker and a defense and
+  nothing else. Because `pick_adds` sorts streamers last, that is exactly what a
+  shallow league produces, and every Week 1 league produced it — no RB or WR add,
+  and no way to tell a bare wire from a bar set too high.
+  **`WaiverBundle.no_adds_at_positions()`** is the per-position companion, same
+  contract and same three renderers: it names each *starting* position (streamers
+  excluded — a league starts one of each and their absence is not news) that
+  produced no add, and separates "candidates were ranked and compared, none beat
+  anyone you could drop" from "no ranked free agent was available there, so
+  nothing was compared". Its denominator is `score.viable_adds_by_position`,
+  which counts through `add_candidate_ratio` — the gate `pick_adds` itself
+  applies, **extracted rather than copied**, because "N were compared" is only
+  honest while the two agree. `STREAM_POSITIONS` moved to `waivers/models.py` for
+  the same reason: `WaiverBundle` reasons about it now, and two copies would let
+  a renderer and the scorer disagree about which empty rows are worth explaining.
 - **Preseason is refused, not filled.** `pipeline.build_signals` serves bundled
   sample values before Week 1 so a start/sit *table* has something to
   demonstrate with. Dealt to a real roster those values name real players to
@@ -521,7 +571,20 @@ deploy leaves the live site standing, which beats replacing it with half of one.
 
 `output/` renders the same `Recommendation` to a rich table, markdown, CSV/JSON
 (`render.py`), a self-contained HTML dashboard (`html.py`), and a Discord webhook
-payload (`discord.py`). `report.py` builds whole-roster digests and the shared
+payload (`discord.py`).
+
+**`Recommendation.lone_candidate` collapses a section that carries no reading.**
+A position with one rostered player rendered as a header, a table whose every
+signal column was blank, a note explaining why they were blank, and a verdict
+that was never in doubt — nine of the eighteen sections in a three-league digest,
+burying the RB and WR tables that decide the week. The digest and the dashboard
+now emit the one sentence that was ever in it, keeping the player, his team and
+his **flags** (an injury designation or a weather warning is the one real reading
+on a lone candidate). It is deliberately stricter than `unranked`, which is also
+true for one healthy body beside two on IR: those rows carry "not startable:
+ruled out this week", which is exactly what a roster owner needs to see, so that
+table stays. The interactive `render_table` keeps its table too — someone who
+typed `rank TE` asked for it. `report.py` builds whole-roster digests and the shared
 lineup builder. `publish` does one scoring pass and fans out to all three outputs
 (this is what the weekly GitHub Action runs). The waiver pass renders the same
 three ways from `WaiverBundle` (`waivers/render.py`, `html.build_waivers_html`,

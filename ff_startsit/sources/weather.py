@@ -15,8 +15,12 @@ Sunday's weather.
 Everything degrades to unavailable rather than to a guess: no schedule, no
 kickoff, an unknown venue, a forecast that doesn't reach the game, or a failed
 fetch all mark the player unavailable so the blender re-weights the remaining
-signals. A wrong forecast presented as fact is worse than no forecast. Roofed
-venues score neutral without a network call. Parsing and scoring are pure and
+signals. A wrong forecast presented as fact is worse than no forecast. Each of
+those arms carries its **own note**, because they render to a reader as the same
+missing column while calling for different things: a venue this build cannot
+place is a stadium to add, a refused provider is worth retrying, and a game past
+the horizon just needs the week to get closer. Roofed venues score neutral
+without a network call. Parsing and scoring are pure and
 separated from HTTP so they test offline against a fixture.
 """
 
@@ -169,20 +173,31 @@ class WeatherSignal(Signal):
         return result
 
     def _compute_game(self, game: GameContext) -> tuple[Optional[float], str]:
+        """Score one game's conditions, or say *which* way the read failed.
+
+        Every unavailable arm returns its own note. They render identically to a
+        reader otherwise — "no forecast" covers a venue this build cannot place,
+        a kickoff the schedule never carried, a provider that refused, and a game
+        past the forecast horizon, which are four different things to do about it
+        (file a stadium, wait for the schedule, retry, wait for the week). The
+        signal is unavailable in all four either way; only the note differs.
+        """
         venue = venue_for(game)
         if venue is None:
-            return None, ""          # unknown venue (e.g. a new neutral site)
+            # A new neutral site, or a venue name this build has no entry for.
+            # Deliberately not guessed at — see ``schedule.venue_for``.
+            return None, "venue unknown"
         if venue.dome:
             return DOME_SCORE, ""    # roofed: no network call needed
         if game.kickoff is None:
-            return None, ""          # no kickoff -> no hour to forecast
+            return None, "kickoff time unknown"
         try:
             parsed = parse_hourly(self._fetch_forecast(venue, game.kickoff))
         except Exception:
-            return None, ""
+            return None, "forecast unavailable"
         cond = select_at_kickoff(parsed, game.kickoff)
         if cond is None:
-            return None, ""          # game is outside the forecast horizon
+            return None, "kickoff beyond forecast horizon"
         wind, precip = cond
         return score_conditions(wind, precip), _condition_note(wind, precip)
 

@@ -49,9 +49,9 @@ from ..config import Settings
 from ..models import Player, PlayerScore, Recommendation
 from ..pipeline import recommend
 from ..sources.injury import HEALTHY_SCORE
-from .models import (ACQ_FAAB, ACQ_PRIORITY, ByeGap, ColumnMention,
-                     DropCandidate, FantasyTeam, LeagueRules, PoolPlayer,
-                     StashIdea, WaiverTarget)
+from .models import (ACQ_FAAB, ACQ_PRIORITY, STREAM_POSITIONS, ByeGap,
+                     ColumnMention, DropCandidate, FantasyTeam, LeagueRules,
+                     PoolPlayer, StashIdea, WaiverTarget)
 
 #: Default starting slots when the platform won't tell us, mirroring
 #: ``report.LINEUP_SLOTS`` so the waiver report and the lineup builder agree on
@@ -91,12 +91,13 @@ MIN_BID_SHARE = 0.02
 #: Injury statuses worth stashing rather than starting.
 _STASH_STATUSES = {"IR", "OUT", "PUP", "SUS", "NA", "DNR", "COV"}
 
-#: Positions a league starts exactly one of, and streams. Named because they are
-#: an exception to ``depth_ratio`` in one specific way: the ratio measures
-#: starter *scarcity*, and one slot per team makes almost every rostered kicker
-#: and defense look scarce, while the points between DEF2 and DEF10 are a
-#: rounding error next to the gap between a startable RB and a bench body.
-STREAM_POSITIONS = frozenset({"K", "DEF"})
+# ``STREAM_POSITIONS`` is defined in ``models`` (``WaiverBundle`` reasons about it
+# too) and imported above, so ``trades`` and ``build`` keep importing it from
+# here unchanged. It matters *in this module* because it is an exception to
+# ``depth_ratio`` in one specific way: the ratio measures starter *scarcity*, and
+# one slot per team makes almost every rostered kicker and defense look scarce,
+# while the points between DEF2 and DEF10 are a rounding error next to the gap
+# between a startable RB and a bench body.
 
 #: How many weeks ahead the bye-week check looks.
 BYE_HORIZON = 3
@@ -287,6 +288,49 @@ def _injury_note(score: PlayerScore) -> str:
 
 
 # --- adds ------------------------------------------------------------------
+def add_candidate_ratio(score: Optional[PlayerScore], pool_player: PoolPlayer,
+                        rules: LeagueRules) -> Optional[float]:
+    """``depth_ratio`` for a free agent worth pairing with a drop, else ``None``.
+
+    Extracted from ``pick_adds`` rather than copied because
+    ``viable_adds_by_position`` counts exactly the players this admits, and the
+    count is only honest while the two agree. A second copy of these five gates
+    would drift into a report whose "N were compared" names a different N than
+    the table it explains — the same failure ``no_trades_reason`` avoided by
+    moving its superflex test onto ``LeagueRules``.
+    """
+    if score is None or score.final is None or not has_ecr(score):
+        return None
+    if (pool_player.injury_status or "").upper() in _STASH_STATUSES:
+        return None
+    injury = score.raw.get("injury")
+    if injury is not None and injury.available and injury.raw == 0:
+        return None
+    ratio = depth_ratio(score, rules)
+    if ratio is None or ratio > MAX_ADD_DEPTH_RATIO:
+        return None  # too deep at his position to be worth a roster spot
+    return ratio
+
+
+def viable_adds_by_position(index: dict[str, PlayerScore],
+                            pool: Sequence[PoolPlayer],
+                            rules: LeagueRules) -> dict[str, int]:
+    """Position -> how many free agents were real add candidates.
+
+    The denominator behind ``WaiverBundle.no_adds_at_positions``: an empty RB row
+    means something different when forty ranked backs were weighed and beat
+    nobody than when the wire held no ranked back at all. Counts candidates, not
+    the pool, so it says what was actually compared.
+    """
+    counts: dict[str, int] = {}
+    for pp in pool:
+        if add_candidate_ratio(index.get(pp.player.key), pp, rules) is None:
+            continue
+        pos = (pp.player.position or "").upper()
+        counts[pos] = counts.get(pos, 0) + 1
+    return counts
+
+
 def pick_adds(index: dict[str, PlayerScore], pool: Sequence[PoolPlayer],
               drops: Sequence[DropCandidate], rules: LeagueRules,
               faab_remaining: Optional[float] = None,
@@ -311,19 +355,11 @@ def pick_adds(index: dict[str, PlayerScore], pool: Sequence[PoolPlayer],
     pool_by_key = {pp.player.key: pp for pp in pool}
 
     candidates: list[tuple[float, PlayerScore]] = []
-    for key in pool_by_key:
-        score = index.get(key)
-        if score is None or score.final is None or not has_ecr(score):
+    for key, pp in pool_by_key.items():
+        ratio = add_candidate_ratio(index.get(key), pp, rules)
+        if ratio is None:
             continue
-        if (pool_by_key[key].injury_status or "").upper() in _STASH_STATUSES:
-            continue
-        injury = score.raw.get("injury")
-        if injury is not None and injury.available and injury.raw == 0:
-            continue
-        ratio = depth_ratio(score, rules)
-        if ratio is None or ratio > MAX_ADD_DEPTH_RATIO:
-            continue  # too deep at his position to be worth a roster spot
-        candidates.append((ratio, score))
+        candidates.append((ratio, index[key]))
     # Streamers last, then shallowest first; ``final`` only breaks ties, where
     # both are at one position and it is a real comparison again.
     #
@@ -440,9 +476,13 @@ def add_reasons(target: WaiverTarget, rules: LeagueRules) -> list[str]:
     ecr = target.score.raw.get("ecr")
     if ecr is not None and ecr.available and ecr.raw is not None:
         pos = target.score.player.position
+        # "where the league starts 8" reads as though each team starts eight of
+        # them. ``starter_demand`` is a *league-wide* count (team_count x slots),
+        # which is the whole point of the comparison: it is the line between a
+        # startable player and bench depth.
         reasons.append(
-            f"ranks {pos}{ecr.raw:g} where the league starts "
-            f"{starter_demand(pos, rules)}"
+            f"ranks {pos}{ecr.raw:g} against the {starter_demand(pos, rules)} "
+            f"{pos} the league starts each week"
         )
     if target.journalist_avg is not None:
         reasons.append(f"preferred journalists average him {target.journalist_avg:.1f}")

@@ -15,7 +15,7 @@ from html import escape
 from typing import TYPE_CHECKING, Optional, Sequence
 
 from ..models import PlayerScore, Recommendation
-from .render import UNRANKED_NOTE
+from .render import UNRANKED_NOTE, flat_signal_note
 from ..sources.journalists import JournalistView
 
 if TYPE_CHECKING:                    # the duck-typed bundle, named for the reader
@@ -48,6 +48,7 @@ tr.flagged td { background: rgba(210, 153, 34, .14); }
 .callout { background: rgba(210, 153, 34, .16); border-left: 3px solid #d29922;
            padding: .5rem .75rem; border-radius: 4px; margin: .35rem 0 .75rem; }
 .note { color: #9aa0ad; font-size: .85rem; margin: .35rem 0 1rem; }
+.lone { background: rgba(46, 160, 67, .14); border-radius: 6px; padding: .5rem .7rem; margin: .35rem 0 1rem; }
 .start { color: #3fb950; font-weight: 600; }
 .flag { color: #d29922; }
 footer { color: #6e7481; font-size: .8rem; margin-top: 2rem; }
@@ -84,6 +85,18 @@ def _lineup_table(lineup: Sequence[tuple[str, Optional[PlayerScore]]]) -> str:
 
 
 def _position_table(rec: Recommendation) -> str:
+    if rec.lone_candidate:
+        # Same collapse the digest makes, for the same reason and on the same
+        # condition — an empty table plus a note explaining it is not a reading.
+        s = rec.scores[0]
+        team = escape(s.player.team or "BYE")
+        html = (f"<p class='lone'>✅ <strong>{escape(s.player.name)}</strong> "
+                f"({team}) — your only {escape(s.player.position)} this week, so "
+                "there was nothing to rank him against and no signal could be "
+                "scored.</p>")
+        if s.flags:
+            html += f"<p class='flag'>{escape('; '.join(s.flags))}</p>"
+        return html
     signal_names = _signal_names(rec)
     cells = ["<th class='num'>#</th>", "<th>Player</th>", "<th>Pos</th>", "<th>Team</th>",
              "<th class='num'>Score</th>"]
@@ -111,6 +124,11 @@ def _position_table(rec: Recommendation) -> str:
         rows.append(f"<tr{cls}>" + "".join(tds) + "</tr>")
 
     table = "<table>" + "".join(rows) + "</table>"
+    flat = flat_signal_note(rec)
+    if flat:
+        # Same sentence the digest carries: a column can look decisive purely
+        # because min-max stretched a tiny raw spread across the full 0-100.
+        table += f"<p class='note'>{escape(flat)}</p>"
     if rec.unranked and rec.scores:
         # Same note the digest and the terminal table carry — a lone candidate
         # has no range to normalize against, so the columns are blanked.
@@ -294,6 +312,11 @@ def _waiver_adds_table(bundle) -> str:
             f"<td>{escape(why)}</td></tr>"
         )
     rows.append("</tbody></table>")
+    # Same sentence the digest and the embed carry: a table of streamers alone
+    # says nothing about the positions that decide a week.
+    gap = bundle.no_adds_at_positions()
+    if gap:
+        rows.append(f"<p class='note'>{escape(gap)}</p>")
     return "\n".join(rows)
 
 

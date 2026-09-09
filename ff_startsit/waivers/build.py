@@ -26,6 +26,7 @@ from .season_values import SeasonValueProvider, URLS, protected_rank
 from .score import (BYE_HORIZON, MIN_LEAGUE_TEAMS, STREAM_POSITIONS, bye_gaps,
                     dedupe_players, droppable, find_stashes, has_ecr, pick_adds,
                     score_positions, signal_coverage, starting_slots,
+                    viable_adds_by_position,
                     team_players)
 from .trades import suggest_trades
 
@@ -267,6 +268,9 @@ def build_bundle(settings: Settings, label: str, provider: LeagueViewProvider,
     bundle.adds = pick_adds(index, pool, drops + streamers, rules, faab_remaining=faab_left,
                             journalist_ranks=ranks, mentions=mentions,
                             max_adds=max_adds)
+    # Counted from the same gate ``pick_adds`` applies, so "N were compared" and
+    # the table it explains can never name different Ns.
+    bundle.considered_adds = viable_adds_by_position(index, pool, rules)
     bundle.drops = drops[:max_adds]
 
     schedule = schedule or ScheduleProvider(cache_dir=settings.data_dir)

@@ -246,3 +246,69 @@ def test_real_provider_wires_through_end_to_end(tmp_path):
     out = sig.fetch(5, [Player(key="1", name="Patriot", team="NE", position="WR")])
     assert out["1"].available
     assert any("espn" in h for h in sess.hosts)
+
+
+# --- an unavailable weather read says which way it failed -------------------
+
+def test_each_unavailable_arm_carries_its_own_note():
+    """"no forecast" covered four different situations calling for four
+    different responses: file a stadium, wait for the schedule, retry, or wait
+    for the week to come closer. They render to a reader as the same missing
+    column, so the note is the only place the difference can live.
+
+    Week 1 showed a whole game's worth of players (both sides of one matchup)
+    reading "weather: no forecast" with nothing to say which it was.
+    """
+    import requests
+
+    players = [Player(key="1", name="A", team="BUF", position="WR")]
+
+    def note_for(session, game):
+        sig = WeatherSignal(session=session, schedule=_FakeSchedule({"BUF": game}))
+        out = sig.fetch(5, players)
+        assert not out["1"].available
+        return out["1"].note
+
+    ok = _FakeSession(_hourly())
+
+    unknown_venue = note_for(ok, GameContext(
+        home_team="BUF", away_team="NE", kickoff=KICKOFF,
+        venue_name="Brand New Stadium", neutral_site=True))
+
+    no_kickoff = note_for(ok, GameContext(
+        home_team="BUF", away_team="NE", kickoff=None,
+        venue_name="Highmark Stadium"))
+
+    class _Boom:
+        def get(self, *a, **kw):
+            raise requests.RequestException("network down")
+
+    fetch_failed = note_for(_Boom(), GameContext(
+        home_team="BUF", away_team="NE", kickoff=KICKOFF,
+        venue_name="Highmark Stadium"))
+
+    # A kickoff the fixture's forecast window does not reach.
+    beyond = note_for(ok, GameContext(
+        home_team="BUF", away_team="NE",
+        kickoff=datetime(2030, 1, 1, 17, 0, tzinfo=timezone.utc),
+        venue_name="Highmark Stadium"))
+
+    notes = [unknown_venue, no_kickoff, fetch_failed, beyond]
+    assert all(notes), "every unavailable arm must say something"
+    assert len(set(notes)) == 4, f"arms must stay distinguishable, got {notes}"
+    assert "venue" in unknown_venue
+    assert "kickoff" in no_kickoff
+    assert "horizon" in beyond
+
+
+def test_a_scored_game_does_not_gain_a_failure_note():
+    """The notes above are failure text; a game that actually scored keeps the
+    conditions note (or no note at all when conditions are unremarkable)."""
+    game = GameContext(home_team="BUF", away_team="NE", kickoff=KICKOFF,
+                       venue_name="Highmark Stadium")
+    sig = WeatherSignal(session=_FakeSession(_hourly()),
+                        schedule=_FakeSchedule({"BUF": game}))
+    out = sig.fetch(5, [Player(key="1", name="A", team="BUF", position="WR")])
+    assert out["1"].available
+    for word in ("venue", "horizon", "unavailable"):
+        assert word not in out["1"].note

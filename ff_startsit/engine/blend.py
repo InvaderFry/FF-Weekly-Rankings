@@ -130,7 +130,8 @@ def blend(
     # 3. Order best -> worst (players with no score sink to the bottom).
     scores.sort(key=lambda s: (s.final is not None, s.final), reverse=True)
 
-    rec = Recommendation(week=week, scoring=scoring, weights=dict(weights), scores=scores)
+    rec = Recommendation(week=week, scoring=scoring, weights=dict(weights),
+                         scores=scores, raw_gaps=dict(close_call_raw_gaps or {}))
     _flag_close_call(rec, normalized, close_call_threshold, min_disagree_weight,
                      close_call_raw_gaps, disagree_exempt)
     return rec

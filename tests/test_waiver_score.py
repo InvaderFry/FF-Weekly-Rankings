@@ -527,3 +527,45 @@ def test_streamer_ordering_does_not_reorder_skill_players_among_themselves():
     drops = droppable([index[p.key] for p in roster], rules)
     adds = pick_adds(index, pool, drops, rules)
     assert [a.score.player.key for a in adds] == ["f2", "f1"]
+
+
+# --- what an empty position row means --------------------------------------
+
+def test_starter_demand_reason_reads_as_a_league_wide_count():
+    """"ranks DEF2 where the league starts 8" reads as though each team starts
+    eight defenses. ``starter_demand`` is a league-wide count, and that is the
+    whole point of the comparison — it is the line between a startable player
+    and bench depth."""
+    from ff_startsit.waivers.score import add_reasons
+    players = [_p("f1", "Free Back", "RB"), _p("r1", "Rostered", "RB")]
+    _, index = _score(players, {"f1": 20, "r1": 40})
+    rules = LeagueRules(roster_slots={"RB": 2}, team_count=10)
+    target = WaiverTarget(score=index["f1"])
+
+    reason = "; ".join(add_reasons(target, rules))
+
+    assert "the 20 RB the league starts each week" in reason
+    assert "where the league starts" not in reason
+
+
+def test_viable_adds_counts_exactly_what_pick_adds_would_weigh():
+    """The count is only honest while it matches the gate ``pick_adds`` applies —
+    a second copy of those conditions would drift into a report whose "N were
+    compared" names a different N than the table it explains."""
+    from ff_startsit.waivers.score import (add_candidate_ratio,
+                                           viable_adds_by_position)
+    players = [_p("f1", "Ranked WR", "WR"), _p("f2", "Unranked WR", "WR"),
+               _p("f3", "Ranked RB", "RB"), _p("r1", "Mine", "WR")]
+    # f2 has no ECR rank at all, so ``has_ecr`` keeps him out of both.
+    _, index = _score(players, {"f1": 20, "f3": 15, "r1": 5})
+    pool = [PoolPlayer(player=p) for p in players[:3]]
+    rules = LeagueRules(roster_slots={"WR": 2, "RB": 2}, team_count=10)
+
+    counts = viable_adds_by_position(index, pool, rules)
+    by_hand = {}
+    for pp in pool:
+        if add_candidate_ratio(index.get(pp.player.key), pp, rules) is not None:
+            by_hand[pp.player.position] = by_hand.get(pp.player.position, 0) + 1
+
+    assert counts == by_hand
+    assert counts.get("WR") == 1          # the unranked one was never a candidate

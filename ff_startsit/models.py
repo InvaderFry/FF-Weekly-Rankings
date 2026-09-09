@@ -118,6 +118,13 @@ class Recommendation:
     scores: list[PlayerScore]          # ordered best -> worst by ``final``
     close_call: bool = False
     notes: list[str] = field(default_factory=list)
+    #: signal name -> the raw separation below which that signal is treated as
+    #: not separating players at all (``Settings.close_call_raw_gaps``, e.g. 3.0
+    #: ECR ranks, 1.5 implied points). Carried on the recommendation so a
+    #: renderer can answer "is this column's spread real?" without reaching back
+    #: into config. Empty for callers that pass no gaps, which keeps every
+    #: existing construction of this class valid.
+    raw_gaps: dict[str, float] = field(default_factory=dict)
 
     @property
     def unranked(self) -> bool:
@@ -135,3 +142,58 @@ class Recommendation:
         tight end still has to be startable.
         """
         return len([s for s in self.scores if s.final is not None]) < 2
+
+    @property
+    def lone_candidate(self) -> bool:
+        """True when this section is one player and nothing else.
+
+        Stricter than ``unranked``, deliberately. ``unranked`` is also true for a
+        position holding one healthy body and two on IR — but those rows carry
+        "not startable: ruled out this week", which is exactly what a roster owner
+        needs to see, so that table stays. This is only the case where the section
+        is a header, an empty table, a note explaining the empty table, and a
+        verdict that was never in doubt: nine of the eighteen sections in a
+        three-league digest, none carrying a reading. Renderers collapse it to the
+        one sentence that was ever in it.
+
+        A presentation fact like ``unranked``, for the same reason: ``final``
+        stays a number because ``report.build_lineup`` fills slots from it.
+        """
+        return len(self.scores) == 1 and self.scores[0].final is not None
+
+    def flat_signals(self) -> list[tuple[str, float, float]]:
+        """Signals whose 0-100 column overstates the gap it is drawn from.
+
+        ``normalize.to_0_100`` is min-max *within the candidate set* and has no
+        minimum-span floor, so the best candidate is 100 and the worst is 0
+        however little separates them: five backs inside half an implied point
+        still render as a 0-vs-100 blowout. The blend is right to work in that
+        space — it only ever needs the ordering — but a reader looking at the
+        column cannot tell a real fade from a rounding artifact, and the raw
+        value is the only scale that knows the difference.
+
+        Returns ``(signal, spread, gap)`` for every signal that carries a
+        configured raw gap, reads a usable raw value for at least two *scored*
+        candidates, and spans no more than that gap across all of them. Signals
+        with no configured gap (injury, weather) are bucketed statuses with no
+        continuous scale, so they abstain here exactly as they do in
+        ``blend._flag_raw_dead_heat``.
+
+        Deliberately about the whole candidate set, not the top two: the flag is
+        already the dead-heat condition's job. This answers the different
+        question of whether a *column* means what its numbers suggest.
+        """
+        scored = [s for s in self.scores if s.final is not None]
+        flat: list[tuple[str, float, float]] = []
+        for name, gap in sorted(self.raw_gaps.items()):
+            values = []
+            for s in scored:
+                sv = s.raw.get(name)
+                if sv is not None and sv.available and sv.raw is not None:
+                    values.append(float(sv.raw))
+            if len(values) < 2:
+                continue
+            spread = max(values) - min(values)
+            if spread <= gap:
+                flat.append((name, spread, gap))
+        return flat
