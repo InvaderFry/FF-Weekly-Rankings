@@ -321,18 +321,31 @@ class ECRSignal(Signal):
             run[0].append(position)
 
     @property
-    def source_status(self) -> list[str]:
-        lines = []
+    def source_status(self) -> list[tuple[tuple, str]]:
+        """``(identity, line)`` pairs, one per (transport, week).
+
+        The identity is carried rather than inferred because these lines are
+        snapshots of a *live* aggregate: this property is read once per position
+        as a run scores QB, then RB, then WR, and the position list grows each
+        time. Deduplicating the rendered strings therefore kept every growing
+        prefix — ``ECR DST``, ``ECR DST, QB``, ``ECR DST, QB, K`` — and a
+        three-league digest reopened with the ~25 near-identical rows this
+        aggregate exists to prevent. The key lets a consumer keep the newest
+        line for a source instead of every version of it.
+        """
+        entries = []
         for (source, week), (positions, fetched) in self._source_runs.items():
-            lines.append(f"ECR {', '.join(positions)}: {source}; "
-                         f"requested Week {week}; fetched {fetched}")
+            entries.append((("ecr", source, week),
+                            f"ECR {', '.join(positions)}: {source}; "
+                            f"requested Week {week}; fetched {fetched}"))
         # Once, however many transports were tried: it is a fact about the run,
         # not about a fetch.
         if self.served_wrong_week and self._source_runs:
             week = next(iter(self._source_runs))[1]
-            lines.append(f"ECR requested Week {week} differs from the "
-                         "current-week scrape; not historical rankings")
-        return lines
+            entries.append((("ecr-wrong-week", week),
+                            f"ECR requested Week {week} differs from the "
+                            "current-week scrape; not historical rankings"))
+        return entries
 
     def _warn_api_fallback(self, reason: str) -> None:
         """Say so when a *configured* API key doesn't work.

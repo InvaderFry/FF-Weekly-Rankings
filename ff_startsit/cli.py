@@ -344,6 +344,14 @@ def cmd_lineup(args, settings: Settings) -> int:
 
     ws = report.score_week(settings, players, week)
     lineup = report.lineup_from(ws)
+    # The same presentation fact the digest, the dashboard and the Discord embed
+    # already honour: a slot with fewer than two scored candidates blends to an
+    # exact 50.0 with nothing behind it, and printing that reads as a score.
+    # This command is the fourth lineup renderer and was the last one still
+    # showing the midpoint — so `/lineup` answered 50.0 for the same QB the
+    # digest rendered as "—" in the same week.
+    unscored = render.lineup_unscored_keys(ws.recs)
+    any_unscored = False
 
     label = _league_label(profile)
     suffix = f" · {label}" if label else ""
@@ -354,10 +362,17 @@ def cmd_lineup(args, settings: Settings) -> int:
             if pick is None:
                 lines.append(f"| {slot} | _(no option)_ | | |")
             else:
+                if pick.player.key in unscored:
+                    any_unscored = True
+                    score = "—"
+                else:
+                    score = f"{pick.final:.1f}"
                 lines.append(f"| {render.md_cell(slot)} "
                              f"| {render.md_cell(pick.player.name)} "
                              f"| {render.md_cell(pick.player.team or 'BYE')} "
-                             f"| {pick.final:.1f} |")
+                             f"| {score} |")
+        if any_unscored:
+            lines += ["", f"_{render.LINEUP_UNSCORED_NOTE}_"]
         if lineup.caveat:
             lines += ["", f"> ⚠️ {lineup.caveat}"]
         print("\n".join(lines))
@@ -368,7 +383,14 @@ def cmd_lineup(args, settings: Settings) -> int:
         if pick is None:
             print(f"  {slot:5} (no option)")
         else:
-            print(f"  {slot:5} {pick.player.name:24} {pick.player.team or 'BYE':4} {pick.final:.1f}")
+            if pick.player.key in unscored:
+                any_unscored = True
+                score = "—"
+            else:
+                score = f"{pick.final:.1f}"
+            print(f"  {slot:5} {pick.player.name:24} {pick.player.team or 'BYE':4} {score}")
+    if any_unscored:
+        print(f"\n  {render.LINEUP_UNSCORED_NOTE}")
     if lineup.caveat:
         print(f"\n  ⚠️ {lineup.caveat}")
     return 0

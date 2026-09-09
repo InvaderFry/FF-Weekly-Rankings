@@ -743,6 +743,16 @@ startable — this is a presentation fact, the same kind `unranked` and
 `lone_candidate` already are, just one hop further from the `Recommendation`
 that knows it.
 
+There are **four** lineup renderers, not three, and `cli.cmd_lineup` is the one
+that gets forgotten: the digest, the dashboard and the Discord embed took the
+fix and the `lineup` command did not, so a live ChatOps `/lineup` answered
+`QB Justin Herbert 50.0` for the same player, league and week the digest beside
+it rendered as `—`. Both of its branches need it — `--md` is what ChatOps posts,
+and the plain-text one is what someone typing the command reads. `ws.recs` is
+already in hand at the call site, so this is `lineup_unscored_keys(ws.recs)` and
+the shared `LINEUP_UNSCORED_NOTE`, never a second rule about what counts as
+unscored.
+
 ### Run status and the Actions wrappers
 
 `data_status.py` renders the **Data status** block that opens every digest and
@@ -766,6 +776,19 @@ labeled as such. And detail lines are **aggregated, not appended per fetch** —
 per league put ~25 near-identical timestamped rows above the tables that decide
 the week. That is the same noise-drowns-signal failure `lone_candidate` fixed one
 level down.
+
+Aggregating inside the signal was necessary and not sufficient, which is why
+every status entry is now a **`(identity, line)` pair** rather than a string.
+`source_status` is a *live* aggregate: `pipeline.recommend` reads it at the end
+of each position's pass, and the position list has grown by the next one, so
+deduplicating the rendered text kept every prefix — `ECR DST`, `ECR DST, QB`,
+`ECR DST, QB, K` — and a three-league Week 1 digest reopened with 18 of them,
+the exact failure the aggregate was added to fix. `pipeline._merge_source_status`
+and `finish_status` both key on the identity the signal supplies and keep the
+newest line, so neither has to learn how a signal punctuates its own status.
+Note the per-signal unit test passes either way, because it reads the signal
+once at the end; the regression test that fails goes through the rendered
+digest, which is the only place the duplication was ever visible.
 
 `workflow.py` holds the logic the GitHub workflows used to inline as heredocs,
 for one reason: **behavior in a YAML `run:` block cannot be tested offline.**

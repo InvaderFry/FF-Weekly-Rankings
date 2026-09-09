@@ -41,7 +41,7 @@ def test_one_status_line_per_transport_not_one_per_position():
     signal._record_source("RB", 3, "public current-week page")  # cache miss refetch
 
     assert len(signal.source_status) == 1
-    line = signal.source_status[0]
+    _, line = signal.source_status[0]
     assert line.startswith("ECR QB, RB, WR, TE, K, DST: public current-week page")
     assert "requested Week 3" in line and "fetched" in line
 
@@ -52,4 +52,39 @@ def test_a_wrong_week_scrape_still_says_so_once():
     signal = ECRSignal()
     signal._record_source("RB", 5, "public current-week page")
     signal.served_wrong_week = True
-    assert any("not historical rankings" in line for line in signal.source_status)
+    assert any("not historical rankings" in line for _, line in signal.source_status)
+
+
+def test_the_digest_shows_one_ecr_line_not_one_per_position():
+    """The signal aggregated correctly; the digest still printed every prefix.
+
+    ``ECRSignal.source_status`` is read once per position as a run scores them
+    and its position list grows each time, so ``finish_status`` deduplicating
+    the rendered *strings* kept ``ECR DST``, ``ECR DST, QB``,
+    ``ECR DST, QB, K`` ... as separate rows: a live three-league Week 1 digest
+    opened with 18 of them above the tables that decide the week. The unit test
+    above passes either way, because it reads the signal once at the end —
+    which is exactly why this one goes through the digest instead.
+    """
+    from ff_startsit.pipeline import _merge_source_status
+    from ff_startsit.sources.ecr import ECRSignal
+
+    signal = ECRSignal()
+    recs = {}
+    for position in ("QB", "RB", "WR"):
+        signal._record_source(position, 1, "public current-week page")
+        score = PlayerScore(Player(f"p{position}", f"Player {position}", "LAR", position),
+                            raw={"ecr": SignalValue(5.0, True)})
+        rec = Recommendation(1, "ppr", {"ecr": 1}, [score])
+        # What `pipeline.recommend` does at the end of every position's pass.
+        _merge_source_status(rec, signal.source_status)
+        recs[position] = rec
+
+    bundle = LeagueBundle("league", "ppr", recs, Lineup([]))
+    finish_status(DataStatus(2026, 1, ["league"]), [bundle])
+    digest = render_multi_digest(1, [bundle])
+
+    served = [line for line in digest.splitlines() if "public current-week page" in line]
+    assert served == ["- league: ECR QB, RB, WR: public current-week page; "
+                      "requested Week 1; fetched "
+                      + signal._source_runs[("public current-week page", 1)][1]]

@@ -46,17 +46,27 @@ def finish_status(status, bundles):
         recs = getattr(bundle, "recs", {})
         missing = Counter()
         total = Counter()
+        # One line per source identity, not per snapshot of it. Every position's
+        # recommendation carries the whole run's status as it stood when that
+        # position was scored, and `ECRSignal.source_status` accumulates the
+        # positions it has served — so keying on the rendered string kept
+        # `ECR DST`, `ECR DST, QB`, `ECR DST, QB, K` ... as separate rows.
+        # A dict keyed on the identity keeps the first position and the last
+        # line, which is the complete one.
+        seen: dict = {}
         for rec in recs.values():
-            for detail in rec.source_status:
-                line = f"{bundle.label}: {detail}"
-                if line not in status.details:
-                    status.details.append(line)
+            for key, detail in rec.source_status:
+                seen[key] = detail
             for score in rec.scores:
                 for name in rec.weights:
                     total[name] += 1
                     value = score.raw.get(name)
                     if value is None or not value.available or value.raw is None:
                         missing[(name, (value.note or "unavailable") if value else "no reading")] += 1
+        for detail in seen.values():
+            line = f"{bundle.label}: {detail}"
+            if line not in status.details:
+                status.details.append(line)
         for (name, reason), count in sorted(missing.items()):
             status.details.append(f"{bundle.label}: {name} missing {count}/{total[name]} player readings ({reason})")
         if hasattr(bundle, "coverage"):
