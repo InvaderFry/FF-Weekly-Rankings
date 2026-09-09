@@ -542,10 +542,13 @@ def _print_expert_checks(checks) -> int:
                   file=sys.stderr)
             print("Single-expert ranks come back only from the FantasyPros API; "
                   "the public page applies its expert filter in the browser and "
-                  "serves the same consensus to every request. Set "
-                  "FANTASYPROS_API_KEY (and the matching Actions secret) to "
-                  "enable the section. Until then it is omitted rather than "
-                  "published under the wrong byline.", file=sys.stderr)
+                  "serves the same consensus to every request. That API is a "
+                  "PAID product: the free developer tier is limited to basic "
+                  "player profiles and platform metadata, and returns HTTP 403 "
+                  "for consensus rankings, so a free FANTASYPROS_API_KEY cannot "
+                  "enable this section no matter how it is set. Until a paid key "
+                  "is present the section is omitted rather than published under "
+                  "the wrong byline.", file=sys.stderr)
             return 1
         print("\nAt least one id looks wrong.", file=sys.stderr)
         print(_MANUAL_STEPS, file=sys.stderr)

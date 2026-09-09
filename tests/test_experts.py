@@ -341,7 +341,11 @@ def test_a_vouched_id_returning_nothing_blames_the_transport_not_the_id():
                             directory=DIRECTORY)
     assert not checks[0].ok
     assert "the id is valid" in checks[0].problem
-    assert "FANTASYPROS_API_KEY" in checks[0].problem
+    # Blames the transport, and says the transport costs money — telling the
+    # user to "set FANTASYPROS_API_KEY" sends them to set a free key that 403s
+    # on this endpoint, which fixes nothing.
+    assert "API key" in checks[0].problem
+    assert "PAID" in checks[0].problem
 
 
 def test_without_a_directory_the_old_diagnosis_still_stands():

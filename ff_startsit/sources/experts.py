@@ -433,7 +433,8 @@ def verify_experts(experts: Sequence[Expert], *, scoring: str = "ppr",
                 problem = ("no ranks came back, but the id is valid — this "
                            "rankings page filters in the browser and serves the "
                            "same consensus whatever is asked for. Per-journalist "
-                           "ranks need FANTASYPROS_API_KEY")
+                           "ranks need a PAID FantasyPros API key; the free tier "
+                           "403s on this endpoint")
             else:
                 problem = ("returned no rankings — the id is wrong or has no "
                            "weekly data yet")

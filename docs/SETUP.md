@@ -192,13 +192,13 @@ it under).
 > of garbage, on seasons 2026, 2025 and 2024 alike. So it is not a season,
 > scoring or `filters` problem, and re-pasting the key does not fix it.
 >
-> Two explanations fit and have **not** been told apart, because API Gateway
-> answers both with the same 403: the key is not recognized, or the plan behind
-> it does not cover the `consensus-rankings` endpoint (FantasyPros' rankings API
-> is a commercial product). Asking FantasyPros which one it is, is the whole
-> fix — there is no code change that helps. Until then the section stays empty
-> **even with a correct `FF_PREFERRED_EXPERTS`**: a valid id is necessary and
-> not sufficient.
+> **Confirmed 2026-09-09, and settled: the API is a paid product.** FantasyPros'
+> free developer tier is limited to basic player profiles and general platform
+> metadata; consensus rankings are not included, which is what the 403 is. **The
+> decision on this repo is not to buy it.** So this section is permanently off,
+> and it stays empty **even with a correct `FF_PREFERRED_EXPERTS`** — a valid id
+> is necessary and not sufficient. Don't re-investigate the 403, and don't spend
+> time re-deriving expert ids; neither is the problem.
 >
 > What this does *not* affect is worth stating plainly, because the warning
 > sounds worse than it is. Consensus ECR — 0.60 of the blend — comes back fine
@@ -212,6 +212,16 @@ it under).
 >
 > Since the merge of the dead-key warning, a rejected key says so on every run
 > rather than falling through to the scrape in silence.
+>
+> **Recommended posture while it stays unpaid:** leave `FANTASYPROS_API_KEY`
+> **unset** (both in `.env` and as an Actions secret), and set
+> `FF_PREFERRED_EXPERTS=off`. Unsetting the key is the whole "remove the API"
+> change — the transport is guarded by `if self.api_key:`, so with it empty the
+> API path never executes and costs no request, and the week-mismatch warning
+> correctly reads *"no API key"* instead of *"API unavailable"*. There is no
+> reason to delete the API code itself: it is inert without a key, and it
+> carries `_matches_filters`, the fail-closed guard that keeps consensus from
+> ever being served under one analyst's byline.
 
 ### The quick way
 
