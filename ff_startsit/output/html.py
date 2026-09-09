@@ -367,6 +367,10 @@ def _waiver_body(bundle) -> list[str]:
     body.append(_waiver_trades(bundle))
     body.append(_waiver_lists(bundle))
     body.append(_waiver_roster(bundle))
+    # Inside the league's own <details>, where the numbers they carry can be
+    # attributed. Only run-wide notes go to the shared footer.
+    for note in bundle.league_notes:
+        body.append(f"<p class='note'>{escape(note)}</p>")
     return [b for b in body if b]
 
 

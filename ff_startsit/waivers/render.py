@@ -162,6 +162,10 @@ def render_bundle(bundle: WaiverBundle, heading: str = "###") -> list[str]:
     lines += _bye_section(bundle)
     lines += _mentions_section(bundle)
     lines += _roster_section(bundle)
+    # Inside the league's own section, where the numbers they carry can be
+    # attributed. Only run-wide notes go to the shared footer below.
+    if bundle.league_notes:
+        lines += [f"- {n}" for n in bundle.league_notes] + [""]
     return lines
 
 

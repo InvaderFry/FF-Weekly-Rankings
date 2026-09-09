@@ -294,6 +294,17 @@ first-occurrence-wins, which given the API's kickoff ordering keeps the sooner
 game. Unlike weather, Vegas still works without a schedule — it just filters less
 precisely.
 
+The odds payload is the one fetch here that is **disk-cached** (`ODDS_CACHE_TTL`,
+30 minutes) rather than memoized per instance, because it is the one that varies
+by neither week nor league. `cli._league_bundles` builds a fresh signal set per
+league and every scheduled workflow scores each league *twice* — once for its own
+pass and once for the sibling page rebuild that keeps a Pages deploy from
+dropping the other page — so three leagues meant six identical calls per run. The
+Odds API bills **two credits per call**, one per market, against a 500/month free
+tier: the duplication, not the feed, was the running cost. The TTL is short on
+purpose; the only duplication it has to absorb happens minutes apart inside one
+run.
+
 ### The lineup builder and the FLEX slot
 
 `report.score_week` does one scoring pass per roster: `rank_each_position` ranks
@@ -385,6 +396,17 @@ reason a piece of it is shaped the way it is.
   anonymous backup looking excellent — which recommended adding him and dropping
   your bye-week RB1. So `score.has_ecr` gates both adds and drops; everything
   else is reported as unranked rather than ranked last.
+
+  A note carrying a league's own numbers goes in **`WaiverBundle.league_notes`**
+  and renders inside that league's section; `notes` is only for text that is
+  identical across every league in the run and renders once in a shared footer.
+  The footer dedupes by exact string, which is exactly what makes a per-league
+  fact wrong to put there: three leagues each reporting "Season-long ranks cover
+  N/M players" produced three near-identical unattributed sentences at the bottom
+  of the page, interleaved with the run-wide notes and readable as belonging to
+  nobody. For the same reason `sources` labels carry their scoring — the footer
+  dedupes on `(label, url)`, so two scorings rendered two links reading exactly
+  "FantasyPros rest-of-season rankings" side by side.
 
   That gate is also why an empty adds list is ambiguous, and why
   **`WaiverBundle.no_adds_reason()`** exists: `has_ecr` gates adds *and* drops, so
