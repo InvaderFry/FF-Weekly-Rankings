@@ -12,6 +12,10 @@ on:
     - cron: "0 0 * * 3"
   workflow_dispatch:
     inputs:
+      artifact_only:
+        description: "Build both pages as run artifacts without production publishing"
+        type: boolean
+        default: false
       week:
         description: "NFL week (blank = auto-detect)"
         required: false
@@ -41,7 +45,7 @@ jobs:
   waivers:
     runs-on: ubuntu-latest
     environment:
-      name: github-pages
+      name: ${{ inputs.artifact_only && 'publishing-test' || 'github-pages' }}
       url: ${{ steps.deployment.outputs.page_url }}
     env:
       FF_ROSTER_SOURCE: espn
@@ -63,6 +67,7 @@ jobs:
       # are what the waiver report scores adds against. See docs/SETUP.md.
       FF_PREFERRED_EXPERTS: ${{ vars.FF_PREFERRED_EXPERTS || secrets.FF_PREFERRED_EXPERTS }}
       DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+      ARTIFACT_ONLY: ${{ inputs.artifact_only || false }}
       INPUT_WEEK: ${{ github.event.inputs.week }}
       INPUT_REHEARSE: ${{ github.event.inputs.rehearse }}
     steps:
@@ -80,20 +85,20 @@ jobs:
       # (see cli.cmd_waivers), so there is no log for this workflow to carry.
       - name: Waiver wire & trades
         run: |
-          WEEK_ARG=""
-          if [ -n "$INPUT_WEEK" ]; then WEEK_ARG="--week $INPUT_WEEK"; fi
+          WEEK_ARGS=()
+          if [ -n "$INPUT_WEEK" ]; then WEEK_ARGS=(--week "$INPUT_WEEK"); fi
           # Only the manual run can force a rehearsal. The scheduled run needs no
           # flag: build_bundle detects the pre-kickoff window itself, so exactly
           # one cron a season rehearses and the rest stay refusals.
-          REHEARSE_ARG=""
-          if [ "$INPUT_REHEARSE" = "true" ]; then REHEARSE_ARG="--rehearse"; fi
+          REHEARSE_ARGS=()
+          if [ "$INPUT_REHEARSE" = "true" ]; then REHEARSE_ARGS=(--rehearse); fi
           # Deterministic project Pages URL: Discord fires before the deploy step
           # below finishes, so the link can't come from the deploy's output.
           OWNER="${GITHUB_REPOSITORY%%/*}"; REPO="${GITHUB_REPOSITORY##*/}"
           WAIVERS_URL="https://${OWNER,,}.github.io/${REPO}/waivers.html"
-          python -m ff_startsit waivers $WEEK_ARG $REHEARSE_ARG --all-leagues \
+          python -m ff_startsit.workflow run waivers "${WEEK_ARGS[@]}" "${REHEARSE_ARGS[@]}" --all-leagues --discord \
             --report waivers.md --dashboard ./site/waivers.html \
-            --discord --url "$WAIVERS_URL"
+            --url "$WAIVERS_URL"
           cat waivers.md >> "$GITHUB_STEP_SUMMARY"
 
       # A Pages deploy replaces the entire site, so this run has to rebuild the
@@ -102,17 +107,18 @@ jobs:
       - name: Rebuild start/sit page (so the deploy doesn't drop it)
         continue-on-error: true
         run: |
-          WEEK_ARG=""
-          if [ -n "$INPUT_WEEK" ]; then WEEK_ARG="--week $INPUT_WEEK"; fi
-          python -m ff_startsit publish $WEEK_ARG --all-leagues \
-            --dashboard ./site/index.html
+          WEEK_ARGS=()
+          if [ -n "$INPUT_WEEK" ]; then WEEK_ARGS=(--week "$INPUT_WEEK"); fi
+          python -m ff_startsit.workflow run publish "${WEEK_ARGS[@]}" --all-leagues \
+            --report report.md --dashboard ./site/index.html
+          cat report.md >> "$GITHUB_STEP_SUMMARY"
 
       - name: Post / update issue
+        if: ${{ !inputs.artifact_only }}
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          WEEK=$(grep -oE 'Week [0-9]+' waivers.md | head -1 | grep -oE '[0-9]+' || true)
-          TITLE="Week ${WEEK:-?} waiver wire"
+          TITLE=$(python -m ff_startsit.workflow identity waivers.md "waiver wire")
           NUM=$(gh issue list --state open --search "in:title \"$TITLE\"" \
                 --json number,title --jq ".[] | select(.title==\"$TITLE\") | .number" | head -1)
           if [ -n "$NUM" ]; then
@@ -131,35 +137,30 @@ jobs:
       - name: Verify the site is complete
         id: site
         run: |
-          if [ -s ./site/index.html ] && [ -s ./site/waivers.html ]; then
-            echo "complete=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "complete=false" >> "$GITHUB_OUTPUT"
-            ls -l ./site || true
-            # An annotation, not just a step-summary line: skipping the deploy
-            # leaves the *previous* site standing, so the run is still a success
-            # and shows a green check. Without this the only symptom of "we
-            # stopped publishing" is a page that quietly goes stale, which is
-            # exactly the failure the sibling rebuild's continue-on-error makes
-            # possible in the first place.
-            echo "::warning title=Pages deploy skipped::./site is missing a page, so the live site was left as-is and is now stale. Check the sibling rebuild step above."
-            {
-              echo "### Pages deploy skipped"
-              echo
-              echo "\`./site\` is missing a page, so deploying would have deleted the"
-              echo "live copy of it. The previously deployed site is left untouched"
-              echo "and is therefore **stale** — the sibling rebuild step above is"
-              echo "where it failed."
-            } >> "$GITHUB_STEP_SUMMARY"
-          fi
+          python -m ff_startsit.workflow site
 
       - name: Upload Pages artifact
-        if: steps.site.outputs.complete == 'true'
+        if: steps.site.outputs.complete == 'true' && !inputs.artifact_only
         uses: actions/upload-pages-artifact@v5
         with:
           path: ./site
 
       - name: Deploy to GitHub Pages
-        if: steps.site.outputs.complete == 'true'
+        if: steps.site.outputs.complete == 'true' && !inputs.artifact_only
         id: deployment
         uses: actions/deploy-pages@v5
+
+      - name: Upload test artifacts
+        if: inputs.artifact_only && steps.site.outputs.complete == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: publishing-test
+          path: |
+            site/
+            report.md
+            waivers.md
+          retention-days: 7
+
+      - name: Require complete test site
+        if: inputs.artifact_only && steps.site.outputs.complete != 'true'
+        run: exit 1

@@ -426,3 +426,71 @@ ffstartsit waivers --all-leagues
 *(The tuning knobs aren't currently passed to the workflows; the scheduled runs
 use the defaults plus any learned weights committed to the repo. Add them to
 the `env:` block of `weekly-report.yml` if you want to override them there.)*
+
+## Publishing verification and incomplete data
+
+Both publishing workflows accept a manual `artifact_only` boolean. Select the
+implementation branch and set it to `true` to build the start/sit and waiver pages
+with the same league and signal configuration. The run uploads `publishing-test`
+artifacts retained for seven days; downloading requires GitHub sign-in and access
+to the repository. Test mode uses the `publishing-test` environment, suppresses
+Discord and decision logging, skips issue posts, `calibration-data` writes and
+production Pages uploads/deployments, and fails if either page is missing.
+Repository secrets are shared with production; any environment-only configuration
+must also be configured for the test environment.
+
+The normal publishing workflows share the `ff-startsit-pages` concurrency group.
+ChatOps serializes per issue. `queue: max` permits up to 100 waiting runs; further
+runs can be cancelled when full. The order is when runs start waiting, not a
+guarantee of comment-arrival or dispatch order. Each runner has its own filesystem.
+See [GitHub's concurrency documentation](https://docs.github.com/en/actions/how-tos/write-workflows/choose-when-workflows-run/control-workflow-concurrency).
+
+Reports and dashboards include requested season/week, UTC generation time, league
+coverage, skipped leagues, and missing signal readings with their existing
+reasons. Schedule provider week and ECR/schedule retrieval information are shown
+where recorded. A cache file timestamp is labeled as such; generation/fetch times
+are not the provider's own update time. Healthy leagues still render when another
+league fails, while all-league failure remains an error. Actions summaries mirror
+source and notification diagnostics. A failed sibling page rebuild skips Pages
+deployment, explicitly marking the previous complete site stale.
+
+Issue identity is an exact `SEASON Week N start/sit` or `SEASON Week N waiver wire`
+title. Existing week-only issues are retained as history; they are neither deleted
+nor reused for new season-aware reports.
+
+CI runs actionlint 1.7.12 and tests an installed wheel outside the repository
+import path. This actionlint release predates `concurrency.queue`: a separate YAML
+check validates that option, and only its unsupported-key diagnostic is ignored.
+Remove the compatibility check when a pinned release supports the key natively.
+The workflow helpers have offline tests for replies, missing pages, artifact-mode
+arguments, diagnostics, and decision-log persistence against a temporary remote.
+
+After merging, verify at least four rapid valid ChatOps commands on one test issue,
+three queued artifact-only publishing runs, then one coordinated production run.
+Check all replies, expected leagues, final artifact/page hashes, notifications,
+season-aware issues, and decision-log persistence. An artifact-only run cannot
+establish production permissions or successful delivery.
+
+Venue fixtures were captured from the public [ESPN scoreboard](https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard?dates=2026&seasontype=2&week=1)
+on September 9, 2026, retaining only schedule fields. All nine international games
+have lookup coverage, including Melbourne, Paris, Rio, Estadio Banorte, and ESPN's
+`FC Bayern Munich Stadium` alias. Melbourne coordinates use the rounded
+[City of Melbourne location pin](https://whatson.melbourne.vic.gov.au/things-to-do/melbourne-cricket-ground-mcg);
+ESPN identifies the venue as outdoors. The [stadium operator](https://allianz-arena.com/en/news/2026/05/third-nfl-game-at-allianz-arena-new-england-patriots-meet-detroit-lions)
+confirms the Munich venue. The game feed's indoor flag retains precedence.
+
+Journalist discovery distinguishes failed requests, missing links, unavailable
+article text, and articles with no matching free agents. Undated links and explicit
+previous-season links are not silently used as current columns. One verified Yahoo
+exception handles Justin Boone's [September 7, 2026 preseason waiver article](https://sports.yahoo.com/fantasy/article/fantasy-football-waiver-wire-pickups-to-make-before-the-2026-season-kicks-off-172947063.html):
+the embedded link is accepted for Week 1 only after checking author, season, and
+publication date near kickoff. Its fixture retains metadata and synthetic body
+content. CBS indexes returned HTTP 200 during inspection but no matching current
+links were found; that does not establish that their authors have not published.
+
+Input reconciliation and predictive validation remain separate work. Reconcile
+rosters/settings and sampled source inputs against captured ESPN/provider records
+before claiming comprehensive input accuracy. Evaluate only decisions captured
+before kickoff, with chronological holdouts, an ECR baseline, join coverage,
+uncertainty, and sample counts. Unit tests and a single week's outcomes cannot
+establish predictive benefit; existing scoring weights are unchanged.
