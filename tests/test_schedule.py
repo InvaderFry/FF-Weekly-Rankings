@@ -224,3 +224,16 @@ def test_all_nine_2026_international_games_have_venue_coverage():
         assert game.neutral_site
         assert neutral_venue(game.venue_name) is not None, game.venue_name
         assert venue_for(game) is not None
+
+
+def test_venue_names_match_however_espn_spells_the_accents():
+    """ESPN has written this venue both with and without its accent."""
+    from ff_startsit.data.stadiums import neutral_venue
+    for name in ("Santiago Bernabéu", "Santiago Bernabeu",
+                 "Santiago Bernabéu Stadium", "Santiago Bernabeu Stadium"):
+        venue = neutral_venue(name)
+        assert venue is not None, name
+        # And they agree about the roof: the one consulted when the feed is
+        # silent must not contradict the one consulted when it isn't.
+        assert (venue.lat, venue.dome) == (40.4531, True), name
+    assert neutral_venue("Maracana Stadium") == neutral_venue("Maracanã Stadium")

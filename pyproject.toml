@@ -15,7 +15,10 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["pytest>=7.4"]
+# PyYAML is what `scripts/check-workflows.py` parses the workflows with.
+# It runs in CI beside actionlint; without it here the check cannot be
+# reproduced locally, which is how a workflow edit reaches CI unvalidated.
+dev = ["pytest>=7.4", "PyYAML>=6.0"]
 
 [project.scripts]
 ffstartsit = "ff_startsit.cli:main"

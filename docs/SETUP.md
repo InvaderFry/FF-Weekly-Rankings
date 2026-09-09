@@ -455,8 +455,12 @@ source and notification diagnostics. A failed sibling page rebuild skips Pages
 deployment, explicitly marking the previous complete site stale.
 
 Issue identity is an exact `SEASON Week N start/sit` or `SEASON Week N waiver wire`
-title. Existing week-only issues are retained as history; they are neither deleted
-nor reused for new season-aware reports.
+title, read from the report's own Data status line so it cannot disagree with the
+report it labels. Existing week-only issues are retained as history; they are
+neither deleted nor reused for new season-aware reports. A report whose season and
+week cannot be read is refused rather than given a guessed title: the issue step
+warns, annotates the run summary, and continues, so the pages still deploy and the
+digest is still readable in the run summary.
 
 CI runs actionlint 1.7.12 and tests an installed wheel outside the repository
 import path. This actionlint release predates `concurrency.queue`: a separate YAML

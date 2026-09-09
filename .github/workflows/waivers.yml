@@ -113,8 +113,16 @@ jobs:
             --report report.md --dashboard ./site/index.html
           cat report.md >> "$GITHUB_STEP_SUMMARY"
 
+      # `identity` refuses a report whose season/week it cannot read, which is
+      # the right answer for *which issue to post into* and the wrong one for
+      # the run: this step sits before the Pages verify/deploy, has no output
+      # anything else depends on, and the digest is already mirrored to the run
+      # summary. Failing hard here would trade a missing comment for a missing
+      # deploy. The start/sit workflow makes the same trade.
       - name: Post / update issue
+        id: issue
         if: ${{ !inputs.artifact_only }}
+        continue-on-error: true
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -128,6 +136,14 @@ jobs:
             echo "Creating issue: $TITLE"
             gh issue create --title "$TITLE" --body-file waivers.md
           fi
+
+      - name: Report issue failure
+        if: always() && steps.issue.outcome == 'failure'
+        run: |
+          echo "::warning title=Issue not posted::The waiver report was not posted or updated. The digest is in this run's summary; the site deploy below was unaffected."
+          echo "### Issue not posted" >> "$GITHUB_STEP_SUMMARY"
+          echo >> "$GITHUB_STEP_SUMMARY"
+          echo "The waiver report could not be posted to an issue — most likely its season/week identity could not be read, which \`identity\` refuses rather than guess at. The digest below is complete." >> "$GITHUB_STEP_SUMMARY"
 
       # A Pages deploy replaces the whole site, so uploading a directory that is
       # missing a page silently deletes that page from the live site. The sibling
@@ -152,7 +168,7 @@ jobs:
 
       - name: Upload test artifacts
         if: inputs.artifact_only && steps.site.outputs.complete == 'true'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: publishing-test
           path: |

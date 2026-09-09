@@ -86,9 +86,21 @@ def run_cli(argv):
 
 
 def issue_title(report, kind):
-    """Use the requested season/week, retaining legacy issues as history."""
+    """Use the requested season/week, retaining legacy issues as history.
+
+    Reads the identity out of the rendered Data status line rather than being
+    told it, so the title can never disagree with the report it labels. The
+    separator is matched loosely for that reason — a renderer is free to change
+    how it punctuates that line, and the workflows must not need editing in
+    step. `tests/test_workflow.py` pins the coupling from the other end, so a
+    renderer that drops the line fails a test rather than a Wednesday run.
+
+    Refusing is deliberate: a title guessed from a report whose week cannot be
+    read is how a digest lands in the wrong week's issue. The callers make it
+    survivable — the issue step warns and continues.
+    """
     import re
-    match = re.search(r"Season (\d{4}) · Week (\d+)", report)
+    match = re.search(r"Season (\d{4})[^\d\n]{1,5}Week (\d+)", report)
     if not match:
         raise ValueError("Report has no season/week identity; refusing an ambiguous issue")
     return f"{match[1]} Week {match[2]} {kind}"

@@ -102,3 +102,38 @@ def test_production_mode_retains_requested_effects(monkeypatch):
     monkeypatch.setattr("ff_startsit.cli.main", lambda argv: calls.append(argv))
     assert run_cli(["publish", "--discord", "--log"]) == 0
     assert calls == [["publish", "--discord", "--log"]]
+
+
+def test_every_report_the_workflows_title_carries_its_identity():
+    """The workflows read the issue title out of the rendered report.
+
+    `issue_title` refuses a report it can't read a season/week from, and the
+    workflows then warn and skip the issue. That is the safe failure, not a
+    free one — so pin the coupling here, where a renderer change breaks a test
+    instead of quietly costing a Wednesday digest its issue.
+    """
+    from ff_startsit.data_status import DataStatus, finish_status
+    from ff_startsit.models import Player, PlayerScore, Recommendation, SignalValue
+    from ff_startsit.report import LeagueBundle, Lineup, render_digest, render_multi_digest
+    from ff_startsit.waivers.models import LeagueRules, WaiverBundle
+    from ff_startsit.waivers.render import render_waiver_digest
+    from ff_startsit.workflow import issue_title
+
+    score = PlayerScore(Player("p", "Player", "LAR", "WR"),
+                        raw={"ecr": SignalValue(3.0, True, "")})
+    recs = {"WR": Recommendation(2, "ppr", {"ecr": 1.0}, [score])}
+
+    league = LeagueBundle("work", "ppr", recs, Lineup([]))
+    waivers = WaiverBundle(label="work", scoring="ppr", week=2, rules=LeagueRules())
+    for bundles in ([league], [waivers]):
+        finish_status(DataStatus(2026, 2, ["work"]), bundles)
+
+    # publish --all-leagues, publish, and waivers --all-leagues: the three
+    # renderers whose output reaches `workflow identity`. The single-league
+    # digest has no bundle to carry a season, so it dates itself.
+    from ff_startsit.season import season_year
+    for report, kind, year in [
+            (render_multi_digest(2, [league]), "start/sit", 2026),
+            (render_waiver_digest(2, [waivers]), "waiver wire", 2026),
+            (render_digest(2, "ppr", recs, lineup=Lineup([])), "start/sit", season_year())]:
+        assert issue_title(report, kind) == f"{year} Week 2 {kind}"

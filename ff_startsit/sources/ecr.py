@@ -208,7 +208,9 @@ class ECRSignal(Signal):
         #: When set (e.g. ``FLEX_POOL``), fetch one pooled cross-position ranking
         #: instead of one list per position.
         self.pool_position = pool_position
-        self.source_status: list[str] = []
+        #: One entry per (transport, week), each accumulating the positions it
+        #: served — see the ``source_status`` property.
+        self._source_runs: dict[tuple[str, int], list] = {}
         self.last_source: str = ""  # "api" or "scrape", for diagnostics
         #: True once this signal has served values for a week that is not the week
         #: they describe — the scrape path has no week selector, so a `--week 5`
@@ -302,12 +304,35 @@ class ECRSignal(Signal):
         return rows
 
     def _record_source(self, position, week, source):
+        """Note which transport served a position, folded into one line per run.
+
+        Deliberately aggregated rather than appended per position. This is one
+        fetch per position group, so a three-league digest recorded ~25 near-
+        identical timestamped lines at the top of the report — the Data status
+        section is there to make a *gap* visible, and burying it under one line
+        per successful fetch is the same noise-drowns-signal failure that
+        `lone_candidate` collapsed in the position tables.
+        """
         from datetime import datetime, timezone
-        self.source_status.append(
-            f"ECR {position}: {source}; requested Week {week}; "
-            f"fetched {datetime.now(timezone.utc).isoformat(timespec='seconds')}")
-        if self.served_wrong_week:
-            self.source_status.append(f"ECR requested Week {week} differs from the current-week scrape; not historical rankings")
+        run = self._source_runs.setdefault(
+            (source, week),
+            [[], datetime.now(timezone.utc).isoformat(timespec="seconds")])
+        if position not in run[0]:
+            run[0].append(position)
+
+    @property
+    def source_status(self) -> list[str]:
+        lines = []
+        for (source, week), (positions, fetched) in self._source_runs.items():
+            lines.append(f"ECR {', '.join(positions)}: {source}; "
+                         f"requested Week {week}; fetched {fetched}")
+        # Once, however many transports were tried: it is a fact about the run,
+        # not about a fetch.
+        if self.served_wrong_week and self._source_runs:
+            week = next(iter(self._source_runs))[1]
+            lines.append(f"ECR requested Week {week} differs from the "
+                         "current-week scrape; not historical rankings")
+        return lines
 
     def _warn_api_fallback(self, reason: str) -> None:
         """Say so when a *configured* API key doesn't work.

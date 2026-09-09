@@ -12,6 +12,7 @@ forecast. The schedule selects the actual home or neutral venue for both teams.
 
 from __future__ import annotations
 
+import unicodedata
 from dataclasses import dataclass
 from typing import Optional
 
@@ -62,8 +63,18 @@ STADIUMS: dict[str, Stadium] = {
 
 
 def _venue_key(name: str) -> str:
-    """Normalize a venue name for lookup: lowercase alphanumerics only."""
-    return "".join(ch for ch in (name or "").lower() if ch.isalnum())
+    """Normalize a venue name for lookup: lowercase alphanumerics, unaccented.
+
+    The accent strip is load-bearing, not tidiness. ESPN writes these venues
+    both ways across seasons and endpoints — ``Santiago Bernabéu`` in the 2026
+    scoreboard, ``Santiago Bernabeu Stadium`` in an earlier one — and a
+    lookup keyed on the raw codepoints treats those as unrelated venues. A miss
+    here is silent: it falls through to ``None`` and the weather signal reports
+    an unknown venue for a stadium that is sitting in this table.
+    """
+    stripped = unicodedata.normalize("NFKD", name or "")
+    return "".join(ch for ch in stripped.lower()
+                   if ch.isalnum() and not unicodedata.combining(ch))
 
 
 # Neutral-site venues, keyed by normalized name. The league plays a handful of
@@ -87,8 +98,12 @@ NEUTRAL_VENUES: dict[str, Stadium] = {
     _venue_key("Croke Park"): Stadium(53.3607, -6.2512, dome=False),
     _venue_key("Arena Corinthians"): Stadium(-23.5453, -46.4742, dome=False),
     _venue_key("Neo Quimica Arena"): Stadium(-23.5453, -46.4742, dome=False),
+    # Retractable roof, and ESPN flags the 2026 game `indoor: true`. Both names
+    # it has used must agree: the feed's own flag wins in `venue_for`, so this
+    # entry is only consulted when the feed is silent — and answering "outdoor"
+    # there would send a forecast request for a game played under a closed roof.
     _venue_key("Santiago Bernabéu"): Stadium(40.4531, -3.6883, dome=True),
-    _venue_key("Santiago Bernabeu Stadium"): Stadium(40.4531, -3.6883, dome=False),
+    _venue_key("Santiago Bernabeu Stadium"): Stadium(40.4531, -3.6883, dome=True),
 }
 
 
