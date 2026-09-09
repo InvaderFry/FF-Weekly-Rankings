@@ -170,7 +170,8 @@ true for the section to appear at all:
 
 - **The analyst must be one FantasyPros publishes weekly NFL ranks for.** Not
   every writer is. `ffstartsit experts --list` prints the current directory
-  (~80 experts in the 2026 season); anyone absent from it has no usable id, and
+  (~140 experts once the 2026 season is under way, ~80 in preseason — read it,
+  don't assume a count); anyone absent from it has no usable id, and
   no amount of re-deriving will produce one. Notably **CBS analysts — including
   Jamey Eisenberg and Dave Richard — are not in it**, so they cannot feed this
   section. Their Tuesday *waiver columns* are scraped separately

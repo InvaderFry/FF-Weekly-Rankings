@@ -5,6 +5,8 @@ name: ChatOps start/sit
 #   /rank RB                   /rank WR week 5
 #   /compare Josh Allen | Jalen Hurts
 # Optional inline options on any command: week N, source espn|sleeper|manual, league ID, team ID.
+# `source` only reaches a platform whose secrets are set — espn is what this repo
+# has; sleeper and manual are parsed but error without their own config.
 on:
   issue_comment:
     types: [created]
@@ -51,8 +53,12 @@ jobs:
           ESPN_TEAM_ID: ${{ secrets.ESPN_TEAM_ID }}
           ESPN_S2: ${{ secrets.ESPN_S2 }}
           ESPN_SWID: ${{ secrets.ESPN_SWID }}
-          # `/lineup source sleeper` is an advertised option, so its config has
-          # to be present too.
+          # Only needed for `source sleeper` — same conditional as the two
+          # scheduled workflows. Passed through so the option works the moment
+          # the secrets exist; unset (no Sleeper league this season) it errors
+          # with "Sleeper user not found" rather than falling back to ESPN, so
+          # don't read the option's presence in the header above as a promise
+          # that it is configured.
           SLEEPER_USERNAME: ${{ secrets.SLEEPER_USERNAME }}
           SLEEPER_LEAGUE_ID: ${{ secrets.SLEEPER_LEAGUE_ID }}
           ODDS_API_KEY: ${{ secrets.ODDS_API_KEY }}
