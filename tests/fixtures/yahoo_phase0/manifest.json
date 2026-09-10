@@ -1,0 +1,62 @@
+{
+  "index": {
+    "http_status": 200,
+    "bytes": 671479,
+    "sha256": "60ada32f5ffe9c339144afcff5f6acabde37bd31b02e0e2e7767d5465ce0a725",
+    "table_tags": 0,
+    "row_tags": 0,
+    "expected_names": {
+      "Jahmyr Gibbs": 0,
+      "Josh Allen": 0,
+      "Ja'Marr Chase": 0
+    }
+  },
+  "flex": {
+    "http_status": 200,
+    "bytes": 836834,
+    "sha256": "b0181aab3b8480971ba0c2192344abd035c2f63ca4b416e0be84afeb12dd4191",
+    "table_tags": 0,
+    "row_tags": 0,
+    "expected_names": {
+      "Jahmyr Gibbs": 0,
+      "Josh Allen": 0,
+      "Ja'Marr Chase": 0
+    }
+  },
+  "qb": {
+    "http_status": 200,
+    "bytes": 847209,
+    "sha256": "1a4d4720707f41645b8bf4308f7e3a080c4b85336ca540b98f405cb445d7f38a",
+    "table_tags": 0,
+    "row_tags": 0,
+    "expected_names": {
+      "Jahmyr Gibbs": 0,
+      "Josh Allen": 0,
+      "Ja'Marr Chase": 0
+    }
+  },
+  "fullppr_flex": {
+    "http_status": 200,
+    "bytes": 848106,
+    "sha256": "a6606dd097b8b02ecf016a0e198b82d6496d2a028e0961ad52a047e612eb0c3f",
+    "table_tags": 0,
+    "row_tags": 0,
+    "expected_names": {
+      "Jahmyr Gibbs": 0,
+      "Josh Allen": 0,
+      "Ja'Marr Chase": 0
+    }
+  },
+  "fullppr_wr": {
+    "http_status": 200,
+    "bytes": 847897,
+    "sha256": "edad2b1bd704a37855198a6fc409ac4fb96df5a39a7701d7b7759fca4d375ee5",
+    "table_tags": 0,
+    "row_tags": 0,
+    "expected_names": {
+      "Jahmyr Gibbs": 0,
+      "Josh Allen": 0,
+      "Ja'Marr Chase": 0
+    }
+  }
+}
