@@ -1,0 +1,12 @@
+{
+  "requests": [
+    "https://partners.fantasypros.com/api/v1/consensus-rankings.php?callback=FPW.rankingsCB&position=QB&sport=NFL&year=2026&week=1&experts=show&id=1663&type=ST&scoring=HALF&filters=317&widget=ST"
+  ],
+  "rows": 32,
+  "text": "Fantasy Football Rankings - Week 1\nView Available Players\nDownload\n#\tPLAYER (TEAM)\tMATCHUP\tJUSTIN BOONE9/10\tFPROS ALL EXPERTS\n1\tJoe Burrow (CIN - QB)\tvs. TB\t1\tview\n2\tJalen Hurts (PHI - QB)\tvs. WAS\t2\tview\n3\tLamar Jackson (BAL - QB)\tat IND\t3\tview\n4\tJustin Herbert (LAC - QB)\tvs. ARI\t4\tview\n5\tJosh Allen (BUF - QB)\tat HOU\t5\tview\n6\tDak Prescott (DAL - QB)\tat NYG\t6\tview\n7\tJared Goff (DET - QB)\tvs. NO\t7\tview\n8\tTrevor Lawrence (JAC - QB)\tvs. CLE\t8\tview\n9\tCaleb Williams (CHI - QB)\tat CAR\t9\tview\n10\tMatthew Stafford (LAR - QB)\tvs. SF\t10\tview\n11\tBrock Purdy (SF - QB)\tat LAR\t11\tview\n12\tDrake Maye (NE - QB)\tat SEA\t12\tview\n13\tJayden Daniels (WAS - QB)\tat PHI\t13\tview\n14\tJaxson Dart (NYG - QB)\tvs. DAL\t14\tview\n15\tBaker Mayfield (TB - QB)\tat CIN\t15\tview\n16\tKyler Murray (MIN - QB)\tvs. GB\t16\tview\n17\tMalik Willis (MIA - QB)\tat LV\t17\tview\n18\tTyler Shough (NO - QB)\tat DET\t18\tview\n19\tBo Nix (DEN - QB)\tat KC\t19\tview\n20\tPatrick Mahomes II (KC - QB)\tvs. DEN\t20\tview\n21\tJordan Love (GB - QB)\tat MIN\t21\tview\n22\tSam Darnold (SEA - QB)\tvs. NE\t22\tview\n23\tDaniel Jones (IND - QB)\tvs. BAL\t23\tview\n24\tBryce Young (CAR - QB)\tvs. CHI\t24\tview\n25\tJacoby Brissett (ARI - QB)\tat LAC\t25\tview\n26\tC.J. Stroud (HOU - QB)\tvs. BUF\t26\tview\n27\tKirk Cousins (LV - QB)\tvs. MIA\t27\tview\n28\tAaron Rodgers (PIT - QB)\tvs. ATL\t28\tview\n29\tGeno Smith (NYJ - QB)\tat TEN\t29\tview\n30\tCam Ward (TEN - QB)\tvs. NYJ\t30\tview\n31\tDeshaun Watson (CLE - QB)\tat JAC\t31\tview\n32\tTua Tagovailoa (ATL - QB)\tat PIT\t32\tview",
+  "state": {
+    "scoring": "HALF",
+    "position": "QB",
+    "filters": "317"
+  }
+}

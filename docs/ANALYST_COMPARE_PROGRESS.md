@@ -1,6 +1,14 @@
 # Analyst comparison progress
 
-Status: **Blocked at Phase 0, Branch C. No production implementation.**
+Status: **Alternative transport verified; production implementation remains.**
+
+Follow-up: [verified widget transport proposal](ANALYST_COMPARE_TRANSPORT.md).
+Yahoo embeds a public FantasyPros partner feed with response-asserted Boone
+attribution, week and scoring. Twelve offline evidence tests pass. A browser
+check found that the Full-PPR widget initially requests HALF, so the proposed
+adapter must select and verify scoring explicitly. The Phase 0 findings below
+are preserved as the historical checkpoint, superseded where noted by the
+transport proposal.
 
 The implementation plan is saved in [ANALYST_COMPARE_PLAN.md](ANALYST_COMPARE_PLAN.md).
 Follow its settled scope and safety requirements when resuming.
@@ -45,9 +53,8 @@ not establish which browser-side mechanism supplies the visible table.
 
 ## Remaining work / resume instructions
 
-1. Resolve the source-data blocker with the owner. A revised, verified transport
-   or real Yahoo responses containing the rows is required before production
-   implementation. Do not invent successful fixtures, infer half-PPR scoring,
+1. Implement the verified partner-widget transport described in the follow-up
+   proposal, including response-level identity and scoring checks. Do not invent successful fixtures, infer half-PPR scoring,
    substitute consensus, or fall back to CBS.
 2. Obtain real full/half WR, universal QB, FLEX and week-mismatch fixtures;
    positively verify scoring groups and positional columns.

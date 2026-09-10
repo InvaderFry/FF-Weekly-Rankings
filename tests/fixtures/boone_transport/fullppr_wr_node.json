@@ -1,0 +1,22 @@
+{
+  "nodeId": "97",
+  "parentNodeId": null,
+  "type": "rankingPro",
+  "url": "https://partners.fantasypros.com/external/widget/fp-widget.php?height=1600px&width=350px&thead_color=%23ffffff&thead_font=%23000000&t_alt_row=%23fafafa&link_color=%233778be&pill_color=%232881eb&sport=NFL&wtype=ST&filters=317&scoring=HALF&expert=1663&affiliate_code=&year=2026&week=1&auction=false&Notes=false&tags=false&cards=true&showPodcastIcons=false&format=table&promo_link=true&title_header=true&positions=&ppr_positions=WR&half_positions=&site=&fd_aff=&dk_aff=&fa_aff=&dp_aff=&hide_expert_columns=false&isRankingProEmbed=true",
+  "width": 350,
+  "height": 1600,
+  "scrolling": "no",
+  "proFilters": "317",
+  "scoring": "HALF",
+  "expert": "1663",
+  "sport": "NFL",
+  "week": "1",
+  "wtype": "ST",
+  "year": "2026",
+  "title_header": "true",
+  "positions": "",
+  "ppr_positions": "WR",
+  "half_positions": "",
+  "hide_expert_columns": "false",
+  "isRankingProEmbed": "true"
+}
