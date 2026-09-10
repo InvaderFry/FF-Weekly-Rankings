@@ -15,11 +15,13 @@ from .config import Settings
 from .data_status import DataStatus, single_status
 from .models import Player, PlayerScore, Recommendation
 from .output.render import LINEUP_UNSCORED_NOTE, lineup_unscored_keys, md_cell, render_markdown
-from .pipeline import build_signals, recommend
+from .engine.blend import flag_starter_boundary_pair
+from .pipeline import build_signals, log_deferred, recommend
 from .season import preseason_banner, season_year
 from .engine.analyst import detect_conflicts
 from .sources.analysts import AnalystFetcher, not_published_yet
-from .sources.journalists import JournalistFetcher, JournalistView, parse_experts
+from .sources.journalists import (Expert, JournalistFetcher, JournalistRow,
+                                  JournalistView, parse_experts)
 
 # A common 1QB/PPR-ish starting set used for the suggested lineup.
 LINEUP_SLOTS = ["QB", "RB", "RB", "WR", "WR", "TE", "FLEX", "K", "DEF"]
@@ -42,47 +44,6 @@ POSITION_ORDER = ["QB", "RB", "WR", "TE", "K", "DEF"]
 # Position precedence for FLEX tie-breaks. Arbitrary but fixed, and derived from
 # POSITION_ORDER so the file keeps one ordering convention rather than two.
 _FLEX_ORDER = {pos: i for i, pos in enumerate(FLEX_POSITIONS)}
-
-def starter_counts(slots: Optional[Sequence[str]] = None) -> dict[str, int]:
-    """How many starters each position gets in ``slots`` (flex slots excluded).
-
-    Derived from the slot list actually in use rather than hardcoded beside it,
-    because the two must not be able to disagree. This is the same shape of
-    guard as ``waivers.build._lineup_keys``, which had to learn the lesson the
-    hard way: computing drop protection from the hardcoded 1QB/2RB/2WR template
-    while the other half of the guard counted surplus against the league's real
-    ``roster_slots`` left a superflex league's second quarterback both
-    unprotected *and* surplus. Here the consequence is milder — ``starter_count``
-    only decides which *pair* the close-call check examines, so a mismatch
-    misses a warning rather than cutting a starter — but the fix is the same
-    one: one derivation, fed by whatever slot list the lineup is being built
-    from.
-
-    Flex slots are excluded because they have no position to count against:
-    ``SLOT_POSITIONS`` names the ones that accept more than themselves, and a
-    slot absent from it is an ordinary position slot. With the default template
-    this is ``{"QB": 1, "RB": 2, "WR": 2, "TE": 1, "K": 1, "DEF": 1}``.
-
-    ``None`` means ``LINEUP_SLOTS``. A league whose real slots are known — the
-    waiver pass already reads them off ESPN and Sleeper — passes them here and
-    to ``build_lineup`` together, so a 3-WR league checks WR3/WR4 rather than
-    WR2/WR3. The start/sit commands have no league-rules fetch on their path and
-    keep the template, which is what the rest of that path assumes anyway.
-    """
-    counts: dict[str, int] = {}
-    for slot in (slots if slots is not None else LINEUP_SLOTS):
-        if slot not in SLOT_POSITIONS:
-            counts[slot] = counts.get(slot, 0) + 1
-    return counts
-
-
-#: The default template's counts, for callers and tests that want the constant
-#: rather than the derivation. Feeds ``rank_each_position``'s ``starter_count``,
-#: which is what lets the close-call flag additionally check the pair straddling
-#: the last starting slot (rank N vs N+1) rather than only the overall top two —
-#: the decision that actually sets a 2-WR league's lineup at WR2/WR3, not
-#: WR1/WR2.
-STARTER_COUNTS: dict[str, int] = starter_counts()
 
 #: Fraction of the flex pool that must carry an ECR value for the pooled ranking
 #: to be trusted. Below this the pooled blend is running on Vegas/injury/weather
@@ -162,7 +123,6 @@ class LeagueBundle:
 def rank_each_position(settings: Settings, players: Sequence[Player], week: int,
                        log: bool = False,
                        signals: Optional[Sequence] = None,
-                       slots: Optional[Sequence[str]] = None,
                        analyst_fetcher: Optional[AnalystFetcher] = None) -> dict[str, Recommendation]:
     """Rank each position group once. One scoring pass = one set of API calls.
 
@@ -173,20 +133,22 @@ def rank_each_position(settings: Settings, players: Sequence[Player], week: int,
     this pass and the pooled FLEX pass, so the two together still cost a single
     Odds API credit.
 
-    ``slots`` is the league's starting-slot list, defaulting to ``LINEUP_SLOTS``.
-    It is read only through ``starter_counts`` — see there for why the count is
-    derived from the slot list rather than kept beside it — and decides which
-    pair the close-call check examines at each position.
+    This pass takes no ``slots``: nothing in it depends on the league's shape
+    any more. The close-call boundary flag is **not** set here — a positional
+    count cannot see a flex slot, and the flex pick is by construction the rank
+    N+1 player it would name, so ``score_week`` resolves that pair from the
+    built lineup instead (``flag_starter_boundaries``). Logging is deferred with
+    it — the logged row carries ``close_call``, so it has to be written after
+    the flag is final, not before.
     """
     signals = list(signals) if signals is not None else build_signals(settings)
-    counts = starter_counts(slots)
     recs: dict[str, Recommendation] = {}
     for pos in {p.position for p in players}:
         cands = [p for p in players if p.position == pos]
         recs[pos] = recommend(settings, cands, week, signals=signals,
                               command="report", log=log,
                               exclude_unavailable=True,
-                              starter_count=counts.get(pos))
+                              defer_log=True)
     sample = any(getattr(signal, "is_sample", False) for signal in signals)
     if settings.analysts == "boone" and sample:
         for rec in recs.values():
@@ -197,9 +159,14 @@ def rank_each_position(settings: Settings, players: Sequence[Player], week: int,
         ranks = fetcher.fetch(players, week, settings.scoring)
         status = ranks.status(week, settings.league_label)
         for pos, rec in recs.items():
+            # Ranks are kept on the rec so `flag_starter_boundaries` can redo
+            # this against the real boundary pair once the lineup exists; the
+            # count cannot see a flex slot, so no boundary is judged here.
+            rec.analyst_ranks = dict(ranks.by_position.get(pos, {}))
+            rec.analyst_name = ranks.analyst
             rec.analyst_conflicts = detect_conflicts(
-                rec, ranks.by_position.get(pos, {}), ranks.analyst,
-                settings.analyst_min_gap, counts.get(pos))
+                rec, rec.analyst_ranks, ranks.analyst,
+                settings.analyst_min_gap)
             # Only the not-posted-yet reason is position-specific. Every other
             # reason is identical at every position, so repeating it per section
             # would be the noise Data status already carries once.
@@ -283,16 +250,29 @@ def score_week(settings: Settings, players: Sequence[Player], week: int,
     rows nobody acted on. The pooled FLEX pass is never logged either way —
     see ``rank_pooled``.
 
-    ``slots`` is the league's starting-slot list, forwarded to
-    ``rank_each_position`` so the close-call boundary check and the lineup are
-    reasoning about the same shape of league.
+    ``slots`` is the league's starting-slot list, forwarded to ``build_lineup``
+    -- which is also what decides the close-call boundary now, so the two cannot
+    disagree about the shape of the league by construction.
+
+    Order matters here. The starter-boundary flag is only correct once the
+    lineup exists — a positional starter count cannot see a flex slot, and the
+    flex pick is exactly the rank N+1 player a count would flag — so the pass
+    runs score -> pool -> lineup -> flag -> log. The log write comes last
+    because ``results_log`` captures ``close_call`` and ``backtest`` buckets its
+    confident-vs-close-call honesty split on it: writing the row before the flag
+    was final would put a warning in the corpus that the report never showed.
     """
     signals = build_signals(settings)
     recs = rank_each_position(settings, players, week, log=log, signals=signals,
-                              slots=slots, **({"analyst_fetcher": analyst_fetcher}
-                                             if analyst_fetcher is not None else {}))
+                              **({"analyst_fetcher": analyst_fetcher}
+                                 if analyst_fetcher is not None else {}))
     flex, note = rank_flex_pool(settings, players, week, signals=signals)
-    return WeekScores(recs=recs, flex=flex, flex_note=note)
+    ws = WeekScores(recs=recs, flex=flex, flex_note=note)
+    flag_starter_boundaries(settings, recs, build_lineup(
+        scored(recs), flex_pool=scored_flex(ws), flex_note=note, slots=slots))
+    for rec in recs.values():
+        log_deferred(settings, rec, command="report")
+    return ws
 
 
 def scored(recs: dict[str, Recommendation]) -> dict[str, list[PlayerScore]]:
@@ -351,6 +331,60 @@ def _best_from_pool(pool: Sequence[PlayerScore], used: set[str]) -> Optional[Pla
     return None
 
 
+def flag_starter_boundaries(settings: Settings, recs: dict[str, Recommendation],
+                            lineup: "Lineup") -> None:
+    """Flag the pair that really straddles each position's last starting spot.
+
+    The boundary that sets a lineup is "last man in vs first man out", and only
+    the built lineup knows where that falls. ``starter_counts`` deliberately
+    excludes flex slots — a flex slot has no position to count against — so a
+    count puts the RB boundary at RB2-vs-RB3 while the FLEX slot is filled by
+    the best remaining RB/WR/TE, which is that same RB3. The check then warned
+    about a player who was in the lineup: of the four boundary warnings in the
+    live Week 1 run, three named a runner-up who started, one of them the FLEX
+    pick itself. That is the false alarm the weight and gap floors elsewhere
+    exist to prevent, arriving by a different route.
+
+    So the pair is resolved here instead: for each position, the lowest-ranked
+    player who *starts* anywhere in the lineup (his own slot or a flex slot)
+    against the highest-ranked one who does not. A position whose candidates
+    all start, or none of whom do, has no boundary to flag and is skipped —
+    there is no decision there to warn about.
+
+    Called from ``score_week`` after ``build_lineup`` and before the deferred
+    log write, so the row records the flag the report actually rendered.
+    Renderers are untouched: this only sets ``close_call``/``notes``, exactly
+    as the scoring-time check did.
+    """
+    starting = {pick.player.key for _, pick in lineup if pick is not None}
+    for rec in recs.values():
+        scored_players = [s for s in rec.scores if s.final is not None]
+        if len(scored_players) < 2:
+            continue
+        starters = [s for s in scored_players if s.player.key in starting]
+        bench = [s for s in scored_players if s.player.key not in starting]
+        if not starters or not bench:
+            continue
+        # ``scores`` is ordered best -> worst, so these are the last man in and
+        # the first man out without re-sorting.
+        pair = (starters[-1], bench[0])
+        flag_starter_boundary_pair(
+            rec, pair[0], pair[1],
+            settings.close_call_threshold,
+            settings.min_disagree_weight,
+            settings.close_call_raw_gaps,
+            settings.presentational_gaps,
+        )
+        # The analyst comparison straddles the same boundary and was wrong for
+        # the same reason. Recomputed rather than appended: `detect_conflicts`
+        # returns the top-two conflict too, so adding to the list would double
+        # it.
+        if rec.analyst_ranks:
+            rec.analyst_conflicts = detect_conflicts(
+                rec, rec.analyst_ranks, rec.analyst_name,
+                settings.analyst_min_gap, boundary_pair=pair)
+
+
 def build_lineup(by_pos: dict[str, list[PlayerScore]],
                  flex_pool: Optional[Sequence[PlayerScore]] = None,
                  flex_note: Optional[str] = None,
@@ -397,21 +431,81 @@ def build_lineup(by_pos: dict[str, list[PlayerScore]],
                   caveat=caveat if has_flex else None)
 
 
+#: The analyst transport's id in a ``JournalistView``. Not a FantasyPros expert
+#: id and deliberately unlike one -- these ranks come from the analyst's own
+#: published lists, and a column that cannot say which source it came from is
+#: how consensus gets published under a byline.
+ANALYST_EXPERT_ID = "yahoo-boone"
+
+
+def _analyst_journalist_view(settings: Settings, players: Sequence[Player],
+                             week: int) -> Optional[JournalistView]:
+    """The Preferred journalists section, served by the analyst transport.
+
+    Per-expert FantasyPros ranks need a **paid** API key -- the free tier 403s
+    on that endpoint, and the public page filters in the browser and serves the
+    same consensus whatever is asked for (``experts --verify`` says exactly
+    this). Boone is also the only configured journalist whose id resolves at
+    all. So the section never rendered, while ``sources/analysts.py`` was
+    already fetching that same analyst's real ranks for the disagreement notes.
+
+    This reuses them rather than adding a scrape. The expert is labelled with
+    its actual source so the table can never read as FantasyPros consensus --
+    the same fail-closed attribution rule ``ecr._matches_filters`` and
+    ``analysts._verify_sole_contributor`` hold.
+    """
+    if settings.analysts != "boone":
+        return None
+    from .sources.analysts import AnalystFetcher
+
+    try:
+        ranks = AnalystFetcher(season_year(), settings.data_dir).fetch(
+            players, week, settings.scoring)
+    except Exception as exc:
+        import sys
+        print(f"warning: analyst journalist view unavailable: {exc}", file=sys.stderr)
+        return None
+    if not ranks.by_position:
+        return None
+
+    expert = Expert(id=ANALYST_EXPERT_ID, name=f"{ranks.analyst} (Yahoo)")
+    by_position: dict[str, list[JournalistRow]] = {}
+    for p in players:
+        rank = ranks.by_position.get(p.position, {}).get(p.key)
+        if rank is None:
+            continue          # unranked or on bye -- left out, not ranked last
+        by_position.setdefault(p.position, []).append(
+            JournalistRow(player=p, avg_rank=rank, ranks={expert.id: rank}))
+    if not by_position:
+        return None
+    for rows in by_position.values():
+        rows.sort(key=lambda r: r.avg_rank)
+    return JournalistView(experts=[expert], by_position=by_position)
+
+
 def build_journalist_view(settings: Settings, players: Sequence[Player],
                           week: int) -> Optional[JournalistView]:
-    """Build the preferred-journalists view, or None when disabled/no data."""
+    """Build the preferred-journalists view, or None when disabled/no data.
+
+    FantasyPros first when experts are configured, then the analyst transport --
+    which is what actually renders today, since the per-expert FantasyPros
+    endpoint is a paid product. The paid path stays first so a key, once
+    present, wins without a config change.
+    """
     experts = parse_experts(settings.preferred_experts)
-    if not experts:
-        return None
-    fetcher = JournalistFetcher(experts, api_key=settings.fantasypros_api_key,
-                                scoring=settings.scoring)
-    try:
-        return fetcher.build_view(players, week)
-    except Exception as exc:  # a broken journalist feed must never sink a run
-        import sys
-        print(f"warning: preferred-journalists view unavailable: {exc}",
-              file=sys.stderr)
-        return None
+    view = None
+    if experts:
+        fetcher = JournalistFetcher(experts, api_key=settings.fantasypros_api_key,
+                                    scoring=settings.scoring)
+        try:
+            view = fetcher.build_view(players, week)
+        except Exception as exc:  # a broken journalist feed must never sink a run
+            import sys
+            print(f"warning: preferred-journalists view unavailable: {exc}",
+                  file=sys.stderr)
+    if view is None:
+        view = _analyst_journalist_view(settings, players, week)
+    return view
 
 
 def build_digest(settings: Settings, players: Sequence[Player], week: int,

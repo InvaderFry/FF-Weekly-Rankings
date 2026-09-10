@@ -219,3 +219,26 @@ def test_a_negative_weather_raw_gap_falls_back_to_the_default(tmp_path, monkeypa
     monkeypatch.setenv("FF_DATA_DIR", str(tmp_path))
     monkeypatch.setenv("FF_CLOSE_RAW_GAP_WEATHER", "-5")
     assert load_settings().close_call_raw_gaps["weather"] == 12.0
+
+
+def test_unparseable_numeric_env_falls_back_loudly(tmp_path, monkeypatch, capsys):
+    """A typo in any numeric var must say so.
+
+    The range checks already warned when they rejected a value (a negative
+    weight, a threshold below zero), so an *unparseable* one was the single bad
+    input that produced no output at all -- and it is the likeliest one to hit:
+    `FF_WEIGHT_ECR=0.6O` with a letter O silently restored the default weight
+    and the run looked entirely normal. One guard in `_f` covers all eleven
+    numeric vars.
+    """
+    _clear_weight_env(monkeypatch)
+    monkeypatch.setenv("FF_DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("FF_WEIGHT_ECR", "0.6O")
+    monkeypatch.setenv("FF_CLOSE_CALL_THRESHOLD", "abc")
+    settings = load_settings()
+    out = capsys.readouterr().out
+    assert "FF_WEIGHT_ECR" in out and "not a number" in out
+    assert "FF_CLOSE_CALL_THRESHOLD" in out
+    # Fell back to usable defaults, and load_settings still never raises.
+    assert settings.weights == DEFAULT_WEIGHTS
+    assert settings.close_call_threshold == 5.0

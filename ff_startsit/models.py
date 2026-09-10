@@ -154,6 +154,23 @@ class Recommendation:
     #: rather than as agreement. Same rule as ``analyst_conflicts`` — it
     #: never reaches ``notes`` or ``results_log.jsonl``.
     analyst_note: Optional[str] = None
+    #: Display-only: the analyst's ranks for this position (player key -> rank)
+    #: and his name, kept beside the conflicts they produced. ``report
+    #: .flag_starter_boundaries`` re-reads them to judge the *real* boundary
+    #: pair once the lineup exists, which the scoring pass cannot know. Never
+    #: reaches ``notes`` or ``results_log.jsonl``, same rule as the two above.
+    analyst_ranks: dict[str, float] = field(default_factory=dict)
+    analyst_name: str = ""
+
+    #: Whether this run survived every "never log this" rule in
+    #: ``pipeline.recommend`` and is still owed a row in ``results_log.jsonl``.
+    #: Only meaningful with ``recommend(defer_log=True)``, which the whole-roster
+    #: path uses so the starter-boundary flag can be resolved against the built
+    #: lineup *before* the row is written — ``backtest`` buckets its honesty
+    #: split on the logged ``close_call``, so a row written earlier would record
+    #: a warning the report never showed. Never serialized; ``pipeline
+    #: .log_deferred`` clears it so a row can't be written twice.
+    loggable: bool = False
 
     @property
     def unranked(self) -> bool:

@@ -251,6 +251,45 @@ def cmd_sync(args, settings: Settings) -> int:
     return 0
 
 
+def _annotate_analyst(settings: Settings, rec, players, week: int, pos: str) -> None:
+    """Attach the analyst comparison to a single-position recommendation.
+
+    `rank` and `compare` call `pipeline.recommend` directly rather than
+    `report.rank_each_position`, so they showed no comparison at all while the
+    digest beside them flagged a disagreement on the same players -- the same
+    "one renderer got the fix and another didn't" gap `cmd_lineup` had.
+
+    No boundary pair is judged here: these commands build no lineup, and a
+    positional count would name the player a FLEX slot is about to start. The
+    top-two conflict is the honest reading available without one.
+
+    Per-position ranks only. A pooled RB-vs-WR `compare` cannot use these --
+    "his RB11 beats his WR6" compares two different lists, the same
+    non-comparability `rank_pooled` exists to solve for ECR -- so the caller
+    passes a single position or nothing happens.
+    """
+    if settings.analysts != "boone" or not pos:
+        return
+    from .engine.analyst import detect_conflicts
+    from .sources.analysts import AnalystFetcher, not_published_yet
+    try:
+        ranks = AnalystFetcher(season.season_year(), settings.data_dir).fetch(
+            players, week, settings.scoring)
+    except Exception as exc:  # never sink a ranking over an annotation
+        print(f"warning: analyst comparison unavailable: {exc}", file=sys.stderr)
+        return
+    rec.analyst_ranks = dict(ranks.by_position.get(pos, {}))
+    rec.analyst_name = ranks.analyst
+    rec.analyst_conflicts = detect_conflicts(rec, rec.analyst_ranks, ranks.analyst,
+                                             settings.analyst_min_gap)
+    if not_published_yet(ranks.unavailable.get(pos)):
+        rec.analyst_note = (
+            f"{ranks.analyst} has not posted his Week {week} "
+            f"{'full' if settings.scoring == 'ppr' else 'half'}-PPR "
+            f"{'DST' if pos in {'DEF', 'DST'} else pos} rankings yet.")
+    rec.source_status.append(ranks.status(week, settings.league_label))
+
+
 def cmd_rank(args, settings: Settings) -> int:
     settings, profile = _league_context(args, settings)
     players = _get_roster(args, settings, profile)
@@ -265,6 +304,7 @@ def cmd_rank(args, settings: Settings) -> int:
     _print_preseason_banner(settings, md=args.md)
     rec = recommend(settings, candidates, week, command=f"rank --pos {pos}",
                     exclude_unavailable=True)
+    _annotate_analyst(settings, rec, candidates, week, pos)
     title = _titled(f"Week {week} {pos} • {settings.scoring.upper()}", profile)
     if args.md:
         print(render.render_markdown(rec, title=title))
@@ -300,6 +340,7 @@ def cmd_compare(args, settings: Settings) -> int:
     if len(positions) == 1:
         rec = recommend(settings, candidates, week, command="compare",
                         exclude_unavailable=True)
+        _annotate_analyst(settings, rec, candidates, week, next(iter(positions)))
     elif positions <= set(report.FLEX_POSITIONS):
         # Per-position ECR ranks are not comparable — an RB1 and a WR1 both
         # normalize to 100 — so a mixed flex-eligible set has to be scored
@@ -411,10 +452,14 @@ def cmd_report(args, settings: Settings) -> int:
 
 def cmd_journalists(args, settings: Settings) -> int:
     """Print the preferred-journalists section on its own (quick id sanity check)."""
-    if not settings.preferred_experts:
-        print("FF_PREFERRED_EXPERTS is not set — see .env.example for the "
-              "id:Name format and how to find FantasyPros expert ids.",
-              file=sys.stderr)
+    if not settings.preferred_experts and settings.analysts != "boone":
+        # The analyst transport serves this section without any expert id, so
+        # the demand for one only stands when that is off too. Requiring it
+        # regardless sent the user to configure a FantasyPros key that cannot
+        # work -- per-expert ranks there are a paid product.
+        print("FF_PREFERRED_EXPERTS is not set and FF_ANALYSTS is off — see "
+              ".env.example for the id:Name format and how to find "
+              "FantasyPros expert ids.", file=sys.stderr)
         return 1
     settings, profile = _league_context(args, settings)
     players = _get_roster(args, settings, profile)
@@ -422,7 +467,10 @@ def cmd_journalists(args, settings: Settings) -> int:
     view = report.build_journalist_view(settings, players, week)
     if view is None:
         print("No preferred-journalist rankings available (bad expert ids, "
-              "offline, or no data for this week).", file=sys.stderr)
+              "offline, or no data for this week). Note per-expert FantasyPros "
+              "ranks need a paid API key — run `ffstartsit experts --verify` "
+              "— while FF_ANALYSTS=boone serves this section without one.",
+              file=sys.stderr)
         return 1
     print(report.render_journalists_markdown(view))
     return 0

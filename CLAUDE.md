@@ -93,7 +93,12 @@ without touching the pure engine.
 - **Fail loud-but-graceful on bad config.** Invalid weights (negative / all-zero),
   bad thresholds, and corrupt learned-weights files fall back to defaults with a
   warning (`config._validate_weights`, `_warn`) — they never silently produce an
-  all-`None` blend. **`load_settings` must never raise**, and
+  all-`None` blend. That includes a value that doesn't parse at all: `config._f`
+  warns rather than returning the default in silence, because the range checks
+  only ever covered values it *could* parse, which left a typo as the one bad
+  input producing no output — and `FF_WEIGHT_ECR=0.6O` with a letter O silently
+  restoring the default weight is the likeliest way that bites. One guard there
+  covers all eleven numeric vars. **`load_settings` must never raise**, and
   `_apply_scoring_overrides` is why that is stated rather than assumed:
   `FF_LEAGUE_SCORING` used to `raise ValueError` on an entry naming a league
   that isn't configured. That variable exists precisely so the non-sensitive
@@ -167,11 +172,11 @@ without touching the pure engine.
   starter alerts whenever that player is the pick. Second, the flag's first
   condition only ever compared the top two overall — rank 1 vs 2 — but in a
   league starting N at a position, the decision that actually sets the lineup is
-  rank N vs N+1. `_flag_close_call` now takes an optional `starter_count` and
-  additionally evaluates that boundary pair with its own wording ("Last starting
-  spot is a coin flip: X vs Y"). Purely additive to the engine: `weighted_final`
-  is untouched, so logged rows stay replayable, and every other caller
-  (`compare`, the waiver pass) passes no `starter_count` and is unaffected.
+  rank N vs N+1. So that boundary pair is evaluated too, with its own wording
+  ("Last starting spot is a coin flip: X vs Y"), by
+  `blend.flag_starter_boundary_pair`. Purely additive to the engine:
+  `weighted_final` is untouched, so logged rows stay replayable, and a caller
+  that supplies no pair is unaffected.
 
   Two things about that boundary check are load-bearing. It runs **both**
   conditions the top two get, the raw one included — the normalized threshold
@@ -180,19 +185,48 @@ without touching the pure engine.
   boundary pair reads as close depends on the spread of the whole group rather
   than on the two players. Four receivers at ECR 18 / 20 / 20.5 / 21 put the
   WR2/WR3 boundary — half a rank apart, the tightest call on the roster — 16.7
-  normalized points apart and silent. And `starter_count` comes from
-  **`report.starter_counts(slots)`**, derived from the slot list actually in use
-  rather than hardcoded beside it, threaded through `score_week` and
-  `rank_each_position`. `waivers.build._lineup_keys` is why: computing one half
-  of a guard from the hardcoded template while the other half read the league's
-  real `roster_slots` left a superflex league's second quarterback both
-  unprotected and surplus. The consequence here is milder — the count only
-  decides which *pair* is examined, so a mismatch misses a warning rather than
-  cutting a starter — but a second copy of the template is exactly how that bug
-  started. The start/sit path has no league-rules fetch and keeps the default
-  (2 RB, 2 WR, 1 each of QB/TE/K/DEF), as the rest of that path already does;
-  a caller that knows the league's real slots passes them to `score_week` and
-  `build_lineup` together and a 3-WR league checks WR3/WR4.
+  normalized points apart and silent.
+
+  **Which pair straddles the boundary is a question only the lineup can
+  answer**, and deriving it from a starter count instead was wrong in the one
+  direction that matters. `report.starter_counts(slots)` excludes flex slots
+  correctly — a flex slot has no position to count against, so `starter_demand`
+  would divide by nothing — but that leaves the RB pair at RB2-vs-RB3 while the
+  FLEX slot is *by construction* filled by the best remaining RB/WR/TE, which is
+  that same RB3. The check therefore warned about the player it was about to
+  start: **3 of the 4 boundary warnings in the live Week 1 run named a runner-up
+  who was in the lineup**, one of them the FLEX pick itself. That is the false
+  alarm the weight and gap floors exist to prevent, arriving by a different
+  route — and the earlier reasoning here, that a count mismatch "misses a
+  warning rather than cutting a starter", had the sign backwards: with a flex
+  slot it *invents* one.
+
+  So `report.flag_starter_boundaries` resolves the pair from the built lineup —
+  the lowest-ranked player who starts anywhere (his own slot or a flex slot)
+  against the highest-ranked one who does not — and hands it to
+  `blend.flag_starter_boundary_pair`. A position where everyone starts, or
+  nobody does, has no decision to warn about and is skipped. `score_week`'s
+  order is therefore **score → pool → lineup → flag → log**, and the log write
+  moving last is the load-bearing part: `results_log` captures `close_call` and
+  `backtest` buckets its confident-vs-close-call honesty split on it, so writing
+  the row before the flag was final would record a warning the report never
+  rendered — corrupting the one measurement that checks close-call flagging
+  itself. `pipeline.recommend(defer_log=True)` runs every "never log this" rule
+  at its existing site and parks the verdict on `Recommendation.loggable` for
+  `pipeline.log_deferred`, which clears it so an append-only log can't be
+  double-written.
+
+  There is deliberately **no** starter-count fallback left anywhere — not in
+  `blend`, `pipeline.recommend` or `detect_conflicts`, and `starter_counts`
+  itself is gone. A caller with no lineup (`rank`, `compare`, the waiver pass)
+  makes no "last starting spot" claim at all, through the close-call flag or the
+  analyst comparison. Guessing the boundary from a count is precisely what
+  produced the false alarms, so the parameter that invited it was removed rather
+  than left as a trap for a future caller. `flag_starter_boundary_pair` also
+  returns early when the pair handed to it *is* the overall top two — a league
+  starting one at the position (QB, TE, K, DEF) puts the boundary exactly there,
+  and without that guard every such section printed the same coin flip twice
+  under two headings.
 
   The same min-max blindness has a second, purely *presentational* consequence,
   and `Recommendation.flat_signals` is the answer to it. A column can look
@@ -370,6 +404,61 @@ the scrape path failed closed — and `JournalistFetcher._warn_if_filter_ignored
 cannot cover that gap, because it needs two experts returning identical ranks to
 compare, which is exactly the single-journalist config that is left once the
 dead ids are dropped.
+
+### The analyst comparison (`sources/analysts.py`)
+
+`FF_ANALYSTS=boone` annotates the start/sit report with where **Justin Boone**
+would set the lineup differently. Like `sources/journalists.py` it is an
+*annotation* layer, **never a `Signal`**: no blend weight, the "four places"
+rule does not apply, `_validate_weights` is untouched, and nothing it produces
+reaches `notes` or `results_log.jsonl` — `Recommendation.analyst_conflicts`,
+`analyst_note`, `analyst_ranks` and `analyst_name` are all display-only.
+
+It exists because the FantasyPros per-expert path cannot serve this. Those ranks
+are a **paid** product: the free tier 403s on the consensus endpoint and the
+public page filters in the browser, so `experts --verify` can confirm Boone's id
+(317) is valid and still get nothing back. Yahoo publishes his own weekly lists,
+and this reads those.
+
+Attribution **fails closed**, the same standard `ecr._matches_filters` holds and
+for the reason the CBS trap above documents: the widget response must name Boone
+as its *sole* contributor (`expert_names == {contributor: 'Justin Boone'}` and
+`total_experts == 1`) or it raises rather than returning plausible numbers under
+the wrong byline. Article discovery is scoring-aware (separate Half- and
+Full-PPR lists, cached separately) with K/QB served by universal lists that have
+no PPR variance, and the page cache is keyed per `(week, url)` so a second week
+in one process cannot serve the first week's article. Every failure arm carries
+its own reason, and `not_published_yet` distinguishes the one that is
+position-specific — he has not posted *that list* yet — from the ones that are
+identical at every position and therefore belong in Data status once rather than
+repeated under every table.
+
+Two rules about what it may claim. `engine.analyst.detect_conflicts` compares
+the top two, and the **boundary pair only when a caller hands it one**
+(`boundary_pair`) — resolved from the built lineup by
+`report.flag_starter_boundaries`, never from a starter count. A count cannot see
+a flex slot, which is how "Justin Boone would flip your last starting spot"
+reached a live report about two players who were *both* in the lineup; see the
+close-call section above. And the markdown renderer escapes with `md_cell`,
+**not** `html.escape`: running the markup escape there shipped `D&#x27;Andre
+Swift` into a live GitHub issue, and every test fixture being named
+`Alpha`/`Bravo` is why nothing caught it — apostrophe names are common enough
+(D'Andre, Ja'Marr, De'Von) that `tests/test_report_markdown.py` now pins one.
+
+`cli._annotate_analyst` carries the comparison to `rank` and `compare`, which
+call `pipeline.recommend` directly rather than `rank_each_position` and so
+showed nothing while the digest beside them flagged a disagreement — the same
+one-renderer-missed-the-fix gap `cmd_lineup` had. `compare` gets it **only when
+every candidate shares a position**: Boone's lists are per-position, so "his
+RB11 beats his WR6" compares two different rankings, the identical
+non-comparability `rank_pooled` exists to solve for ECR.
+
+The transport doubles as the **Preferred journalists** section's data source.
+`report._analyst_journalist_view` builds a `JournalistView` from these ranks
+when FantasyPros yields nothing, which is always without a paid key — that
+section otherwise never rendered at all. The expert is labelled `Justin Boone
+(Yahoo)` rather than borrowing a FantasyPros expert id, so a column can always
+say where it came from.
 
 ### Game context (schedule)
 

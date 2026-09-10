@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import csv
 import json
-from html import escape
 from pathlib import Path
 
 from rich.console import Console
@@ -134,7 +133,16 @@ def flat_signal_note(rec: Recommendation) -> str:
 
 
 def analyst_conflict_text(conflict: AnalystConflict) -> str:
-    """Plain wording shared by HTML and Markdown, escaped by each renderer."""
+    """Plain wording shared by HTML and Markdown, escaped by each renderer.
+
+    Each renderer applies *its own* escape, and they are not interchangeable:
+    ``html.py`` runs ``html.escape`` because it is building markup, while the
+    markdown side runs ``md_cell`` because the hazards there are ``|`` and
+    newlines. Running ``html.escape`` here instead shipped ``D&#x27;Andre
+    Swift`` into a live GitHub issue -- an apostrophe is a hazard in markup and
+    ordinary text in markdown, and every test fixture was named ``Alpha``/
+    ``Bravo``, so nothing in the suite carried an apostrophe to catch it.
+    """
     pos = "DST" if conflict.position in {"DEF", "DST"} else conflict.position
     preferred = f"{conflict.preferred} (his {pos}{_fmt_raw(conflict.preferred_rank)})"
     leader = f"{conflict.leader} (his {pos}{_fmt_raw(conflict.leader_rank)})"
@@ -185,11 +193,11 @@ def render_markdown(rec: Recommendation, title: str = "") -> str:
         lines.append(f"_{flat}_")
         lines.append("")
     for conflict in rec.analyst_conflicts:
-        text = md_cell(escape(analyst_conflict_text(conflict)))
+        text = md_cell(analyst_conflict_text(conflict))
         lines.append(f"> ⚠️ {text}" if conflict.material else text)
         lines.append("")
     if rec.analyst_note:
-        lines.append(f"_{md_cell(escape(rec.analyst_note))}_")
+        lines.append(f"_{md_cell(rec.analyst_note)}_")
         lines.append("")
     if rec.close_call:
         lines.append("> ⚠️ **Close call** — lean, don't bank on it:")

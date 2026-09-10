@@ -175,6 +175,14 @@ def _f(name: str, default: float) -> float:
     downstream comparison guard (``nan < 0`` and ``nan > 0`` are both False), so
     non-finite values are rejected here rather than being allowed to reach the
     blend.
+
+    An unparseable value warns rather than falling back in silence. Every
+    caller that range-checks its result already warns when it rejects one
+    (negative weights, a threshold below zero), so a *typo* was the one bad
+    value that produced no output at all -- and it is the likeliest one:
+    ``FF_WEIGHT_ECR=0.6O`` with a letter O silently restored the default weight
+    and the run looked entirely normal. This is the "fail loud-but-graceful"
+    rule the rest of this module follows; ``load_settings`` still never raises.
     """
     val = os.getenv(name)
     if val is None or val.strip() == "":
@@ -182,6 +190,7 @@ def _f(name: str, default: float) -> float:
     try:
         parsed = float(val)
     except ValueError:
+        _warn(f"{name}={val!r} is not a number; using {default} instead.")
         return default
     if not math.isfinite(parsed):
         _warn(f"{name} is not a finite number; using {default} instead.")
