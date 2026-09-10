@@ -511,14 +511,32 @@ def _four():
             for i in range(1, 5)]
 
 
+def _boundary(rec, starters, threshold=1.0, min_disagree_weight=0.0, raw_gaps=None):
+    """Apply the boundary check to the pair a lineup starting `starters` gives.
+
+    The engine no longer derives that pair from a count -- a count cannot see a
+    flex slot -- so the caller supplies it, exactly as
+    `report.flag_starter_boundaries` does from the built lineup.
+    """
+    from ff_startsit.engine.blend import flag_starter_boundary_pair
+
+    scored = [s for s in rec.scores if s.final is not None]
+    if starters is None or starters < 1 or len(scored) <= starters:
+        return rec
+    flag_starter_boundary_pair(rec, scored[starters - 1], scored[starters],
+                               threshold, min_disagree_weight, raw_gaps or {})
+    return rec
+
+
 def _blend_four(ranks, starter_count):
     players = _four()
     signal_values = {"ecr": {str(i): SignalValue(ranks[i - 1]) for i in range(1, 5)}}
-    return blend(
+    rec = blend(
         week=1, scoring="ppr", players=players, signal_values=signal_values,
         higher_is_better={"ecr": False}, weights={"ecr": 1.0},
-        close_call_threshold=1.0, starter_count=starter_count,
+        close_call_threshold=1.0,
     )
+    return _boundary(rec, starter_count)
 
 
 def test_starter_boundary_flags_rank_two_vs_three_not_the_top_two():
@@ -545,8 +563,8 @@ def test_starter_count_one_does_not_duplicate_the_top_two_note():
     assert len(notes) == 1
 
 
-def test_starter_count_none_leaves_behavior_unchanged():
-    """The default: every existing caller that never passes `starter_count`
+def test_no_boundary_pair_leaves_behavior_unchanged():
+    """The default: a caller with no lineup supplies no pair
     must see none of this."""
     rec = _blend_four([1.0, 20.0, 20.1, 90.0], starter_count=None)
     assert rec.close_call is False
@@ -578,14 +596,14 @@ def test_starter_boundary_reads_raw_units_not_just_normalized_scores():
     silent about the one pair it was added to watch. This is exactly why
     `close_call_raw_gaps` exists for the top two.
     """
-    rec = blend(
+    rec = _boundary(blend(
         week=1, scoring="ppr", players=_four_wrs(),
         signal_values={"ecr": {"1": SignalValue(18.0), "2": SignalValue(20.0),
                                "3": SignalValue(20.5), "4": SignalValue(21.0)}},
         higher_is_better={"ecr": False}, weights={"ecr": 1.0},
         close_call_threshold=5.0, min_disagree_weight=0.15,
-        close_call_raw_gaps={"ecr": 3.0}, starter_count=2,
-    )
+        close_call_raw_gaps={"ecr": 3.0},
+    ), 2, threshold=5.0, min_disagree_weight=0.15, raw_gaps={"ecr": 3.0})
     # The normalized gap at the boundary is far too wide to trip on its own...
     finals = [s.final for s in rec.scores]
     assert finals[1] - finals[2] > 5.0
@@ -604,14 +622,14 @@ def test_starter_boundary_raw_check_still_defers_to_a_real_edge():
     Same unanimity rule the top-two dead heat follows: flagging an edge would be
     the false alarm the gap floors exist to prevent.
     """
-    rec = blend(
+    rec = _boundary(blend(
         week=1, scoring="ppr", players=_four_wrs(),
         signal_values={"ecr": {"1": SignalValue(1.0), "2": SignalValue(20.0),
                                "3": SignalValue(40.0), "4": SignalValue(41.0)}},
         higher_is_better={"ecr": False}, weights={"ecr": 1.0},
         close_call_threshold=5.0, min_disagree_weight=0.15,
-        close_call_raw_gaps={"ecr": 3.0}, starter_count=2,
-    )
+        close_call_raw_gaps={"ecr": 3.0},
+    ), 2, threshold=5.0, min_disagree_weight=0.15, raw_gaps={"ecr": 3.0})
     assert not any(n.startswith("Last starting spot") for n in rec.notes)
 
 

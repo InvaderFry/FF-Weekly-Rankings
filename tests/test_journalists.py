@@ -168,3 +168,79 @@ def test_ecr_signal_still_sends_no_filters():
     sig = ECRSignal(api_key="testkey", scoring="ppr", season=2025, session=session)
     sig.fetch(3, PLAYERS[:1])
     assert all("filters" not in params for _, params in session.calls)
+
+
+# --- the section is served by the analyst transport when FantasyPros can't ---
+
+def _stub_analyst(monkeypatch, by_position, analyst="Justin Boone"):
+    from ff_startsit.sources.analysts import AnalystRanks
+
+    class Fetcher:
+        def __init__(self, *a, **k):
+            pass
+
+        def fetch(self, players, week, scoring):
+            return AnalystRanks(analyst, scoring, by_position=by_position)
+
+    monkeypatch.setattr("ff_startsit.sources.analysts.AnalystFetcher", Fetcher)
+
+
+def test_journalist_view_falls_back_to_the_analyst_transport(monkeypatch, tmp_path):
+    """Per-expert FantasyPros ranks are a paid product, so the section was dead.
+
+    The free tier 403s on that endpoint and the public page serves consensus to
+    every request, so `build_view` returns None however the ids are set. The
+    analyst transport already fetches the same analyst's real ranks for the
+    disagreement notes, so the section is served from those instead.
+    """
+    from ff_startsit.config import Settings
+    from ff_startsit.report import ANALYST_EXPERT_ID, build_journalist_view
+
+    _stub_analyst(monkeypatch, {"RB": {"100": 2.0, "101": 11.0}})
+    settings = Settings(data_dir=tmp_path, analysts="boone", preferred_experts="")
+    view = build_journalist_view(settings, PLAYERS, week=1)
+
+    assert view is not None
+    assert [e.id for e in view.experts] == [ANALYST_EXPERT_ID]
+    # Attribution must name the real source -- a column that can't say where it
+    # came from is how consensus gets published under a byline.
+    assert view.experts[0].name == "Justin Boone (Yahoo)"
+    assert [r.player.key for r in view.by_position["RB"]] == ["100", "101"]
+    assert view.by_position["RB"][0].avg_rank == 2.0
+
+
+def test_analyst_journalist_view_leaves_out_unranked_players(monkeypatch, tmp_path):
+    """A missing rank is not a bad rank -- same rule as `score.has_ecr`."""
+    from ff_startsit.config import Settings
+    from ff_startsit.report import build_journalist_view
+
+    _stub_analyst(monkeypatch, {"RB": {"100": 2.0}})
+    view = build_journalist_view(
+        Settings(data_dir=tmp_path, analysts="boone"), PLAYERS, week=1)
+    assert [r.player.key for r in view.by_position["RB"]] == ["100"]
+
+
+def test_analyst_journalist_view_is_off_when_the_analyst_is(monkeypatch, tmp_path):
+    from ff_startsit.config import Settings
+    from ff_startsit.report import build_journalist_view
+
+    _stub_analyst(monkeypatch, {"RB": {"100": 2.0}})
+    assert build_journalist_view(
+        Settings(data_dir=tmp_path, analysts=""), PLAYERS, week=1) is None
+
+
+def test_analyst_journalist_view_survives_a_broken_fetch(monkeypatch, tmp_path, capsys):
+    from ff_startsit.config import Settings
+    from ff_startsit.report import build_journalist_view
+
+    class Boom:
+        def __init__(self, *a, **k):
+            pass
+
+        def fetch(self, *a, **k):
+            raise RuntimeError("yahoo down")
+
+    monkeypatch.setattr("ff_startsit.sources.analysts.AnalystFetcher", Boom)
+    assert build_journalist_view(
+        Settings(data_dir=tmp_path, analysts="boone"), PLAYERS, week=1) is None
+    assert "yahoo down" in capsys.readouterr().err

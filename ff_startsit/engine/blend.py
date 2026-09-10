@@ -65,7 +65,6 @@ def blend(
     unavailable_keys: Iterable[str] = (),
     disagree_exempt: Iterable[str] = (),
     dead_heat_exempt: Iterable[str] = (),
-    starter_count: Optional[int] = None,
 ) -> Recommendation:
     """Combine per-signal readings into a ranked, flagged recommendation.
 
@@ -96,11 +95,11 @@ def blend(
     check whatever their weight, because their raw gap is configured for
     presentation only — see ``_flag_raw_dead_heat``.
 
-    ``starter_count``, when given, additionally flags the pair straddling the
-    last starting slot at this position (rank N vs N+1), not just the overall
-    top two, on both the normalized and the raw condition. ``None`` (the
-    default) skips this — purely additive, so every caller that doesn't pass it
-    is unaffected.
+    The pair straddling the **last starting slot** is flagged too, but not from
+    here: it depends on the built lineup, so ``report.flag_starter_boundaries``
+    calls ``flag_starter_boundary_pair`` after the fact. Deriving it from a
+    positional starter count instead is what made three of four live Week 1
+    boundary warnings name a player who was in the lineup — see there.
     """
     players = list(players)
     ruled_out = set(unavailable_keys)
@@ -147,8 +146,7 @@ def blend(
     rec = Recommendation(week=week, scoring=scoring, weights=dict(weights),
                          scores=scores, raw_gaps=dict(close_call_raw_gaps or {}))
     _flag_close_call(rec, normalized, close_call_threshold, min_disagree_weight,
-                     close_call_raw_gaps, disagree_exempt, starter_count,
-                     dead_heat_exempt)
+                     close_call_raw_gaps, disagree_exempt, dead_heat_exempt)
     return rec
 
 
@@ -156,7 +154,6 @@ def _flag_close_call(rec: Recommendation, normalized: Mapping[str, Mapping[str, 
                      threshold: float, min_disagree_weight: float = 0.0,
                      raw_gaps: Optional[Mapping[str, float]] = None,
                      disagree_exempt: Iterable[str] = (),
-                     starter_count: Optional[int] = None,
                      dead_heat_exempt: Iterable[str] = ()) -> None:
     scored = [s for s in rec.scores if s.final is not None]
     if len(scored) < 2:
@@ -223,50 +220,58 @@ def _flag_close_call(rec: Recommendation, normalized: Mapping[str, Mapping[str, 
 
     _flag_raw_dead_heat(rec, top, second, raw_gaps or {}, min_disagree_weight,
                         _share, dead_heat_exempt)
-    _flag_starter_boundary(rec, scored, threshold, starter_count,
-                           raw_gaps or {}, min_disagree_weight, _share,
-                           dead_heat_exempt)
 
 
-def _flag_starter_boundary(rec: Recommendation, scored: list[PlayerScore],
-                           threshold: float, starter_count: Optional[int],
-                           raw_gaps: Mapping[str, float], min_disagree_weight: float,
-                           share_of: Callable[[str], float],
-                           dead_heat_exempt: Iterable[str] = ()) -> None:
-    """Flag the pair straddling the last starting slot, not just the top two.
+def flag_starter_boundary_pair(rec: Recommendation, a: PlayerScore, b: PlayerScore,
+                               threshold: float, min_disagree_weight: float = 0.0,
+                               raw_gaps: Optional[Mapping[str, float]] = None,
+                               dead_heat_exempt: Iterable[str] = (),
+                               share_of: Optional[Callable[[str], float]] = None) -> None:
+    """Flag an explicitly supplied boundary pair — ``a`` starts, ``b`` does not.
 
-    In a league starting N at a position, the decision that actually sets the
-    lineup is rank N vs N+1. The top-two check above answers a different
-    question once N > 1, and a real Week 1 decision (Nabers 45.5 Q vs Burden
-    42.9 Q, the WR2/WR3 boundary) sat exactly there and never tripped it.
+    Split out from ``_flag_starter_boundary`` because deriving the pair from a
+    positional starter count is wrong wherever a flex slot exists, and every
+    league here has one. ``report.starter_counts`` excludes flex slots on
+    purpose (a flex slot has no position to count against), so the pair a count
+    picks at RB is RB2-vs-RB3 — while the FLEX slot is *by construction* filled
+    by the best remaining RB/WR/TE, i.e. exactly that RB3. The check therefore
+    warned about the player it was about to start: 3 of the 4 boundary warnings
+    in the live Week 1 run named a runner-up who was in the lineup, one of them
+    the FLEX pick itself.
 
-    Both conditions the top two get apply here, and the raw one is not optional
-    garnish: ``threshold`` lives in the normalized space, which ``to_0_100``
-    min-maxes *within the candidate set*, so whether this pair reads as close
-    depends on the spread of the whole group rather than on the two players.
-    Four receivers at ECR 18 / 20 / 20.5 / 21 put the WR2/WR3 boundary — half a
-    rank apart, the tightest call on the roster — 16.7 normalized points apart
-    and silent, while the same half-rank gap in a tighter group trips it. That
-    is the exact blindness ``close_call_raw_gaps`` exists to cover, and covering
-    it for the top two only left the boundary check reproducing the bug it was
-    added to fix.
+    So the whole-roster path resolves the real pair from the built lineup
+    (``report.flag_starter_boundaries``) and hands it here. That is also why
+    ``report.score_week`` defers its logging until after the lineup exists:
+    ``results_log`` writes ``close_call`` and ``backtest`` buckets its honesty
+    split on it, so the flag has to be final before the row is written or the
+    corpus records a warning the report never showed.
 
-    ``starter_count`` is optional and additive: ``None`` (the default, used by
-    every caller that doesn't know the league's shape) skips this entirely, so
-    ``weighted_final`` stays untouched and every existing logged row and
-    caller is unaffected. ``starter_count <= 1`` is skipped too — that pair is
-    identical to ``top``/``second``, already checked above.
+    Both conditions the top two get apply, the raw one included — see
+    ``_flag_starter_boundary`` for why the normalized threshold alone is blind
+    here.
     """
-    if not starter_count or starter_count < 2 or len(scored) <= starter_count:
+    if a.final is None or b.final is None:
         return
-    a, b = scored[starter_count - 1], scored[starter_count]
+    scored = [s for s in rec.scores if s.final is not None]
+    if len(scored) >= 2 and (a, b) == (scored[0], scored[1]):
+        # This *is* the top-two pair, already judged above by both conditions.
+        # A league starting one at the position (QB, TE, K, DEF) puts the
+        # boundary exactly there, so without this guard every such position
+        # prints the same coin flip twice under two different headings.
+        return
+    if share_of is None:
+        total_weight = sum(w for w in rec.weights.values() if w > 0)
+
+        def share_of(sig_name: str) -> float:
+            return (rec.weights.get(sig_name, 0.0) / total_weight) if total_weight > 0 else 0.0
+
     if abs(a.final - b.final) <= threshold:
         rec.close_call = True
         rec.notes.append(
             f"Last starting spot is a coin flip: {a.player.name} ({a.final}) vs "
             f"{b.player.name} ({b.final}) within {threshold} pts."
         )
-    _flag_raw_dead_heat(rec, a, b, raw_gaps, min_disagree_weight, share_of,
+    _flag_raw_dead_heat(rec, a, b, raw_gaps or {}, min_disagree_weight, share_of,
                         dead_heat_exempt, subject="Last starting spot")
 
 

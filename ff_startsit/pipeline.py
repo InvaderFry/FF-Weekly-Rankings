@@ -101,7 +101,7 @@ def recommend(
     command: str = "",
     log: bool = True,
     exclude_unavailable: bool = False,
-    starter_count: Optional[int] = None,
+    defer_log: bool = False,
 ) -> Recommendation:
     """Fetch every available signal for ``players`` and blend into a ranking.
 
@@ -113,11 +113,19 @@ def recommend(
     commands, where "can he play" and "should I start him" are the same
     question, pass ``True``.
 
-    ``starter_count``, when given, additionally flags a close call at the
-    boundary of the last starting slot (rank N vs N+1), not just the overall
-    top two — see ``engine.blend._flag_starter_boundary``. Callers that know
-    the league's real starting slots supply it from those; ``None`` (the
-    default) leaves every caller's behavior exactly as before.
+    The last-starting-slot close call is **not** flagged here: which pair
+    straddles it depends on the built lineup, so ``report
+    .flag_starter_boundaries`` does it afterwards. There is deliberately no
+    starter-count shortcut — a positional count cannot see a flex slot, and the
+    flex pick is exactly the rank N+1 player such a count would name, which is
+    how a live report warned about two players who were both starting.
+
+    ``defer_log`` runs every "never log this" rule below but holds the write,
+    recording the verdict on ``Recommendation.loggable`` for
+    ``log_deferred`` to act on later. ``report.score_week`` needs it because the
+    starter-boundary flag is only correct once the lineup exists, and
+    ``results_log`` captures ``close_call`` — writing first would put a warning
+    in the corpus that the report never rendered.
     """
     signals = list(signals) if signals is not None else build_signals(settings)
 
@@ -182,7 +190,6 @@ def recommend(
         unavailable_keys=unavailable_keys,
         disagree_exempt=settings.disagree_exempt,
         dead_heat_exempt=settings.presentational_gaps,
-        starter_count=starter_count,
     )
 
     for sig in signals:
@@ -209,7 +216,24 @@ def recommend(
     if log and rec.unranked:
         log = False
 
-    if log:
-        log_recommendation(rec, settings.results_log_path, command=command,
-                           league=settings.league_label)
+    rec.loggable = bool(log)
+    if defer_log:
+        return rec
+    log_deferred(settings, rec, command=command)
     return rec
+
+
+def log_deferred(settings: Settings, rec: Recommendation, command: str = "") -> None:
+    """Write the row ``recommend(defer_log=True)`` held back, if it earned one.
+
+    ``recommend`` has already applied every rule about what must never be
+    logged; this only carries out the verdict it recorded. Clearing
+    ``loggable`` afterwards makes a second call a no-op, so a caller that both
+    defers and falls through the normal path cannot double-write into an
+    append-only log.
+    """
+    if not rec.loggable:
+        return
+    rec.loggable = False
+    log_recommendation(rec, settings.results_log_path, command=command,
+                       league=settings.league_label)

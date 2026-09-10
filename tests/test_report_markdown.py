@@ -437,32 +437,107 @@ def test_rank_each_position_holds_out_a_player_who_cannot_play(tmp_path):
     assert recs["RB"].scores[0].player.key == "1"
 
 
-def test_rank_each_position_flags_the_last_starting_spot_not_just_the_top_two(tmp_path):
+def _boundary_pass(settings, players, signals, slots=None, pos="WR"):
+    """Score, build the lineup, flag the boundary -- what `score_week` does.
+
+    `score_week` builds its own signals, so these tests drive the same three
+    steps directly to stay offline. Everything about the boundary depends on
+    the lineup, so scoring alone cannot answer it.
+    """
+    from ff_startsit.report import (build_lineup, flag_starter_boundaries,
+                                    rank_each_position, scored)
+    recs = rank_each_position(settings, players, week=1, log=False,
+                              signals=signals)
+    flag_starter_boundaries(settings, recs,
+                            build_lineup(scored(recs), slots=slots))
+    return recs[pos]
+
+
+def test_boundary_flags_the_last_starting_spot_not_just_the_top_two(tmp_path):
     """F5(b): workTG's real Week 1 decision (Nabers 45.5 Q vs Burden 42.9 Q)
     sat at the WR2/WR3 boundary, not the top two, and the old top-two-only
-    check never saw it. `report.STARTER_COUNTS["WR"]` is 2, so the pair that
-    should trip here is rank 2 vs rank 3 -- not rank 1 vs rank 2, which must
-    stay a clean, unflagged gap or this test proves nothing."""
+    check never saw it. Here rank 3 is the first man out -- rank 1 vs rank 2
+    must stay a clean, unflagged gap or this test proves nothing."""
     from ff_startsit.config import Settings
     from ff_startsit.models import Player
-    from ff_startsit.report import rank_each_position
 
     settings = Settings(data_dir=tmp_path, weights={"ecr": 1.0},
                         close_call_threshold=1.0)
     players = [Player("1", "WR1", "KC", "WR"), Player("2", "WR2", "KC", "WR"),
-              Player("3", "WR3", "KC", "WR"), Player("4", "WR4", "KC", "WR")]
-    # Rank 1 is far clear; ranks 2 and 3 are essentially tied; rank 4 trails.
-    signals = [_FakeECR({"1": 1.0, "2": 20.0, "3": 20.1, "4": 90.0})]
+               Player("3", "WR3", "KC", "WR"), Player("4", "WR4", "KC", "WR")]
+    # Ranks 3 and 4 are essentially tied at the boundary; 1 and 2 are clear.
+    # WR3 takes the FLEX, so the last starting spot is WR3 vs WR4.
+    signals = [_FakeECR({"1": 1.0, "2": 10.0, "3": 20.0, "4": 20.1})]
 
-    rec = rank_each_position(settings, players, week=1, log=False,
-                             signals=signals)["WR"]
+    rec = _boundary_pass(settings, players, signals)
 
     assert rec.close_call is True
     assert any("Last starting spot" in n for n in rec.notes)
     assert not any("Too close to call" in n for n in rec.notes)
 
 
-# --- a lone candidate is not a ranking -------------------------------------
+def test_boundary_is_silent_when_the_flex_slot_starts_the_runner_up(tmp_path):
+    """The live bug: 3 of 4 Week 1 boundary warnings named a player who started.
+
+    `starter_counts` excludes flex slots, so a count puts the WR boundary at
+    WR2/WR3 -- but the FLEX slot is filled by the best remaining RB/WR/TE,
+    which is that WR3. Both start, the "flip" changes nothing, and warning
+    about it is the false alarm the floors elsewhere exist to prevent.
+    """
+    from ff_startsit.config import Settings
+    from ff_startsit.models import Player
+
+    settings = Settings(data_dir=tmp_path, weights={"ecr": 1.0},
+                        close_call_threshold=1.0)
+    players = [Player("1", "WR1", "KC", "WR"), Player("2", "WR2", "KC", "WR"),
+               Player("3", "WR3", "KC", "WR"), Player("4", "WR4", "KC", "WR")]
+    # The tie is at WR2/WR3 -- the pair a positional count would flag, and the
+    # pair the FLEX slot puts *both* halves of into the lineup.
+    signals = [_FakeECR({"1": 1.0, "2": 20.0, "3": 20.1, "4": 90.0})]
+
+    rec = _boundary_pass(settings, players, signals)
+
+    assert not any("Last starting spot" in n for n in rec.notes)
+
+
+def test_boundary_flags_a_two_flex_league_one_spot_further_down(tmp_path):
+    """Two flex slots move the boundary again -- and it must follow, not guess.
+
+    Same receivers as above; the second FLEX starts WR4, so the last starting
+    spot is WR4 vs WR5 and the WR2/WR3 tie stays correctly silent.
+    """
+    from ff_startsit.config import Settings
+    from ff_startsit.models import Player
+
+    settings = Settings(data_dir=tmp_path, weights={"ecr": 1.0},
+                        close_call_threshold=1.0)
+    players = [Player(str(i), f"WR{i}", "KC", "WR") for i in range(1, 6)]
+    signals = [_FakeECR({"1": 1.0, "2": 20.0, "3": 20.1, "4": 60.0, "5": 60.1})]
+    slots = ["QB", "RB", "RB", "WR", "WR", "TE", "FLEX", "FLEX", "K", "DEF"]
+
+    rec = _boundary_pass(settings, players, signals, slots=slots)
+
+    # Both boundary conditions can fire (normalized gap and raw dead heat);
+    # what matters is that every one of them names the WR4/WR5 pair.
+    notes = [n for n in rec.notes if "Last starting spot" in n]
+    assert notes and all("WR4" in n and "WR5" in n for n in notes)
+
+
+def test_boundary_is_skipped_when_every_candidate_starts(tmp_path):
+    """No decision, no warning: three receivers into WR/WR/FLEX all start."""
+    from ff_startsit.config import Settings
+    from ff_startsit.models import Player
+
+    settings = Settings(data_dir=tmp_path, weights={"ecr": 1.0},
+                        close_call_threshold=1.0)
+    players = [Player("1", "WR1", "KC", "WR"), Player("2", "WR2", "KC", "WR"),
+               Player("3", "WR3", "KC", "WR")]
+    signals = [_FakeECR({"1": 20.0, "2": 20.1, "3": 20.2})]
+
+    rec = _boundary_pass(settings, players, signals)
+
+    assert not any("Last starting spot" in n for n in rec.notes)
+
 
 def test_unranked_is_about_what_could_be_compared():
     from ff_startsit.models import PlayerScore
@@ -644,49 +719,28 @@ def test_one_reading_is_not_a_spread():
     assert "vegas spans" not in render_markdown(rec, title="RB")
 
 
-def test_starter_counts_derive_from_the_slot_list_it_is_given():
-    """The count and the lineup must not be able to disagree about the league.
+def test_boundary_takes_its_pair_from_the_leagues_slots(tmp_path):
+    """A 3-WR league's lineup decision moves, and the check must follow it.
 
-    Hardcoding the counts beside `LINEUP_SLOTS` is the same shape of guard that
-    `waivers.build._lineup_keys` had to learn the hard way -- one half reading a
-    template while the other read the league's real slots. Here a 3-WR league's
-    boundary is WR3/WR4, and a count derived from the slots it is handed says so.
-    """
-    from ff_startsit.report import LINEUP_SLOTS, STARTER_COUNTS, starter_counts
-
-    assert starter_counts() == STARTER_COUNTS == {"QB": 1, "RB": 2, "WR": 2,
-                                                  "TE": 1, "K": 1, "DEF": 1}
-    three_wr = ["QB", "RB", "RB", "WR", "WR", "WR", "TE", "FLEX", "K", "DEF"]
-    assert starter_counts(three_wr)["WR"] == 3
-    # Flex slots have no position to count against and stay out of the mapping,
-    # the same way they stay out of `LeagueRules.roster_slots`.
-    assert "FLEX" not in starter_counts(LINEUP_SLOTS + ["FLEX", "SUPER_FLEX"])
-
-
-def test_rank_each_position_takes_the_boundary_from_the_leagues_slots(tmp_path):
-    """A 3-WR league's lineup decision is WR3/WR4, and the check must follow it.
-
-    Same four receivers either way: under the default 2-WR template the tied
-    pair sits at the boundary and flags; told the league starts three, the
-    boundary moves past them and the same data must go quiet.
+    Same five receivers either way. Under the default template WR/WR/FLEX
+    start three and the boundary is WR3/WR4; told the league starts three
+    receivers *plus* a flex, four start and the boundary moves to WR4/WR5.
     """
     from ff_startsit.config import Settings
     from ff_startsit.models import Player
-    from ff_startsit.report import rank_each_position
 
     settings = Settings(data_dir=tmp_path, weights={"ecr": 1.0},
                         close_call_threshold=1.0)
-    players = [Player("1", "WR1", "KC", "WR"), Player("2", "WR2", "KC", "WR"),
-               Player("3", "WR3", "KC", "WR"), Player("4", "WR4", "KC", "WR")]
-    ranks = {"1": 1.0, "2": 20.0, "3": 20.1, "4": 90.0}
+    players = [Player(str(i), f"WR{i}", "KC", "WR") for i in range(1, 6)]
+    ranks = {"1": 1.0, "2": 10.0, "3": 20.0, "4": 20.1, "5": 90.0}
 
-    default = rank_each_position(settings, players, week=1, log=False,
-                                 signals=[_FakeECR(dict(ranks))])["WR"]
-    assert any("Last starting spot" in n for n in default.notes)
+    default = _boundary_pass(settings, players, [_FakeECR(dict(ranks))])
+    notes = [n for n in default.notes if "Last starting spot" in n]
+    assert notes and all("WR3" in n and "WR4" in n for n in notes)
 
-    three_wr = rank_each_position(
-        settings, players, week=1, log=False, signals=[_FakeECR(dict(ranks))],
-        slots=["QB", "RB", "RB", "WR", "WR", "WR", "TE", "FLEX", "K", "DEF"])["WR"]
+    three_wr = _boundary_pass(
+        settings, players, [_FakeECR(dict(ranks))],
+        slots=["QB", "RB", "RB", "WR", "WR", "WR", "TE", "FLEX", "K", "DEF"])
     assert not any("Last starting spot" in n for n in three_wr.notes)
 
 
@@ -713,3 +767,47 @@ def test_analyst_unposted_note_renders_quietly_and_escapes():
     md = render_markdown(rec)
     assert '_Justin Boone has not posted his Week 1 full-PPR RB rankings yet._' in md
     assert '> ⚠️' not in md
+
+
+def test_analyst_markdown_keeps_apostrophes_unescaped():
+    """Markdown gets ``md_cell``, never ``html.escape``.
+
+    The live Week 1 digest rendered ``D&#x27;Andre Swift`` because the markdown
+    renderer ran the HTML escape. Apostrophes are ordinary text in markdown and
+    common in real names (D'Andre, Ja'Marr, De'Von), so this pins the raw
+    character in both places a Boone annotation can appear. Every other fixture
+    here is ``Alpha``/``Bravo``, which is exactly why nothing caught it.
+    """
+    from ff_startsit.engine.analyst import AnalystConflict
+    from dataclasses import replace
+
+    rec = _rec(_ps('1', "D'Andre Swift", 'RB', 90), _ps('2', "Ja'Marr Chase", 'RB', 10))
+    conflict = AnalystConflict('Justin Boone', 'RB', "D'Andre Swift",
+                               "Ja'Marr Chase", 19, 6, False, True)
+    rec.analyst_conflicts = [conflict]
+    md = render_markdown(rec)
+    assert '&#x27;' not in md and '&amp;' not in md
+    assert "he starts Ja'Marr Chase (his RB6) over D'Andre Swift (his RB19)." in md
+
+    rec.analyst_conflicts = [replace(conflict, leader_rank=8, material=False)]
+    md = render_markdown(rec)
+    assert '&#x27;' not in md
+    assert "(D'Andre Swift RB8, Ja'Marr Chase RB6), edge to Ja'Marr Chase." in md
+
+    rec.analyst_conflicts = []
+    rec.analyst_note = "Justin Boone has not posted D'Andre Swift's position yet."
+    md = render_markdown(rec)
+    assert '&#x27;' not in md
+    assert "_Justin Boone has not posted D'Andre Swift's position yet._" in md
+
+
+def test_analyst_markdown_still_escapes_table_breaking_pipes():
+    """Dropping ``html.escape`` must not drop ``md_cell`` -- a raw ``|`` still
+    opens a phantom column and would break the table below the note."""
+    from ff_startsit.engine.analyst import AnalystConflict
+
+    rec = _rec(_ps('1', 'Alpha', 'RB', 90), _ps('2', 'Bravo', 'RB', 10))
+    rec.analyst_conflicts = [AnalystConflict('Justin Boone', 'RB', 'A|pha', 'Br|vo',
+                                             19, 6, False, True)]
+    md = render_markdown(rec)
+    assert 'A\\|pha' in md and 'Br\\|vo' in md
