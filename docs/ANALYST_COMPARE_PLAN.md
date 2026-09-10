@@ -47,17 +47,60 @@ analyst *in its response*.
 
 **Boone's Yahoo articles are a different shape.** They are per-week,
 per-position articles whose byline, week and season are assertable from the
-document body — which is what lets the fetcher fail **closed**. Observed URLs:
+document body — which is what lets the fetcher fail **closed**.
+
+### 2.1 He publishes two scoring sets, and they are not interchangeable
+
+This is the single most important structural fact about the source. Each week he
+publishes **two complete ranking sets**, side by side, presented on the page
+under their own headings:
+
+| Heading | Lists under it |
+|---|---|
+| *Justin Boone's Half-PPR Rankings* | QBs, RBs, WRs, TEs, FLEX, D/ST, Kickers |
+| *Justin Boone's Full-PPR Rankings* | Overall, RBs, WRs, TEs, FLEX |
+
+**QB, D/ST and Kicker are universal** — scoring does not change them, so they are
+published once and apply to either set. **RB, WR, TE, FLEX and Overall are
+scoring-specific** and must be read from the set matching the league.
+
+Getting this wrong is a silent correctness bug, not a cosmetic one. This repo is
+multi-league with per-league scoring (`FF_LEAGUE_SCORING`, `LeagueProfile.scoring`),
+so a single run can need **both** sets at once. Serving half-PPR receiver ranks to
+a full-PPR league would produce real, plausible numbers under Boone's byline that
+are not the ranks he gave that format — the same class of false attribution as the
+CBS problem, arriving by a different route.
+
+Confirmed Full-PPR URLs (Week 1, 2026):
 
 ```
-/fantasy/article/2026-fantasy-football-rankings-justin-boones-flex-rankings-for-week-1-165555810.html
-/fantasy/article/fantasy-football-justin-boones-week-1-qb-rankings-165217932.html
-/fantasy/article/fantasy-football-week-1-rankings-justin-boones-top-overall-players-165054284.html
-/fantasy/article/2026-fantasy-football-full-ppr-rankings-justin-boones-top-players-for-week-1-170728422.html
+/fantasy/article/2026-fantasy-football-full-ppr-rankings-justin-boones-top-players-for-week-1-170728422.html          (Overall)
+/fantasy/article/2026-fantasy-football-full-ppr-rankings-justin-boones-top-running-backs-for-week-1-170730179.html    (RB)
+/fantasy/article/2026-fantasy-football-full-ppr-rankings-justin-boones-top-wide-receivers-for-week-1-170726544.html   (WR)
+/fantasy/article/2026-fantasy-football-full-ppr-rankings-justin-boones-top-tight-ends-for-week-1-170733340.html       (TE)
+/fantasy/article/2026-fantasy-football-full-ppr-rankings-justin-boones-flex-rankings-for-week-1-170735946.html        (FLEX)
 ```
 
-**Note the trailing numeric id.** It is opaque and cannot be constructed, so
-article URLs **must be discovered** from the author index at
+Other observed URLs, carrying **no scoring token**:
+
+```
+/fantasy/article/2026-fantasy-football-rankings-justin-boones-flex-rankings-for-week-1-165555810.html   (FLEX, scoring unstated)
+/fantasy/article/fantasy-football-justin-boones-week-1-qb-rankings-165217932.html                       (QB — universal)
+/fantasy/article/fantasy-football-week-1-rankings-justin-boones-top-overall-players-165054284.html      (Overall, scoring unstated)
+```
+
+Note the two FLEX articles carry different ids (`165555810`, `170735946`), so
+they are genuinely two distinct lists, not one article under two links.
+
+**The untoken'd scoring-specific articles are probably the half-PPR set, and
+"probably" is not good enough.** Phase 0 must establish this positively — see
+§3. Until it does, an untoken'd RB/WR/TE/FLEX/Overall list has *unknown* scoring
+and must not be used for any league.
+
+### 2.2 Discovery is mandatory
+
+**Note the trailing numeric id** on every URL above. It is opaque and cannot be
+constructed, so article URLs **must be discovered** from the author index at
 `https://sports.yahoo.com/author/justin-boone/`. This is the same discovery
 problem `waivers/columns.py:find_column_url` already solves for his waiver
 column, against the same index page.
@@ -112,7 +155,27 @@ grep -o '"author":{[^}]*}' flex.html | head
 
 # Q4: which ranking articles does the index actually link, and how are they named?
 grep -o 'https://sports\.yahoo\.com/fantasy/article/[^"\\<>]*' index.html \
-  | grep -iE 'rank|top-(overall-)?players' | sort -u
+  | grep -iE 'rank|top-(overall-|running-|wide-|tight-)?players?|backs|receivers|ends' | sort -u
+
+# Q5 (CRITICAL): does an article carry the two labeled scoring groups, with the
+# links grouped under them? This is the server asserting which set each list
+# belongs to — far better than inferring scoring from a slug.
+grep -o "Half-PPR Rankings" flex.html | head
+grep -o "Full-PPR Rankings" flex.html | head
+# Dump the surrounding markup so the grouping structure can be read:
+python3 - <<'PY'
+import re, sys
+html = open('flex.html', encoding='utf-8', errors='replace').read()
+for m in re.finditer(r'(Half|Full)-PPR Rankings', html):
+    print('---', m.group(0), 'at', m.start())
+    print(html[m.start()-200:m.start()+2500])
+PY
+
+# Q6: is the untoken'd FLEX list actually the half-PPR one? Compare its top 10
+# against the confirmed full-PPR FLEX list. If they differ, they are two sets;
+# if identical, the untoken'd family is a duplicate and can be ignored.
+curl -sS -A "$UA" -o flex_untokened.html \
+  "https://sports.yahoo.com/fantasy/article/2026-fantasy-football-rankings-justin-boones-flex-rankings-for-week-1-165555810.html"
 ```
 
 ### The three branches
@@ -133,14 +196,26 @@ grep -o 'https://sports\.yahoo\.com/fantasy/article/[^"\\<>]*' index.html \
 
 **Also record from Phase 0**, because §4 needs them:
 
-1. Which ranking articles the index links each week and their exact slug shapes
-   (QB / TE / FLEX / top-overall, and whether scoring variants such as
-   `full-ppr` appear as separate articles).
-2. Whether `ld+json` carries `author.name` and `datePublished` on ranking
+1. **The scoring-group structure (Q5).** Whether the two headings — *Justin
+   Boone's Half-PPR Rankings* and *Justin Boone's Full-PPR Rankings* — appear in
+   the served markup with their links grouped beneath them, and what that markup
+   looks like. If they do, **that grouping is the discovery mechanism** (§4.2):
+   the page itself states which set each link belongs to, which beats inferring
+   scoring from a slug for exactly the reason §2 gives about response-asserted
+   attribution.
+2. **The identity of the untoken'd family (Q6).** Whether the untoken'd FLEX
+   article is the half-PPR list, a duplicate of the full-PPR one, or something
+   else. Until this is answered positively, untoken'd scoring-specific lists are
+   unusable.
+3. Which ranking articles the index links each week and their exact slug shapes,
+   for the allowlist in §4.2.
+4. Whether `ld+json` carries `author.name` and `datePublished` on ranking
    articles (it does on his waiver column — `columns.py:preseason_article_verified`
    relies on it).
-3. Whether the FLEX list carries a `Position` column (the sample says yes — this
-   matters for §4.4).
+5. Whether the FLEX list carries a `Position` column (the sample says yes — this
+   matters for the fallback in §4.4).
+6. Whether **standard (non-PPR)** rankings exist anywhere. The repo supports
+   `std` scoring; Boone appears to publish only half and full PPR. See §12.
 
 **Save the fetched pages as test fixtures.** Every fixture must be a page Yahoo
 was actually observed to serve, never a hand-written approximation — the same
@@ -167,24 +242,39 @@ class AnalystSource:
     index_url: str       # https://sports.yahoo.com/author/justin-boone/
     base_url: str        # https://sports.yahoo.com
 
+#: Lists whose content does not depend on scoring. Published once, valid for
+#: every league. Everything else must be read from the league's own set.
+UNIVERSAL_KINDS = frozenset({"QB", "DST", "K"})
+
 @dataclass(frozen=True)
 class RankingList:
-    """One published list: what it covers and where it came from."""
-    kind: str            # "QB" | "TE" | "FLEX" | "OVERALL" (see 4.2)
+    """One published list: what it covers, for which scoring, and from where."""
+    kind: str            # "QB" | "RB" | "WR" | "TE" | "FLEX" | "OVERALL" | "DST" | "K"
     url: str
-    scoring: str         # "ppr" | "half" | "std" | "" when the article does not say
+    #: "ppr" (full) | "half" | "" for a universal list. NEVER "" for a
+    #: scoring-specific kind — an unresolved scoring makes the list unusable.
+    scoring: str
     published: Optional[date]
     rows: list[ExternalRow]   # value = the rank as printed in the list
 
+    @property
+    def universal(self) -> bool:
+        return self.kind in UNIVERSAL_KINDS
+
 @dataclass
 class AnalystRanks:
-    """One analyst's week, joined to a roster."""
+    """One analyst's week for ONE scoring, joined to a roster.
+
+    Built per scoring, because a run with mixed-scoring leagues needs more than
+    one of these. Universal lists are shared between them (§8).
+    """
     analyst: str
+    scoring: str
     lists: list[RankingList]
     #: position -> {player.key -> positional rank}. See 4.4 for how this is derived.
     by_position: dict[str, dict[str, float]]
-    #: position -> the RankingList.kind that supplied it, for the status line.
-    provenance: dict[str, str]
+    #: position -> (RankingList.kind, scoring actually used), for the status line.
+    provenance: dict[str, tuple[str, str]]
 ```
 
 `ExternalRow` is the existing `data/matching.py` dataclass
@@ -195,13 +285,28 @@ name normalization and the DEF/DST canonicalization via `player_match_key`.
 ### 4.2 Discovery — fail closed
 
 ```python
-def find_ranking_urls(index_html: str, base_url: str, week: int,
-                      season: int) -> dict[str, str]:
-    """kind -> url for the ranking articles this index links for ``week``."""
+def find_ranking_urls(html: str, base_url: str, week: int,
+                      season: int) -> dict[tuple[str, str], str]:
+    """(kind, scoring) -> url for the ranking articles linked for ``week``.
+
+    ``scoring`` is "" for a universal kind (QB/DST/K) and otherwise one of
+    "ppr"/"half". A link whose scoring cannot be established is not returned.
+    """
 ```
 
 Rules, all of them load-bearing:
 
+- **Prefer the page's own scoring groups over slug inference.** If Phase 0's Q5
+  confirms the *Half-PPR Rankings* / *Full-PPR Rankings* headings with links
+  grouped beneath them, resolve scoring by **which group a link sits in**. That
+  is the server stating the fact; a slug token is a convention that can change.
+  Parse the grouping by locating each heading and taking the links until the
+  next heading — and note this is the same "read the structured block the page
+  already ships" move as `experts.ExpertFinder.directory`.
+- **Slug tokens are corroboration, not the primary source.** `full-ppr` in a
+  slug should agree with the group the link was found under. If they disagree,
+  skip the link and warn — a contradiction is not something to resolve by
+  picking a side.
 - **Reuse the week pattern from `find_column_url`:**
   `re.compile(rf"week[-_]?0*{int(week)}(?!\d)", re.IGNORECASE)`. It already
   handles `week-1` correctly and rejects `week-10` for week 1.
@@ -209,22 +314,32 @@ Rules, all of them load-bearing:
   `(?<!\d)(20\d{2})(?!\d)` check `find_column_url` performs. An undated link is
   not evidence of the current week and must not be silently substituted — this
   is how last week's advice gets published as this week's.
-- **Classify by an explicit allowlist, never by "contains the word rankings".**
-  A slug that does not classify is skipped rather than guessed at. Starting
-  allowlist (refine from Phase 0's observed slugs):
+- **Classify `kind` by an explicit allowlist, never by "contains the word
+  rankings".** A slug that does not classify is skipped rather than guessed at.
+  Allowlist, from the confirmed URLs in §2.1:
 
-  | `kind` | slug contains |
-  |---|---|
-  | `QB` | `qb-rankings`, `quarterback` |
-  | `TE` | `te-rankings`, `tight-end` |
-  | `FLEX` | `flex-rankings` |
-  | `OVERALL` | `top-overall-players`, `top-players` |
+  | `kind` | slug contains | scoring-specific? |
+  |---|---|---|
+  | `QB` | `qb-rankings`, `quarterback` | no — universal |
+  | `DST` | `dst`, `d-st`, `defense` | no — universal |
+  | `K` | `kicker` | no — universal |
+  | `RB` | `top-running-backs`, `rb-rankings` | **yes** |
+  | `WR` | `top-wide-receivers`, `wr-rankings` | **yes** |
+  | `TE` | `top-tight-ends`, `te-rankings` | **yes** |
+  | `FLEX` | `flex-rankings` | **yes** |
+  | `OVERALL` | `top-players`, `top-overall-players` | **yes** |
 
-- **Scoring.** If Phase 0 shows separate scoring variants (`full-ppr` appears in
-  one observed slug), prefer the variant matching `settings.scoring`. If only one
-  variant exists, use it — but record the scoring actually read in
-  `RankingList.scoring` and surface it in the status line (§7). Never silently
-  present a full-PPR list to a half-PPR league as though the scoring matched.
+  Every positional slug begins `top-`, so a loose `top-` rule would collapse RB,
+  WR, TE and OVERALL into one bucket. **Require that exactly one `kind` pattern
+  matches** and skip the link when zero or two or more do, rather than taking the
+  first hit in dict order. A test should pin each of the five confirmed §2.1
+  URLs to exactly one `kind`.
+
+- **A scoring-specific list with unresolved scoring is dropped, not guessed.**
+  It does not become "probably half". Dropping it costs one comparison; guessing
+  wrong publishes the wrong format's ranks under Boone's name.
+- **Map the league's scoring to his sets:** `ppr` → Full-PPR, `half` → Half-PPR.
+  `std` has no counterpart — see §12 Q1.
 - Yahoo also serves `ca.sports.yahoo.com` mirrors. Pin `base_url` to
   `sports.yahoo.com`, as `columns.py` does.
 
@@ -271,11 +386,18 @@ a 150-player cross-position list is roughly a 2-spot gap within RB, so a single
 
 So, for each position:
 
-1. **Prefer a positional article** (`QB` list for QB, `TE` for TE). Its printed
-   rank *is* the positional rank; use it as-is.
+1. **Prefer the positional article.** He publishes one for every position we
+   care about — QB, RB, WR, TE, DST, K — so this is the normal path, and the
+   FLEX-derivation below is a fallback rather than the main mechanism. Its
+   printed rank *is* the positional rank; use it as-is.
 2. **Otherwise derive** from FLEX (RB/WR/TE) or OVERALL: filter **the analyst's
    entire published list** to that position, then densely re-rank — his RB1,
    RB2, RB3 … — and use that.
+
+Because the positional articles cover K and D/ST too, **every roster position
+can carry a comparison**, which was not true when this plan assumed only a FLEX
+list existed. Note the QB / DST / K lists are universal, so they are read once
+and reused across leagues of either scoring (§8).
 
 **Filter his whole list, not just your roster.** Restricting to your four backs
 and re-ranking them 1-4 destroys the magnitude: every pair would be one spot
@@ -308,6 +430,9 @@ repo has fixed three separate times (`no_adds_reason`, `no_trades_reason`,
 | `article unavailable (empty or paywalled)` | Nothing; the article is gated |
 | `byline or week could not be verified in the article` | Investigate — possible layout change |
 | `rankings table could not be parsed` | Investigate — likely layout change |
+| `no <half/full> PPR list published for this position` | Wait, or accept the gap |
+| `scoring of the linked list could not be resolved` | Investigate — the grouping markup changed |
+| `league scoring (std) has no published counterpart` | Nothing; expected — see §12 Q1 |
 | `parsed rankings named nobody on this roster` | Nothing; not a failure |
 
 **Never raises.** Every path returns empty and warns to stderr, exactly as
@@ -456,12 +581,22 @@ line)` pairs — and `finish_status` keys a dict on the identity, keeping the
 newest line. That dedupe is why the identity travels with the line; see
 `CLAUDE.md` on the 18-duplicate-ECR-lines regression.
 
-Append one entry per analyst, identity `("analyst", "Justin Boone")`:
+Append one entry per analyst **per league**, identity
+`("analyst", "Justin Boone", league_label)` — the scoring differs per league, so
+a single shared line would be wrong for at least one of them.
+
+**The line must name the scoring set it read.** This is the one fact a reader
+needs to trust the comparison, and it is the fact most likely to be silently
+wrong:
 
 - Available:
-  `Justin Boone: Week 1 FLEX (full PPR, published 2026-09-04) → RB, WR, TE; Week 1 QB → QB`
+  `AndyLOT: Justin Boone Week 1 Full-PPR rankings (published 2026-09-04) → RB, WR, TE, FLEX; universal lists → QB, K, DST`
+- Partial:
+  `AndyLOT: Justin Boone Week 1 Full-PPR rankings → RB, WR, TE; no TE list published yet`
 - Unavailable:
-  `Justin Boone: no Week 1 rankings (author index listed no week-1 ranking article)`
+  `AndyLOT: no Justin Boone Week 1 rankings (author index listed no week-1 ranking article)`
+- Scoring mismatch:
+  `Dynasty: Justin Boone publishes no standard-scoring rankings — comparison withheld for this league`
 
 Two rules from `data_status.py` that apply here:
 
@@ -470,11 +605,17 @@ Two rules from `data_status.py` that apply here:
   `RankingList.published` only when it came from the article's own
   `datePublished`; never substitute the fetch time.
 
-**Publication cadence.** Boone publishes roughly Thursday and Sunday. The
-Thursday scheduled run may find only a partial set (say, FLEX but not QB), and
-the Sunday run should pick up the rest. That is normal, not a failure: a
-position with no list gets no line and no conflict, and the status block names
-which lists were read. It also sets the cache TTL — see §8.
+**Publication cadence.** Boone publishes roughly **Thursday, sometimes Saturday,
+and Sunday**, and re-publishes rather than edits in place — so each drop is a new
+article with a new id, which the discovery pass picks up naturally. A Thursday
+run may find only a partial set (say FLEX but not TE), and the Sunday run picks
+up the rest and the refreshed numbers. That is normal, not a failure: a position
+with no list gets no line and no conflict, and the status block names which
+lists were read. It also sets the cache TTL — see §8.
+
+Because Sunday's list is the one that matters for the lineup, **the cache must
+never be the reason a Sunday run serves Thursday's ranks.** That is the whole
+argument for the short TTL below; do not raise it to "save requests".
 
 ---
 
@@ -508,11 +649,14 @@ Add `FF_ANALYSTS` and `FF_ANALYST_MIN_GAP` to `.env.example`, to
 Two layers, both needed:
 
 1. **Per-run memoization.** One `AnalystFetcher` shared across every league in a
-   run, memoized per `(analyst, week, kind)` including failures — exactly
-   `ColumnFetcher._articles`. `cli._league_bundles` builds per-league state in a
-   loop, so the fetcher must be constructed *outside* that loop and passed in.
+   run, memoized per `(analyst, week, kind, scoring)` including failures —
+   exactly `ColumnFetcher._articles`. `cli._league_bundles` builds per-league
+   state in a loop, so the fetcher must be constructed *outside* that loop and
+   passed in. **Universal kinds memoize under `scoring=""`** so a three-league
+   run of mixed scoring fetches the QB / DST / K lists once, not once per league.
 2. **Disk cache via `cache.py`, TTL 3 hours.** Keyed on
-   `(analyst, season, week, scoring)`.
+   `(analyst, season, week, kind, scoring)`, with the same `""` convention for
+   universal kinds.
 
 Why the disk layer is not redundant: each scheduled workflow runs the sibling
 page rebuild as a **separate process**, so per-process memoization does not span
@@ -526,9 +670,22 @@ long enough to absorb the duplication inside one run.
 
 ### Request budget
 
-1 index + at most 4 articles = **≤5 requests per run**, independent of league
-count. Yahoo is not rate-limited or metered here, but the sibling-rebuild
-multiplier is real, which is what the disk cache is for.
+Per run, and **independent of league count**:
+
+- 1 author index
+- 3 universal lists (QB, DST, K) — fetched once regardless of how many scorings
+  are in play
+- 5 scoring-specific lists (RB, WR, TE, FLEX, OVERALL) **per distinct scoring**
+  among the configured leagues
+
+So a single-scoring run is **9 requests**; a run with both half- and full-PPR
+leagues is **14**. Yahoo is not metered here, but the sibling-page-rebuild
+multiplier doubles whatever that number is across processes — which is what the
+disk cache absorbs.
+
+Fetch OVERALL **lazily**: it is only needed as a fallback when a positional list
+is missing, and skipping it when every position resolved saves a request per
+scoring.
 
 ---
 
@@ -542,9 +699,16 @@ Tests never hit the network (`CLAUDE.md`). The fetcher takes an injectable
 | File | Purpose |
 |---|---|
 | `tests/fixtures/yahoo_author_index.html` | Discovery |
-| `tests/fixtures/yahoo_boone_flex_week1.html` | The FLEX list, happy path |
-| `tests/fixtures/yahoo_boone_qb_week1.html` | A positional list |
+| `tests/fixtures/yahoo_boone_fullppr_wr_week1.html` | Scoring-specific positional list, happy path; also carries the scoring-group markup |
+| `tests/fixtures/yahoo_boone_halfppr_wr_week1.html` | **The same position, other scoring** — the fixture that makes the scoring bug testable |
+| `tests/fixtures/yahoo_boone_qb_week1.html` | A universal list |
+| `tests/fixtures/yahoo_boone_fullppr_flex_week1.html` | For the FLEX-derivation fallback |
 | `tests/fixtures/yahoo_boone_week2.html` | Proves week gating rejects it for week 1 |
+
+The half- and full-PPR WR pair is the most valuable fixture in the set: it is the
+only way to prove the code hands a half-PPR league half-PPR numbers, and the
+ranks genuinely differ between the two, so a test can assert on a real
+divergence rather than a synthetic one.
 
 Plus two hand-modified copies of a real page (acceptable here — they are
 *negative* fixtures, testing that a mutation is rejected):
@@ -553,10 +717,25 @@ Plus two hand-modified copies of a real page (acceptable here — they are
 
 ### `tests/test_analysts.py`
 
-- discovery finds the week-1 articles and classifies each `kind`;
+- discovery finds the week-1 articles and classifies each `kind`; each of the
+  five confirmed §2.1 URLs matches **exactly one** `kind`;
 - discovery **rejects** a week-2 article when week 1 is asked for;
 - discovery **rejects** a link naming a different season;
 - discovery skips an unclassifiable slug rather than guessing;
+
+**Scoring (the new critical group):**
+
+- a half-PPR league gets the half-PPR WR ranks and a full-PPR league gets the
+  full-PPR ones, asserted against the two real WR fixtures and their differing
+  order — this is the test the whole §2.1 section exists for;
+- a scoring-specific list whose scoring cannot be resolved is **dropped**, not
+  defaulted to half;
+- a slug token contradicting the group heading it was found under is dropped
+  with a warning;
+- universal kinds (QB/DST/K) are served to leagues of **both** scorings, and
+  fetched only once across them;
+- a `std`-scoring league yields the "no published counterpart" reason and no
+  comparison, rather than half-PPR ranks;
 - verification rejects the bad byline;
 - the parser reproduces the first 12 rows of the real FLEX fixture exactly;
 - the parse validator rejects the truncated fixture;
@@ -602,10 +781,11 @@ CI runs the suite on Python 3.10–3.14; keep everything 3.10-compatible.
 **Modified**
 - `ff_startsit/models.py` — `Recommendation.analyst_conflicts` field
 - `ff_startsit/config.py` — two settings + env parsing (no weight changes)
-- `ff_startsit/report.py` — build the `AnalystRanks` once per run; attach
-  conflicts in `rank_each_position`, which already has `starter_counts`
+- `ff_startsit/report.py` — build one `AnalystRanks` **per scoring** in play;
+  attach conflicts in `rank_each_position`, which already has `starter_counts`
 - `ff_startsit/cli.py` — construct the fetcher outside the `_league_bundles`
-  loop and thread it through
+  loop and thread it through, passing each league's own `lsettings.scoring`
+  (the per-league `Settings` copy is already made unconditionally there)
 - `ff_startsit/output/html.py` — `_position_section` callout + CSS class
 - `ff_startsit/output/render.py` — `render_markdown` callout/note
 - `ff_startsit/waivers/columns.py` — extract the shared byline/week verifier
@@ -624,9 +804,11 @@ Workflow edits must pass both halves of the workflow check:
 
 ## 11. Suggested order of work
 
-1. **Phase 0** (§3). If Branch C, stop and report.
+1. **Phase 0** (§3). If Branch C, stop and report. Settle the scoring-group
+   question (Q5/Q6) here too — the module's shape depends on it.
 2. `sources/analysts.py` + `tests/test_analysts.py`, offline against fixtures.
-   No rendering yet.
+   Build discovery + scoring resolution **before** the parser: getting the wrong
+   list parsed perfectly is worse than not parsing at all. No rendering yet.
 3. `engine/analyst.py` + `tests/test_analyst_conflicts.py`. Pure, fast.
 4. Wire into `report.py` / `cli.py`; add the `Recommendation` field; add the
    log regression test.
@@ -639,13 +821,22 @@ Workflow edits must pass both halves of the workflow check:
 
 ## 12. Open questions for the repo owner
 
-1. **Boone's TE and QB coverage.** Phase 0 will show whether he publishes
-   positional QB/TE lists every week or only some weeks. If only the FLEX list
-   is reliable, QB gets no comparison at all (FLEX excludes quarterbacks) — is
-   that acceptable, or should the OVERALL list be used for QB despite being a
-   cross-position list?
-2. **Scoring mismatch.** If he publishes only full-PPR and a league is half-PPR,
-   should the comparison still run with the mismatch named in the status line
-   (recommended), or be withheld for that league?
-3. **`FF_ANALYST_MIN_GAP = 5`** is a first guess. Worth revisiting after two
-   live weeks, based on how often the warning actually fires.
+1. **Standard-scoring leagues.** Boone publishes half- and full-PPR only. A
+   league configured `std` therefore has no counterpart set. The plan **withholds
+   the comparison** for such a league and says so in the status block, rather
+   than substituting half-PPR. Confirm that is the wanted behavior — the
+   alternative (use half-PPR and label the mismatch loudly) is defensible but is
+   the kind of "close enough" that this codebase generally refuses. *No action
+   needed if no configured league uses `std`.*
+2. **`FF_ANALYST_MIN_GAP = 5`** is a first guess. Worth revisiting after two live
+   weeks, based on how often the warning actually fires.
+3. **Should a partial week be visible or silent?** When Thursday's run has FLEX
+   but not TE, the TE section simply carries no analyst line. The status block
+   records it. Is that enough, or should the position itself say "Boone has not
+   posted TE ranks yet"?
+
+*Resolved since the first draft, kept here so the reasoning is not re-derived:*
+Boone publishes positional lists for **every** position including K and D/ST, so
+there is no position without coverage and no need to press the OVERALL list into
+service for QB. And scoring is no longer a mismatch to be labeled — both sets are
+published, so the right answer is to read the right one.
