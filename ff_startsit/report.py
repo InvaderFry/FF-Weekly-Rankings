@@ -16,7 +16,9 @@ from .data_status import DataStatus, single_status
 from .models import Player, PlayerScore, Recommendation
 from .output.render import LINEUP_UNSCORED_NOTE, lineup_unscored_keys, md_cell, render_markdown
 from .pipeline import build_signals, recommend
-from .season import preseason_banner
+from .season import preseason_banner, season_year
+from .engine.analyst import detect_conflicts
+from .sources.analysts import AnalystFetcher
 from .sources.journalists import JournalistFetcher, JournalistView, parse_experts
 
 # A common 1QB/PPR-ish starting set used for the suggested lineup.
@@ -160,7 +162,8 @@ class LeagueBundle:
 def rank_each_position(settings: Settings, players: Sequence[Player], week: int,
                        log: bool = False,
                        signals: Optional[Sequence] = None,
-                       slots: Optional[Sequence[str]] = None) -> dict[str, Recommendation]:
+                       slots: Optional[Sequence[str]] = None,
+                       analyst_fetcher: Optional[AnalystFetcher] = None) -> dict[str, Recommendation]:
     """Rank each position group once. One scoring pass = one set of API calls.
 
     The signal instances are built once and reused across positions so each
@@ -184,6 +187,20 @@ def rank_each_position(settings: Settings, players: Sequence[Player], week: int,
                               command="report", log=log,
                               exclude_unavailable=True,
                               starter_count=counts.get(pos))
+    sample = any(getattr(signal, "is_sample", False) for signal in signals)
+    if settings.analysts == "boone" and sample:
+        for rec in recs.values():
+            rec.source_status.append((("analyst", "Justin Boone", settings.league_label),
+                f"{settings.league_label or 'This league'}: Justin Boone comparison withheld for a sample-data run"))
+    if settings.analysts == "boone" and not sample:
+        fetcher = analyst_fetcher or AnalystFetcher(season_year(), settings.data_dir)
+        ranks = fetcher.fetch(players, week, settings.scoring)
+        status = ranks.status(week, settings.league_label)
+        for pos, rec in recs.items():
+            rec.analyst_conflicts = detect_conflicts(
+                rec, ranks.by_position.get(pos, {}), ranks.analyst,
+                settings.analyst_min_gap, counts.get(pos))
+            rec.source_status.append(status)
     return recs
 
 
@@ -247,7 +264,8 @@ def rank_flex_pool(settings: Settings, players: Sequence[Player], week: int,
 
 def score_week(settings: Settings, players: Sequence[Player], week: int,
                log: bool = False,
-               slots: Optional[Sequence[str]] = None) -> WeekScores:
+               slots: Optional[Sequence[str]] = None,
+               analyst_fetcher: Optional[AnalystFetcher] = None) -> WeekScores:
     """One signal set, one per-position pass, one pooled FLEX pass.
 
     ``log`` appends the per-position decisions to the results log, so the
@@ -263,7 +281,8 @@ def score_week(settings: Settings, players: Sequence[Player], week: int,
     """
     signals = build_signals(settings)
     recs = rank_each_position(settings, players, week, log=log, signals=signals,
-                              slots=slots)
+                              slots=slots, **({"analyst_fetcher": analyst_fetcher}
+                                             if analyst_fetcher is not None else {}))
     flex, note = rank_flex_pool(settings, players, week, signals=signals)
     return WeekScores(recs=recs, flex=flex, flex_note=note)
 

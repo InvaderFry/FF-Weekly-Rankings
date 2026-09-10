@@ -1,6 +1,6 @@
 # Analyst comparison progress
 
-Status: **Source adapter implemented and verified; report integration remains.**
+Status: **Source, report integration and rendering implemented; final docs/checks remain.**
 
 Follow-up: [verified widget transport proposal](ANALYST_COMPARE_TRANSPORT.md).
 Yahoo embeds a public FantasyPros partner feed with response-asserted Boone
@@ -90,3 +90,19 @@ checkpoint; fixture integrity was checked against the manifest.
 - Remaining: conflict engine/model, report/CLI wiring and log isolation tests;
   HTML/Markdown and status regressions; settings, docs, workflow variables; full
   offline suite and both workflow checks. Keep feature off by default.
+
+## Implementation checkpoint 2
+
+- Added pure top-pair and actual starter-boundary disagreement detection and
+  the display-only `Recommendation.analyst_conflicts` field.
+- Report/CLI share a fetcher across leagues and pass each league's scoring.
+  Sample-data runs withhold comparisons and explain why in Data status.
+- HTML warnings use a distinct analyst style; small inversions are quiet notes
+  below the table. Markdown renders both severities with the same wording.
+- Settings accept `FF_ANALYSTS=boone` and a finite non-negative gap (default 5),
+  with warned fallbacks for invalid input; off by default.
+- Tests cover multi-league sharing, custom slots, no score/close-call/notes
+  changes, log isolation, escaping, severity, silence and status deduplication.
+- Validation: full offline suite passed (797 tests) before final cosmetic and
+  sample-status adjustments. Remaining: docs/env/workflow wiring, focused checks
+  for final changes, workflow checks and a final live rendering smoke test.

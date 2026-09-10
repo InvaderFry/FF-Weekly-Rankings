@@ -726,6 +726,9 @@ def _league_bundles(args, settings: Settings, week: int) -> list:
 
     from .data_status import DataStatus, finish_status
     status = DataStatus(season.season_year(), week, [p.name for p in settings.leagues])
+    from .sources.analysts import AnalystFetcher
+    analyst_fetcher = (AnalystFetcher(season.season_year(), settings.data_dir)
+                       if settings.analysts == "boone" else None)
     bundles: list = []
     for profile in settings.leagues:
         # Unconditional copy — see `_league_context`. Same-scoring leagues used to
@@ -736,7 +739,9 @@ def _league_bundles(args, settings: Settings, week: int) -> list:
         try:
             players = _get_roster(args, lsettings, profile)
             ws = report.score_week(lsettings, players, week,
-                                   log=getattr(args, "log", False))
+                                   log=getattr(args, "log", False),
+                                   **({"analyst_fetcher": analyst_fetcher}
+                                      if analyst_fetcher is not None else {}))
             recs = ws.recs
             lineup = report.lineup_from(ws)
             journalists = report.build_journalist_view(lsettings, players, week)

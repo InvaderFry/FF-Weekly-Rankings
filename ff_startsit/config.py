@@ -125,6 +125,9 @@ class Settings:
     # expert ids. Empty/0/off disables the section. Never part of the blend
     # weights — this is a side-by-side view, not a signal.
     preferred_experts: str = ""
+    # Display-only Boone disagreements, never blend weights.
+    analysts: str = ""
+    analyst_min_gap: float = 5.0
     # Before Week 1 there is no live data; fill runs with bundled sample data
     # (clearly labeled) instead of an empty lineup. FF_PRESEASON_FILL=0 disables.
     preseason_fill: bool = True
@@ -459,6 +462,24 @@ def _apply_scoring_overrides(leagues: list[LeagueProfile], spec: str) -> None:
         profile.scoring = value
 
 
+def _analyst_settings() -> tuple[str, float]:
+    analysts = os.getenv("FF_ANALYSTS", "").strip().lower()
+    if analysts in {"", "0", "false", "no", "off"}:
+        analysts = ""
+    elif analysts != "boone":
+        _warn("Unknown FF_ANALYSTS value; supported analyst is boone. Disabling comparison.")
+        analysts = ""
+    raw_gap = os.getenv("FF_ANALYST_MIN_GAP", "").strip()
+    try:
+        gap = float(raw_gap) if raw_gap else 5.0
+        if not math.isfinite(gap) or gap < 0:
+            raise ValueError
+    except ValueError:
+        _warn("FF_ANALYST_MIN_GAP must be a finite non-negative number; using 5.0.")
+        gap = 5.0
+    return analysts, gap
+
+
 def load_settings(env_file: str | os.PathLike | None = None) -> Settings:
     """Load settings from .env (if present) and the process environment."""
     load_dotenv(dotenv_path=env_file, override=False)
@@ -487,6 +508,8 @@ def load_settings(env_file: str | os.PathLike | None = None) -> Settings:
         },
         default_weights,
     )
+
+    analysts, analyst_min_gap = _analyst_settings()
 
     threshold = _f("FF_CLOSE_CALL_THRESHOLD", 5.0)
     if threshold < 0:
@@ -555,6 +578,8 @@ def load_settings(env_file: str | os.PathLike | None = None) -> Settings:
         close_call_raw_gaps=raw_gaps,
         disagree_exempt=disagree_exempt,
         preferred_experts=os.getenv("FF_PREFERRED_EXPERTS", "").strip(),
+        analysts=analysts,
+        analyst_min_gap=analyst_min_gap,
         injury_enabled=_b("FF_INJURY", True),
         weather_enabled=_b("FF_WEATHER", True),
         roster_ttl=roster_ttl,

@@ -4,12 +4,14 @@ from __future__ import annotations
 
 import csv
 import json
+from html import escape
 from pathlib import Path
 
 from rich.console import Console
 from rich.table import Table
 
 from ..models import Recommendation, _fmt_raw
+from ..engine.analyst import AnalystConflict
 
 _console = Console()
 
@@ -131,6 +133,23 @@ def flat_signal_note(rec: Recommendation) -> str:
             "a gap too small to rank on.")
 
 
+def analyst_conflict_text(conflict: AnalystConflict) -> str:
+    """Plain wording shared by HTML and Markdown, escaped by each renderer."""
+    pos = "DST" if conflict.position in {"DEF", "DST"} else conflict.position
+    preferred = f"{conflict.preferred} (his {pos}{_fmt_raw(conflict.preferred_rank)})"
+    leader = f"{conflict.leader} (his {pos}{_fmt_raw(conflict.leader_rank)})"
+    if conflict.material:
+        action = ("would flip your last starting spot" if conflict.boundary
+                  else "disagrees: he starts")
+        separator = ": " if conflict.boundary else " "
+        return f"{conflict.analyst} {action}{separator}{preferred} over {leader}."
+    spot = " at your last starting spot" if conflict.boundary else ""
+    return (f"{conflict.analyst} has these two within {_fmt_raw(conflict.gap)} spots{spot} "
+            f"({conflict.leader} {pos}{_fmt_raw(conflict.leader_rank)}, "
+            f"{conflict.preferred} {pos}{_fmt_raw(conflict.preferred_rank)}), "
+            f"edge to {conflict.preferred}.")
+
+
 def render_markdown(rec: Recommendation, title: str = "") -> str:
     """Render a Recommendation as GitHub-flavored markdown (for issues/ChatOps)."""
     signal_names = sorted({name for s in rec.scores for name in s.normalized})
@@ -164,6 +183,10 @@ def render_markdown(rec: Recommendation, title: str = "") -> str:
     flat = flat_signal_note(rec)
     if flat:
         lines.append(f"_{flat}_")
+        lines.append("")
+    for conflict in rec.analyst_conflicts:
+        text = md_cell(escape(analyst_conflict_text(conflict)))
+        lines.append(f"> ⚠️ {text}" if conflict.material else text)
         lines.append("")
     if rec.close_call:
         lines.append("> ⚠️ **Close call** — lean, don't bank on it:")

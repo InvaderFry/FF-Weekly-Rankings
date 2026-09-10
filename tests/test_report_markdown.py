@@ -688,3 +688,19 @@ def test_rank_each_position_takes_the_boundary_from_the_leagues_slots(tmp_path):
         settings, players, week=1, log=False, signals=[_FakeECR(dict(ranks))],
         slots=["QB", "RB", "RB", "WR", "WR", "WR", "TE", "FLEX", "K", "DEF"])["WR"]
     assert not any("Last starting spot" in n for n in three_wr.notes)
+
+
+def test_analyst_markdown_warning_note_and_silence():
+    from ff_startsit.engine.analyst import AnalystConflict
+    from dataclasses import replace
+    rec = _rec(_ps('1', 'Alpha', 'RB', 90), _ps('2', 'Bravo', 'RB', 10))
+    assert 'Justin Boone' not in render_markdown(rec)
+    conflict = AnalystConflict('Justin Boone', 'RB', 'Alpha', 'Bravo', 19, 6, False, True)
+    rec.analyst_conflicts = [conflict]
+    assert '> ⚠️ Justin Boone disagrees: he starts Bravo (his RB6) over Alpha (his RB19).' in render_markdown(rec)
+    rec.analyst_conflicts = [replace(conflict, leader_rank=8, material=False)]
+    md = render_markdown(rec)
+    assert 'within 2 spots (Alpha RB8, Bravo RB6), edge to Bravo.' in md
+    assert '> ⚠️ Justin Boone' not in md
+    rec.analyst_conflicts = [replace(conflict, boundary=True)]
+    assert 'would flip your last starting spot: Bravo (his RB6)' in render_markdown(rec)
