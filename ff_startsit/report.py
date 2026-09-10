@@ -18,7 +18,7 @@ from .output.render import LINEUP_UNSCORED_NOTE, lineup_unscored_keys, md_cell, 
 from .pipeline import build_signals, recommend
 from .season import preseason_banner, season_year
 from .engine.analyst import detect_conflicts
-from .sources.analysts import AnalystFetcher
+from .sources.analysts import AnalystFetcher, not_published_yet
 from .sources.journalists import JournalistFetcher, JournalistView, parse_experts
 
 # A common 1QB/PPR-ish starting set used for the suggested lineup.
@@ -200,6 +200,14 @@ def rank_each_position(settings: Settings, players: Sequence[Player], week: int,
             rec.analyst_conflicts = detect_conflicts(
                 rec, ranks.by_position.get(pos, {}), ranks.analyst,
                 settings.analyst_min_gap, counts.get(pos))
+            # Only the not-posted-yet reason is position-specific. Every other
+            # reason is identical at every position, so repeating it per section
+            # would be the noise Data status already carries once.
+            if not_published_yet(ranks.unavailable.get(pos)):
+                rec.analyst_note = (
+                    f"{ranks.analyst} has not posted his Week {week} "
+                    f"{'full' if settings.scoring == 'ppr' else 'half'}-PPR "
+                    f"{'DST' if pos in {'DEF', 'DST'} else pos} rankings yet.")
             rec.source_status.append(status)
     return recs
 

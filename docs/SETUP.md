@@ -157,6 +157,73 @@ to change if you only have one.
 > League ids aren't credentials, but a committed file would expose your league
 > list. See the CI secrets table below.
 
+## Justin Boone disagreements
+
+Set these in `.env` for local start/sit reports:
+
+```dotenv
+FF_ANALYSTS=boone
+FF_ANALYST_MIN_GAP=5
+```
+
+`FF_ANALYSTS` is empty/off by default. Empty, `off`, `0`, `false`, and `no`
+disable it. Boone is the only supported analyst. Unknown names warn and disable
+comparison. The gap must be a finite, non-negative number; invalid input warns
+and uses 5.
+
+The dashboard (`index.html`) and Markdown digest show Boone's disagreements
+with the blend's top pair and the last starting spot at each position. A gap of
+at least 5 **positional spots** gets an analyst warning; a smaller inversion gets
+a quiet note. Agreement and missing player ranks render no annotation. A
+position whose list he has not posted yet says so in its own section, so an
+absent comparison does not read as agreement; every other failure reason is the
+same at every position and is reported once in Data status instead. Data
+status names the league, scoring set, published article dates, fallback lists,
+and missing coverage. A sample-data run withholds the comparison explicitly.
+
+Each league uses its own `ppr` or `half` setting, including `FF_LEAGUE_SCORING`
+overrides. Standard-scoring leagues get no comparison and a status explanation.
+The normal starting template has two RB and two WR spots; code callers that pass
+custom slots get their corresponding starter boundary. A full cross-position
+lineup comparison is outside this feature's scope.
+
+The transport reads Boone's current Yahoo weekly hub and its published
+FantasyPros partner widget configurations. The response must explicitly name
+Justin Boone as its sole contributor and confirm season, week, position and
+scoring. It uses his individual ranks, with no consensus fallback. No paid
+FantasyPros key, login, browser installation, or new dependency is required.
+This is separate from the older paid `FF_PREFERRED_EXPERTS` feature below.
+
+The widget's generic `scoring=HALF` default can appear even on full-PPR articles.
+The adapter selects the format from the published position buckets and checks
+what the data response actually returned. It withholds data on a mismatch.
+See the [measured transport findings](ANALYST_COMPARE_TRANSPORT.md).
+
+Requests and failures are shared across leagues in one process. Disk cache
+entries under `FF_DATA_DIR` expire after **three hours**, including misses. A
+healthy complete hub needs an index request, a hub request, and one data request
+per required position and scoring. QB/DST/K are shared; FLEX/OVERALL are fetched
+only as needed for fallback. Partial or changed pages can require additional
+article requests. Cache write failures warn and leave the report usable.
+
+For Actions, add **repository variables** under Settings → Secrets and variables
+→ Actions → Variables:
+
+| Variable | Value |
+| --- | --- |
+| `FF_ANALYSTS` | `boone` to enable; empty/off to disable |
+| `FF_ANALYST_MIN_GAP` | `5` initially |
+
+All three workflows pass these variables. The waiver workflow uses them for its
+sibling start/sit rebuild; the waiver page itself and Discord do not render these
+annotations. Scores, weights, `close_call`, recommendation notes and the
+append-only calibration log remain unaffected.
+
+The implementation ships off. After enabling, inspect a Thursday and Sunday
+report's Data status and compare a few displayed ranks with Boone's selected
+format before tuning the warning gap. Article publication dates are not fetch
+times, and a cached miss does not imply Boone will remain unavailable all week.
+
 ## 3. Preferred journalists (`FF_PREFERRED_EXPERTS`)
 
 This is the most valuable optional variable, because it feeds **two** reports:
@@ -421,6 +488,7 @@ ffstartsit waivers --all-leagues
 | `ODDS_API_KEY`, `FANTASYPROS_API_KEY`, `DISCORD_WEBHOOK_URL` | ✅ | ✅ | |
 | `SLEEPER_USERNAME` (Sleeper leagues) | ✅ | ✅ | |
 | `FF_PREFERRED_EXPERTS` | ✅ | | ✅ |
+| `FF_ANALYSTS`, `FF_ANALYST_MIN_GAP` | ✅ | | ✅ |
 | Waiver knobs (`FF_WAIVER_*`, `FF_TRADE_*`, `FF_COLUMN_SCRAPE`) | ✅ | | *not wired to Actions — defaults apply there* |
 | Tuning (`FF_SCORING`, `FF_WEIGHT_*`, …) | ✅ | | *not wired to Actions — defaults apply there* |
 

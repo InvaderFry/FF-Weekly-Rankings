@@ -98,3 +98,52 @@ def test_config_defaults_and_invalid_values(monkeypatch, tmp_path, capsys):
     for disabled in ['', 'off', 'false', '0', 'no']:
         monkeypatch.setenv('FF_ANALYSTS', disabled)
         assert load_settings(env_file=tmp_path / 'absent').analysts == ''
+
+
+class NotPosted(Analyst):
+    """He has published nothing at WR yet — the ordinary Thursday shape."""
+    def fetch(self, players, week, scoring):
+        ranks = AnalystRanks('Justin Boone', scoring)
+        ranks.unavailable['WR'] = (
+            f'no {"full" if scoring == "ppr" else "half"} PPR list published for this position')
+        return ranks
+
+
+class Broken(Analyst):
+    """A site-level failure, which reads the same at every position."""
+    def fetch(self, players, week, scoring):
+        ranks = AnalystRanks('Justin Boone', scoring)
+        ranks.unavailable['WR'] = 'author index unreachable'
+        return ranks
+
+
+def _wr(fetcher, scoring='ppr', **kwargs):
+    settings = Settings(analysts='boone', scoring=scoring, **kwargs)
+    return report.rank_each_position(settings, players(), 1, signals=[Ranks()],
+                                     analyst_fetcher=fetcher)['WR']
+
+
+def test_unposted_position_says_so_instead_of_reading_as_agreement():
+    rec = _wr(NotPosted())
+    assert rec.analyst_note == 'Justin Boone has not posted his Week 1 full-PPR WR rankings yet.'
+    assert 'half' in _wr(NotPosted(), scoring='half').analyst_note
+
+
+def test_site_level_failure_stays_in_data_status_only():
+    # Repeating one site-wide reason under every position is the duplication
+    # ``_merge_source_status`` exists to prevent; Data status carries it once.
+    rec = _wr(Broken())
+    assert rec.analyst_note is None
+    assert any('author index unreachable' in line for _, line in rec.source_status)
+
+
+def test_available_position_carries_no_unposted_note():
+    assert _wr(Analyst()).analyst_note is None
+
+
+def test_unposted_note_changes_nothing_that_is_logged():
+    plain = report.rank_each_position(Settings(analysts=''), players(), 1,
+                                      signals=[Ranks()])['WR']
+    rec = _wr(NotPosted())
+    assert rec.notes == plain.notes and rec.close_call == plain.close_call
+    assert [s.final for s in rec.scores] == [s.final for s in plain.scores]

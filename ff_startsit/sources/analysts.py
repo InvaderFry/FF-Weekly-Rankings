@@ -6,6 +6,7 @@ set and name the sole contributor before any individual rank is consumed.
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import math
 import re
@@ -35,6 +36,16 @@ UA = {'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit
 VERIFY_REASON = 'byline or week could not be verified in the article'
 PARSE_REASON = 'rankings table could not be parsed'
 SCORING_REASON = 'scoring of the linked list could not be resolved'
+#: Tail of the one ``unavailable`` reason that is position-specific and not a
+#: failure: he simply has not posted that list yet. Every other reason is the
+#: same for every position, so it belongs in Data status once, not per section
+#: — the duplication ``_merge_source_status`` exists to prevent.
+NOT_PUBLISHED_TAIL = 'PPR list published for this position'
+
+
+def not_published_yet(reason: Optional[str]) -> bool:
+    """True when ``reason`` means "he has not posted it", not "it broke"."""
+    return bool(reason) and reason.endswith(NOT_PUBLISHED_TAIL)
 
 
 @dataclass(frozen=True)
@@ -300,6 +311,7 @@ class AnalystFetcher:
         self._pages = {}
         self._catalogs = {}
         self._lists = {}
+        self._overall_urls = {}
         self.unavailable = {}
 
     def _cached(self, key, build):
@@ -309,7 +321,9 @@ class AnalystFetcher:
             if isinstance(stored, dict):
                 stamp = stored.get('fetched')
                 if (isinstance(stamp, (int, float)) and 0 <= time.time() - stamp < TTL
-                        and isinstance(stored.get('value'), dict)):
+                        and isinstance(stored.get('value'), dict)
+                        and any(isinstance(stored['value'].get(k), str)
+                                for k in ('body', 'text', 'reason'))):
                     return stored['value']
         value = build()
         if path:
@@ -327,16 +341,16 @@ class AnalystFetcher:
         return response.text
 
     def _page(self, url: str, week: int) -> dict:
-        if url not in self._pages:
-            import hashlib
+        page_key = (week, url)
+        if page_key not in self._pages:
             key = f'{week}-page-{hashlib.sha256(url.encode()).hexdigest()[:20]}'
             def build():
                 try:
                     return {'body': self._get(url)}
                 except Exception:
                     return {'reason': 'author index unreachable' if url == self.source.index_url else 'article unreachable'}
-            self._pages[url] = self._cached(key, build)
-        return self._pages[url]
+            self._pages[page_key] = self._cached(key, build)
+        return self._pages[page_key]
 
     def _catalog(self, week: int):
         if week in self._catalogs:
@@ -347,6 +361,20 @@ class AnalystFetcher:
             reasons.append(page.get('reason', 'author index unreachable'))
         else:
             links = _links(page['body'], self.source.base_url)
+            rejected = set()
+            groups = {}
+            for url, group in links:
+                token = 'ppr' if 'full-ppr' in url else ('half' if 'half-ppr' in url else '')
+                if group:
+                    groups.setdefault(url, set()).add(group)
+                    if token and group != token:
+                        rejected.add(url)
+            rejected.update(url for url, values in groups.items() if len(values) > 1
+                            and _kind(url) not in UNIVERSAL_KINDS)
+            if rejected:
+                reasons.append('scoring heading contradicts linked article')
+                _warn(reasons[-1])
+            links = [(url, group) for url, group in links if url not in rejected]
             hubs = list(dict.fromkeys(url for url, _ in links if _current_link(url, week, self.season)
                          and re.search(r'/justin-boones-fantasy-football-rankings-for-week-', url)))
             # Verified weekly hub publishes several position buckets. Reuse its
@@ -370,8 +398,10 @@ class AnalystFetcher:
                     reasons.append(result['reason'])
                 else:
                     for key, node in result['sets'].items():
+                        if key[0] not in UNIVERSAL_KINDS and url in groups and key[1] not in groups[url]:
+                            reasons.append(SCORING_REASON)
+                            continue
                         catalog.setdefault(key, (url, result['published'], node))
-            self._overall_urls = getattr(self, '_overall_urls', {})
             self._overall_urls[week] = list(dict.fromkeys(url for url, _ in links
                 if _current_link(url, week, self.season) and _kind(url) == 'OVERALL'))
         if not catalog and not reasons:
@@ -396,11 +426,11 @@ class AnalystFetcher:
             for key in conflicts:
                 sets.pop(key)
             kind = _kind(url)
-            if kind:
+            if kind and kind != 'OVERALL':
                 sets = {key: node for key, node in sets.items() if key[0] == kind}
-                token = 'ppr' if 'full-ppr' in url else ('half' if 'half-ppr' in url else '')
-                if token and kind not in UNIVERSAL_KINDS and any(key[1] != token for key in sets):
-                    return {'reason': SCORING_REASON}
+            token = 'ppr' if 'full-ppr' in url else ('half' if 'half-ppr' in url else '')
+            if token and any(key[1] != token for key in sets if key[0] not in UNIVERSAL_KINDS):
+                return {'reason': SCORING_REASON}
             return {'sets': sets, 'published': published} if sets else {'reason': SCORING_REASON}
         except Exception:
             return {'reason': SCORING_REASON}
@@ -412,10 +442,12 @@ class AnalystFetcher:
             return self._lists[key]
         catalog, reasons = self._catalog(week)
         if kind == 'OVERALL' and (kind, scoring) not in catalog:
-            for url in getattr(self, '_overall_urls', {}).get(week, []):
+            for url in self._overall_urls.get(week, []):
                 result = self._article(url, week)
                 for pair, node in result.get('sets', {}).items():
-                    catalog.setdefault(pair, (url, result['published'], node))
+                    if pair not in catalog:
+                        catalog[pair] = (url, result['published'], node)
+                        self._lists.pop((week, pair[0], pair[1]), None)
         entry = catalog.get((kind, scoring))
         if entry is None:
             reason = '; '.join(dict.fromkeys(reasons)) or f'no {"full" if scoring == "ppr" else "half"} PPR list published for this position'
@@ -461,6 +493,16 @@ class AnalystFetcher:
                     fallbacks = ['FLEX', 'OVERALL'] if kind in {'RB', 'WR', 'TE'} else ['OVERALL']
                     for fallback in fallbacks:
                         candidate, _ = self._ranking(fallback, scoring, week)
+                        if fallback == 'OVERALL' and candidate is None:
+                            # The observed Overall article is a tabbed widget,
+                            # offering positional lists rather than an ALL list.
+                            # Its lazy discovery can resolve the original kind.
+                            direct, _ = self._ranking(kind, scoring, week)
+                            if direct:
+                                ranking = direct
+                                break
+                            if kind in {'RB', 'WR', 'TE'}:
+                                candidate, _ = self._ranking('FLEX', scoring, week)
                         if candidate and any(row.position == kind for row in candidate.rows):
                             ranking, derived = candidate, True
                             break

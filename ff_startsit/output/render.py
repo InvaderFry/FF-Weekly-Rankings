@@ -188,6 +188,9 @@ def render_markdown(rec: Recommendation, title: str = "") -> str:
         text = md_cell(escape(analyst_conflict_text(conflict)))
         lines.append(f"> ⚠️ {text}" if conflict.material else text)
         lines.append("")
+    if rec.analyst_note:
+        lines.append(f"_{md_cell(escape(rec.analyst_note))}_")
+        lines.append("")
     if rec.close_call:
         lines.append("> ⚠️ **Close call** — lean, don't bank on it:")
         for note in rec.notes:

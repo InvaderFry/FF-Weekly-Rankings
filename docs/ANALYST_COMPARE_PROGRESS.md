@@ -1,6 +1,6 @@
 # Analyst comparison progress
 
-Status: **Source, report integration and rendering implemented; final docs/checks remain.**
+Status: **Implemented and verified live; awaiting repository-variable enablement.**
 
 Follow-up: [verified widget transport proposal](ANALYST_COMPARE_TRANSPORT.md).
 Yahoo embeds a public FantasyPros partner feed with response-asserted Boone
@@ -106,3 +106,58 @@ checkpoint; fixture integrity was checked against the manifest.
 - Validation: full offline suite passed (797 tests) before final cosmetic and
   sample-status adjustments. Remaining: docs/env/workflow wiring, focused checks
   for final changes, workflow checks and a final live rendering smoke test.
+
+## Implementation checkpoint 3
+
+Picked up after the previous session stopped mid-step-6 with everything
+uncommitted. Nothing was broken; the work was green as left.
+
+- Confirmed the working tree state: docs/env/workflow wiring (`.env.example`,
+  `README.md`, `docs/SETUP.md`, and the `env:` blocks of all three workflows) is
+  written, plus a hardening pass on `sources/analysts.py` (per-week page cache
+  key, cached-value shape check, scoring-heading contradiction rejection,
+  lazy OVERALL fallback that resolves the original kind) and ten new edge-case
+  tests in `tests/test_analysts.py` with their real-response fixtures.
+- Full offline suite: **807 passed**. Fixture manifest verified — all 43
+  entries match their recorded SHA-256 and byte length (hashes are of the
+  *decompressed* body; `.gz` files will not match on their compressed bytes).
+- Both workflow checks pass: `scripts/check-workflows.py` clean, and
+  `actionlint -ignore 'unexpected key "queue" for "concurrency" section'` clean
+  with shellcheck on PATH.
+- **Live rendering smoke test done** (step 7's first half). Local `.env` carries
+  no league credentials, so a full `report` run is not possible here; instead a
+  synthetic roster was run end-to-end against the live site. Real fetch →
+  `detect_conflicts` → `analyst_conflict_text` produced, for Week 1 2026:
+  `⚠️ Justin Boone would flip your last starting spot: Jahmyr Gibbs (his RB1)
+  over Breece Hall (his RB15).` Status line named the scoring set and the
+  article publication date correctly for both a half- and a full-PPR league.
+  `rec.notes` and `rec.close_call` were asserted unchanged.
+- **Verified the plan's named silent-correctness risk (§2.1) does not bite.**
+  The live half- and full-PPR sets are genuinely different documents, not one
+  document served twice: RB half n=102 / full n=50 with Taylor and Achane
+  swapped at 5/6; FLEX half n=149 / full n=155 with the receivers rising in
+  full PPR exactly as the format implies. The adapter's provenance reported the
+  requested scoring in each case.
+- Open question §12 Q1 (standard scoring) is **moot for this repo**: the only
+  configured league is `half`. No `std` league exists to withhold from.
+
+## Remaining work
+
+1. Enable via the repository variable `FF_ANALYSTS=boone` (and optionally
+   `FF_ANALYST_MIN_GAP`). Ships off; nothing renders until this is set.
+2. Watch one Thursday and one Sunday run, then tune `FF_ANALYST_MIN_GAP` from
+   how often the warning actually fires (§12 Q2).
+3. ~~Decide §12 Q3~~ — **resolved: say so in the section.** Implemented as
+   `Recommendation.analyst_note`, a second display-only field set in
+   `rank_each_position` and rendered as a quiet line by both the digest and the
+   dashboard. It fires **only** on the not-posted-yet reason
+   (`analysts.not_published_yet`), because that is the one `unavailable` reason
+   that is position-specific; every other reason reads identically at every
+   position, so repeating it per section would be the duplication
+   `_merge_source_status` exists to prevent, and Data status already carries it
+   once. Pinned by tests in `test_analyst_integration.py`,
+   `test_report_markdown.py`, `test_html.py`, and — for the log-isolation trap —
+   `test_results_log_roundtrip.py`. Suite: **813 passed**.
+
+Out of scope and deliberately not done: Discord rendering, the waiver page,
+CBS as a per-analyst source, any `FF_WEIGHT_*` entry.

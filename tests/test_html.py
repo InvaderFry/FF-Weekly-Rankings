@@ -158,3 +158,18 @@ def test_analyst_html_warning_note_silence_and_escaping():
     assert "class='analyst-note'" in html and 'within 2 spots' in html
     assert "class='callout analyst'" not in html
     assert html.index('analyst-note') > html.index('</table>')
+
+
+def test_analyst_unposted_note_renders_below_the_table_and_escapes():
+    from ff_startsit.output.html import _position_section
+    from ff_startsit.models import Player, PlayerScore, Recommendation
+    rec = Recommendation(1, 'ppr', {}, [
+        PlayerScore(Player('a', 'Alpha', 'KC', 'RB'), final=90),
+        PlayerScore(Player('b', 'Bravo', 'KC', 'RB'), final=10)])
+    assert 'not posted' not in _position_section('RB', rec)
+    rec.analyst_note = 'Boone <b> has not posted his Week 1 full-PPR RB rankings yet.'
+    html = _position_section('RB', rec)
+    assert "class='analyst-note'" in html and 'has not posted' in html
+    assert '&lt;b&gt;' in html and '<b>' not in html
+    assert "class='callout analyst'" not in html
+    assert html.index('analyst-note') > html.index('</table>')

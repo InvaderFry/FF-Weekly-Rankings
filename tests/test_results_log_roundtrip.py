@@ -170,8 +170,10 @@ def test_analyst_annotations_never_enter_the_calibration_row(tmp_path):
     before = (recommendation.close_call, list(recommendation.notes))
     recommendation.analyst_conflicts = [AnalystConflict(
         'Justin Boone', 'RB', 'Alpha', 'Bravo', 20, 2, False, True)]
+    recommendation.analyst_note = 'Justin Boone has not posted his Week 6 full-PPR RB rankings yet.'
     log_recommendation(recommendation, tmp_path / 'annotated.jsonl')
     text = (tmp_path / 'annotated.jsonl').read_text()
     row = json.loads(text)
     assert 'Justin Boone' not in text and 'analyst_conflicts' not in row
+    assert 'not posted' not in text and 'analyst_note' not in row
     assert (row['close_call'], row['notes']) == before

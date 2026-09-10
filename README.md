@@ -23,6 +23,12 @@ pluggable, blend weights are configurable, and every decision is logged — so t
 `calibrate` command can re-weight the inputs from your real outcomes (see
 [Self-calibration](#self-calibration-calibrate-7)).
 
+Optional [Justin Boone comparisons](docs/SETUP.md#justin-boone-disagreements)
+flag disagreements at the top pair or last starting spot in the start/sit
+dashboard and Markdown digest. Set `FF_ANALYSTS=boone` to enable; it is off by
+default. Half- and full-PPR leagues read their own set. Comparisons never alter
+blend scores, close-call flags, or calibration data.
+
 ## Install
 
 ```bash

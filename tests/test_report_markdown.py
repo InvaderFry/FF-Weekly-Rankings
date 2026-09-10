@@ -704,3 +704,12 @@ def test_analyst_markdown_warning_note_and_silence():
     assert '> ⚠️ Justin Boone' not in md
     rec.analyst_conflicts = [replace(conflict, boundary=True)]
     assert 'would flip your last starting spot: Bravo (his RB6)' in render_markdown(rec)
+
+
+def test_analyst_unposted_note_renders_quietly_and_escapes():
+    rec = _rec(_ps('1', 'Alpha', 'RB', 90), _ps('2', 'Bravo', 'RB', 10))
+    assert 'not posted' not in render_markdown(rec)
+    rec.analyst_note = 'Justin Boone has not posted his Week 1 full-PPR RB rankings yet.'
+    md = render_markdown(rec)
+    assert '_Justin Boone has not posted his Week 1 full-PPR RB rankings yet._' in md
+    assert '> ⚠️' not in md

@@ -32,7 +32,6 @@ section, which is why it is fetched last and gated behind ``FF_COLUMN_SCRAPE``.
 from __future__ import annotations
 
 import html as html_mod
-import json
 import re
 import sys
 from dataclasses import dataclass

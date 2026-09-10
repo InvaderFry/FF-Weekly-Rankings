@@ -163,6 +163,8 @@ def _position_section(pos: str, rec: Recommendation) -> str:
     for conflict in rec.analyst_conflicts:
         if not conflict.material:
             parts.append(f"<div class='analyst-note'>{escape(analyst_conflict_text(conflict))}</div>")
+    if rec.analyst_note:
+        parts.append(f"<div class='analyst-note'>{escape(rec.analyst_note)}</div>")
     return "".join(parts)
 
 

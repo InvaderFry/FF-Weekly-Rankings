@@ -1,7 +1,6 @@
 """Production adapter tests: only observed Yahoo/partner responses, offline."""
 import gzip
 import json
-from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
 from urllib.parse import parse_qs, urlsplit
@@ -11,8 +10,8 @@ import requests
 
 from ff_startsit.models import Player
 from ff_startsit.sources.analysts import (
-    AnalystFetcher, AnalystRanks, PARSE_REASON, SCORING_REASON, VERIFY_REASON,
-    _kind, find_ranking_urls, parse_rankings, validate_rows, widget_nodes, widget_sets,
+    AnalystFetcher, SCORING_REASON, VERIFY_REASON,
+    _kind, find_ranking_urls, parse_rankings, widget_nodes, widget_sets,
 )
 from ff_startsit.sources.articles import verified_week
 
@@ -236,3 +235,123 @@ def test_no_roster_matches_is_not_a_parse_failure():
     result = AnalystFetcher(2026, session=Session()).fetch([Player('x', 'Nobody Here', 'BUF', 'QB')], 1, 'ppr')
     assert result.lists
     assert result.unavailable['QB'] == 'parsed rankings named nobody on this roster'
+
+
+def test_cache_write_error_never_discards_valid_rankings(tmp_path, monkeypatch, capsys):
+    import ff_startsit.sources.analysts as module
+    def broken(*args):
+        raise OSError('read-only disk')
+    monkeypatch.setattr(module, 'atomic_write_text', broken)
+    result = AnalystFetcher(2026, tmp_path, Session()).fetch([PLAYERS[-1]], 1, 'ppr')
+    assert result.by_position['QB'] == {'allen': 5}
+    assert 'disk cache could not be written' in capsys.readouterr().err
+
+
+def test_article_redirect_is_not_followed():
+    class Redirect(Session):
+        def get(self, url, **kwargs):
+            assert kwargs['allow_redirects'] is False
+            return SimpleNamespace(status_code=302, text='redirected')
+    result = AnalystFetcher(2026, session=Redirect()).fetch(PLAYERS, 1, 'ppr')
+    assert not result.by_position
+    assert 'author index unreachable' in result.status(1, 'League')[1]
+
+
+def test_widget_scoring_unresolved_reason():
+    body = raw('hub.html.gz').replace('RB%3AWR%3ATE%3AFLX', '').replace('RB:WR:TE:FLX', '')
+    body = body.replace('QB%3ADST%3AK', '').replace('QB:DST:K', '')
+    result = AnalystFetcher(2026, session=Session(hub=body)).fetch(PLAYERS, 1, 'ppr')
+    assert SCORING_REASON in result.status(1, 'League')[1]
+
+
+def test_positional_article_does_not_accept_other_position_rows():
+    data = decoded('ppr_wr')
+    data['players'][0]['player_position_id'] = 'RB'
+    with pytest.raises(ValueError, match='rankings table could not be parsed'):
+        parse_rankings(wrapped(data), node('fullppr_wr'), 'WR', 'ppr', 1, 2026)
+
+
+def test_new_week_refreshes_discovery_with_same_fetcher():
+    session = Session()
+    fetcher = AnalystFetcher(2026, session=session)
+    fetcher.fetch([PLAYERS[-1]], 1, 'ppr')
+    fetcher.fetch([PLAYERS[-1]], 2, 'ppr')
+    assert len([url for url in session.calls if '/author/' in url]) == 2
+
+
+def test_real_positional_wr_lists_preferred_over_flex():
+    session = Session()
+    p = Player('chase', "Ja'Marr Chase", 'CIN', 'WR')
+    result = AnalystFetcher(2026, session=session).fetch([p], 1, 'ppr')
+    assert result.by_position['WR'] == {'chase': 1}
+    assert result.provenance['WR'] == ('WR', 'ppr')
+    assert not any('position=FLX' in url or 'position=ALL' in url for url in session.calls)
+
+
+def test_scoring_unpublished_for_one_league_stays_withheld():
+    # Remove the actual PPR widget from a real hub, retaining its HALF widget.
+    body = raw('hub.html.gz').replace('ppr_positions=RB%3AWR%3ATE%3AFLX', 'ppr_positions=')
+    body = body.replace('\\"ppr_positions\\":\\"RB:WR:TE:FLX\\"', '\\"ppr_positions\\":\\"\\"')
+    f = AnalystFetcher(2026, session=Session(hub=body))
+    result = f.fetch([Player('chase', "Ja'Marr Chase", 'CIN', 'WR')], 1, 'ppr')
+    assert not result.by_position
+    assert 'no full PPR list published' in result.status(1, 'League')[1] or SCORING_REASON in result.status(1, 'League')[1]
+
+
+def test_all_positions_and_mixed_scoring_request_budget():
+    session = Session()
+    f = AnalystFetcher(2026, session=session)
+    players = PLAYERS + [Player('chase', "Ja'Marr Chase", 'CIN', 'WR'),
+        Player('mcbride', 'Trey McBride', 'ARI', 'TE'),
+        Player('aubrey', 'Brandon Aubrey', 'DAL', 'K'),
+        Player('chiefs', 'Chiefs D/ST', 'KC', 'DEF')]
+    for scoring in ['ppr', 'half']:
+        ranks = f.fetch(players, 1, scoring)
+        assert set(ranks.by_position) == {'QB', 'RB', 'WR', 'TE', 'K', 'DEF'}
+        assert all(ranks.by_position.values())
+        assert not ranks.unavailable
+        assert ranks.provenance['DEF'] == ('DST', '')
+        assert ranks.provenance['RB'] == ('RB', scoring)
+    assert len(session.calls) == 11
+    for pos in ['QB', 'DST', 'K']:
+        assert len([u for u in session.calls if f'position={pos}' in u]) == 1
+
+
+def test_bad_parse_is_cached_and_distinguished_from_missing_article(tmp_path):
+    class Truncated(Session):
+        def get(self, url, **kwargs):
+            response = super().get(url, **kwargs)
+            if 'position=QB' in url:
+                data = decoded('half_qb')
+                data['players'] = data['players'][:2]; data['count'] = 2
+                response.text = wrapped(data)
+            return response
+    session = Truncated()
+    f = AnalystFetcher(2026, tmp_path, session)
+    for scoring in ['ppr', 'half']:
+        ranks = f.fetch([PLAYERS[-1]], 1, scoring)
+        assert not ranks.by_position
+        assert 'rankings table could not be parsed' in ranks.status(1, 'League')[1]
+    assert len([u for u in session.calls if 'position=QB' in u]) == 1
+    second = Truncated()
+    AnalystFetcher(2026, tmp_path, second).fetch([PLAYERS[-1]], 1, 'ppr')
+    assert not second.calls
+
+
+def test_overall_article_is_lazy_tabbed_fallback_not_invented_all_list():
+    class Fallback(Session):
+        def get(self, url, **kwargs):
+            response = super().get(url, **kwargs)
+            if '/fantasy/article/' in url:
+                # The real Overall article is readable; negative byline mutations
+                # make earlier candidates unavailable without inventing markup.
+                response.text = (raw('overall_article.html.gz') if 'top-players' in url
+                                 else self.hub.replace('Justin Boone', 'Other Writer'))
+            return response
+    session = Fallback()
+    result = AnalystFetcher(2026, session=session).fetch(PLAYERS, 1, 'ppr')
+    assert result.by_position['RB'] == {'taylor': 6, 'achane': 5}
+    assert result.by_position['QB'] == {'allen': 5}
+    assert result.provenance['RB'] == ('RB', 'ppr')
+    assert all('top-players' in r.url for r in result.lists)
+    assert not any('position=ALL' in url for url in session.calls)
