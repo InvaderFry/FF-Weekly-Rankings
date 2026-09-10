@@ -16,7 +16,7 @@ from typing import TYPE_CHECKING, Optional, Sequence
 
 from ..models import PlayerScore, Recommendation
 from .render import (DEPTH_LEGEND, LINEUP_UNSCORED_NOTE, UNRANKED_NOTE,
-                     flat_signal_note, lineup_unscored_keys)
+                     flat_signal_note, lineup_unscored_keys, analyst_conflict_text)
 from ..sources.journalists import JournalistView
 
 if TYPE_CHECKING:                    # the duck-typed bundle, named for the reader
@@ -46,6 +46,8 @@ th { color: #9aa0ad; font-weight: 600; }
 td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
 tr.top td { background: rgba(46, 160, 67, .14); }
 tr.flagged td { background: rgba(210, 153, 34, .14); }
+.callout.analyst { background: rgba(88, 166, 255, .12); border-left-color: #58a6ff; }
+.analyst-note { color: #8b949e; margin: .7rem 0; font-size: .9rem; }
 .callout { background: rgba(210, 153, 34, .16); border-left: 3px solid #d29922;
            padding: .5rem .75rem; border-radius: 4px; margin: .35rem 0 .75rem; }
 .note { color: #9aa0ad; font-size: .85rem; margin: .35rem 0 1rem; }
@@ -154,7 +156,15 @@ def _position_section(pos: str, rec: Recommendation) -> str:
         parts.append(f"<div class='callout'>⚠️ <strong>Close call</strong>{notes}</div>")
     elif rec.scores and rec.scores[0].final is not None:
         parts.append(f"<div class='start'>✅ Start: {escape(rec.scores[0].player.name)}</div>")
+    for conflict in rec.analyst_conflicts:
+        if conflict.material:
+            parts.append(f"<div class='callout analyst'>⚠️ {escape(analyst_conflict_text(conflict))}</div>")
     parts.append(_position_table(rec))
+    for conflict in rec.analyst_conflicts:
+        if not conflict.material:
+            parts.append(f"<div class='analyst-note'>{escape(analyst_conflict_text(conflict))}</div>")
+    if rec.analyst_note:
+        parts.append(f"<div class='analyst-note'>{escape(rec.analyst_note)}</div>")
     return "".join(parts)
 
 

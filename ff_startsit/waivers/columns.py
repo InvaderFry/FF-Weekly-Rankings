@@ -32,7 +32,6 @@ section, which is why it is fetched last and gated behind ``FF_COLUMN_SCRAPE``.
 from __future__ import annotations
 
 import html as html_mod
-import json
 import re
 import sys
 from dataclasses import dataclass
@@ -121,21 +120,15 @@ def find_column_url(index_html: str, base_url: str, week: int,
 
 def preseason_article_verified(body: str, author: str, season: int) -> bool:
     """Verify the observed Yahoo Week 1 exception, never infer it from recency alone."""
-    from datetime import datetime, timedelta
+    from datetime import timedelta
     from ..season import first_kickoff
-    for raw in re.findall(r'<script[^>]*type=["\']application/ld\+json["\'][^>]*>(.*?)</script>', body, re.S):
-        try:
-            data = json.loads(raw)
-            if not isinstance(data, dict) or not isinstance(data.get("author"), dict):
-                continue
-            published = datetime.fromisoformat(data["datePublished"].replace("Z", "+00:00")).date()
-            kickoff = first_kickoff(season)
-            if (data["author"].get("name") == author
-                    and f"before the {season} season kicks off" in data.get("headline", "").lower()
-                    and kickoff - timedelta(days=7) <= published <= kickoff):
-                return True
-        except (ValueError, KeyError, TypeError):
-            continue
+    from ..sources.articles import article_metadata
+    kickoff = first_kickoff(season)
+    for headline, published in article_metadata(body, author):
+        if (f"before the {season} season kicks off" in headline.lower()
+                and published is not None
+                and kickoff - timedelta(days=7) <= published <= kickoff):
+            return True
     return False
 
 

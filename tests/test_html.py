@@ -137,3 +137,39 @@ def test_build_multi_dashboard_html_one_section_per_league():
     assert "work — PPR" in html and "dynasty — HALF" in html
     assert "AlphaWork" in html and "BravoDyno" in html
     assert "2 league(s)" in html
+
+
+def test_analyst_html_warning_note_silence_and_escaping():
+    from dataclasses import replace
+    from ff_startsit.engine.analyst import AnalystConflict
+    from ff_startsit.output.html import _position_section
+    from ff_startsit.models import Player, PlayerScore, Recommendation
+    rec = Recommendation(1, 'ppr', {}, [
+        PlayerScore(Player('a', 'Alpha', 'KC', 'RB'), final=90),
+        PlayerScore(Player('b', 'Bravo', 'KC', 'RB'), final=10)])
+    assert 'analyst' not in _position_section('RB', rec)
+    conflict = AnalystConflict('Justin Boone', 'RB', 'Alpha', 'Bravo <script>', 19, 6, False, True)
+    rec.analyst_conflicts = [conflict]
+    html = _position_section('RB', rec)
+    assert "class='callout analyst'" in html and 'Justin Boone disagrees' in html
+    assert 'Bravo &lt;script&gt;' in html and '<script>' not in html
+    rec.analyst_conflicts = [replace(conflict, preferred='Bravo', leader_rank=8, material=False)]
+    html = _position_section('RB', rec)
+    assert "class='analyst-note'" in html and 'within 2 spots' in html
+    assert "class='callout analyst'" not in html
+    assert html.index('analyst-note') > html.index('</table>')
+
+
+def test_analyst_unposted_note_renders_below_the_table_and_escapes():
+    from ff_startsit.output.html import _position_section
+    from ff_startsit.models import Player, PlayerScore, Recommendation
+    rec = Recommendation(1, 'ppr', {}, [
+        PlayerScore(Player('a', 'Alpha', 'KC', 'RB'), final=90),
+        PlayerScore(Player('b', 'Bravo', 'KC', 'RB'), final=10)])
+    assert 'not posted' not in _position_section('RB', rec)
+    rec.analyst_note = 'Boone <b> has not posted his Week 1 full-PPR RB rankings yet.'
+    html = _position_section('RB', rec)
+    assert "class='analyst-note'" in html and 'has not posted' in html
+    assert '&lt;b&gt;' in html and '<b>' not in html
+    assert "class='callout analyst'" not in html
+    assert html.index('analyst-note') > html.index('</table>')

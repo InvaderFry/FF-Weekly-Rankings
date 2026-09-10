@@ -68,6 +68,8 @@ jobs:
       # Variables tab), not a secret: journalist ids aren't sensitive. Unset ->
       # the Preferred journalists section is simply omitted. See docs/SETUP.md.
       FF_PREFERRED_EXPERTS: ${{ vars.FF_PREFERRED_EXPERTS || secrets.FF_PREFERRED_EXPERTS }}
+      FF_ANALYSTS: ${{ vars.FF_ANALYSTS }}
+      FF_ANALYST_MIN_GAP: ${{ vars.FF_ANALYST_MIN_GAP }}
       DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
       ARTIFACT_ONLY: ${{ inputs.artifact_only || false }}
       INPUT_WEEK: ${{ github.event.inputs.week }}

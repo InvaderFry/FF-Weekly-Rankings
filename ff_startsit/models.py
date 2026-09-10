@@ -11,6 +11,8 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Optional
 
+from .engine.analyst import AnalystConflict
+
 
 def _fmt_raw(value: float) -> str:
     """Round a raw signal value to 2dp for display, without a trailing point/zeros.
@@ -144,6 +146,14 @@ class Recommendation:
     #: can keep the newest version of a source's status instead of every
     #: snapshot of it — see ``pipeline._merge_source_status``.
     source_status: list[tuple[tuple, str]] = field(default_factory=list)
+
+    #: Display-only annotations; never copy these into notes or the decision log.
+    analyst_conflicts: list[AnalystConflict] = field(default_factory=list)
+    #: Display-only: one sentence when the analyst has not posted this
+    #: position's list yet, so an absent comparison reads as "not yet"
+    #: rather than as agreement. Same rule as ``analyst_conflicts`` — it
+    #: never reaches ``notes`` or ``results_log.jsonl``.
+    analyst_note: Optional[str] = None
 
     @property
     def unranked(self) -> bool:

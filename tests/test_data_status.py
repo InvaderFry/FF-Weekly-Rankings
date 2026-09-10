@@ -88,3 +88,22 @@ def test_the_digest_shows_one_ecr_line_not_one_per_position():
     assert served == ["- league: ECR QB, RB, WR: public current-week page; "
                       "requested Week 1; fetched "
                       + signal._source_runs[("public current-week page", 1)][1]]
+
+
+def test_analyst_status_deduplicates_per_league_across_positions():
+    from ff_startsit.data_status import DataStatus, finish_status
+    from ff_startsit.models import Recommendation
+    from ff_startsit.report import LeagueBundle, Lineup, render_multi_digest
+    bundles = []
+    for label, scoring in [('Half', 'half'), ('Full', 'ppr')]:
+        recs = {}
+        for pos in ['QB', 'RB', 'WR', 'TE']:
+            rec = Recommendation(1, scoring, {}, [])
+            rec.source_status = [(('analyst', 'Justin Boone', label),
+                                  f'{label}: Justin Boone Week 1 {scoring} rankings')]
+            recs[pos] = rec
+        bundles.append(LeagueBundle(label, scoring, recs, Lineup([])))
+    finish_status(DataStatus(2026, 1, ['Half', 'Full']), bundles)
+    md = render_multi_digest(1, bundles)
+    assert md.count('Half: Justin Boone Week 1 half rankings') == 1
+    assert md.count('Full: Justin Boone Week 1 ppr rankings') == 1
