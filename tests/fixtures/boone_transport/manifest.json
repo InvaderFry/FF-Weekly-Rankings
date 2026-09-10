@@ -114,5 +114,9 @@
   "widget.js.gz": {
     "bytes": 118811,
     "sha256": "a7b066fb73c59a4c703a22e213cd4966d1f35644cbb4847040d066c4bd43f761"
+  },
+  "hub.html.gz": {
+    "bytes": 841271,
+    "sha256": "6fa1aa75b665f84ad7d8691898287f66fcb1ea7ccbd8e6cd6c811bf0dd81bcc0"
   }
 }

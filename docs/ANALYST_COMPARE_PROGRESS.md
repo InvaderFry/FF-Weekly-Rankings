@@ -1,6 +1,6 @@
 # Analyst comparison progress
 
-Status: **Alternative transport verified; production implementation remains.**
+Status: **Source adapter implemented and verified; report integration remains.**
 
 Follow-up: [verified widget transport proposal](ANALYST_COMPARE_TRANSPORT.md).
 Yahoo embeds a public FantasyPros partner feed with response-asserted Boone
@@ -71,3 +71,22 @@ not establish which browser-side mechanism supplies the visible table.
 No runtime files, workflow variables, blend weights, logs, or published pages
 were changed. No runtime test run is warranted for this documentation/evidence
 checkpoint; fixture integrity was checked against the manifest.
+
+## Implementation checkpoint 1
+
+- Added `sources/analysts.py`: verified Yahoo hub/article discovery, explicit
+  scoring buckets, response-level single-contributor attribution, individual
+  ranks, full-list positional fallback, shared per-run and three-hour disk
+  caches, graceful failures and per-league status text.
+- Extracted shared article metadata checks; existing waiver-column verification
+  retains its preseason date-window requirement.
+- Captured the real weekly hub: its two widgets explicitly cover RB/WR/TE/FLEX
+  in both scorings, plus universal QB/DST/K. Normal discovery needs only the
+  author index and hub, then one data request per position/scoring.
+- Validation: 48 source/evidence tests and 23 waiver-column regression tests pass.
+  Live adapter smoke test used a synthetic three-player roster, produced the
+  observed Taylor/Achane RB5/RB6 reversal and reused the universal QB fetch.
+  No external writes or repository-variable changes.
+- Remaining: conflict engine/model, report/CLI wiring and log isolation tests;
+  HTML/Markdown and status regressions; settings, docs, workflow variables; full
+  offline suite and both workflow checks. Keep feature off by default.
