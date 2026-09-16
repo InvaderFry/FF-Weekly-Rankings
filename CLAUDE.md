@@ -704,7 +704,16 @@ reason a piece of it is shaped the way it is.
   preseason week, which is late July when there are no weekly rankings to fetch
   and a run proves the least. The window is exactly one week wide so precisely
   one of `waivers.yml`'s weekly crons lands in it: one rehearsal a season, with
-  no arithmetic tying the window to the schedule. Nothing is invented if the data
+  no arithmetic tying the window to the schedule. That property has a second,
+  quieter requirement: `is_rehearsal_window` reads `date.today()`, which on a
+  runner is the **UTC** date, so the cron must land on the same UTC weekday
+  every week. GitHub starts a scheduled run when its queue allows — delays from
+  18 minutes to 8h01 are measured on this repo — so a slot close enough to UTC
+  midnight to straddle it under load resolves to one weekday some weeks and the
+  next on others, which can hand one preseason two rehearsals and the following
+  one none. `0 15 * * 2` leaves 9 hours of headroom (worst case 23:01 UTC); the
+  old `0 0 * * 3` had the same property by sitting just *after* midnight. Any
+  future move of this cron has to keep it. Nothing is invented if the data
   isn't there yet — `score.has_ecr` already empties the report — so the banner
   carries `score.signal_coverage` counts, because an empty rehearsal must not
   read the same as a broken one. Those counts ride in the *banner*, not `notes`:
