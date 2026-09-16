@@ -259,6 +259,19 @@ def _waiver_add_lines(bundle) -> list[str]:
     return lines
 
 
+def _waiver_alternate_lines(bundle) -> list[str]:
+    """The "Also consider" adds, one short line each.
+
+    A field rather than more lines in the description, because every description
+    line is a claim instruction ("drop X for Y") and these have no drop to name.
+    No reason text and no reason sentence when empty: this is the embed a reader
+    skims on a Tuesday evening, and the dashboard carries the "why".
+    """
+    return [f"**{t.score.player.name}** ({t.score.player.position})"
+            + (f" · {t.bid}" if t.bid else "")
+            for t in bundle.alternates]
+
+
 def _waiver_trade_lines(bundle) -> list[str]:
     if not bundle.trades:
         # A league this tool declines to price must not read like a league where
@@ -324,6 +337,15 @@ def _build_waiver_embed(bundle) -> dict:
         "fields": [],
     }
 
+    alternates = _waiver_alternate_lines(bundle)
+    if alternates:
+        # Before the drop list: these are still adds, and a claim has tonight's
+        # deadline while a conditional drop does not.
+        embed["fields"].append({
+            "name": "➕ Also consider adding (no roster spot open)",
+            "value": _clip("\n".join(alternates), _FIELD_VALUE_MAX),
+            "inline": False,
+        })
     if bundle.drops:
         embed["fields"].append({
             "name": "✂️ Conditional drop candidates",

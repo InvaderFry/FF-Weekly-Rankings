@@ -63,6 +63,32 @@ def _adds_table(bundle: WaiverBundle) -> list[str]:
     return lines
 
 
+def _alternates_table(bundle: WaiverBundle) -> list[str]:
+    """The "Also consider adding" section — adds with no roster spot behind them.
+
+    Deliberately a separate table rather than more rows in the adds table: every
+    row up there is an instruction ("drop X for Y") and these carry no drop, so
+    folding them in would print an add list whose Drop column was half empty and
+    leave a reader guessing which half was real. There is no reason sentence for
+    an empty section here — the adds table above already accounts for the wire,
+    and silence means only that it took everything worth taking.
+    """
+    if not bundle.alternates:
+        return []
+    lines = ["**Also consider adding** (no roster spot open — these clear the "
+             "same bar as the table above)", "",
+             "| Add | Pos | Depth | Bid | Why |", "|---|---|---:|---|---|"]
+    for t in bundle.alternates:
+        why = "; ".join(t.reasons) or "—"  # no drop line to skip here
+        lines.append(
+            f"| {md_cell(t.score.player.name)} | {md_cell(t.score.player.position)} "
+            f"| {_depth_cell(t.depth_ratio)} | {md_cell(_bid_cell(t))} "
+            f"| {md_cell(why)} |"
+        )
+    lines.append("")
+    return lines
+
+
 def _ros(rank) -> str:
     """An overall rest-of-season rank for display, or an em dash."""
     return "—" if rank is None else f"{rank:g}"
@@ -179,6 +205,7 @@ def render_bundle(bundle: WaiverBundle, heading: str = "###") -> list[str]:
     if bundle.caveat:
         lines += [f"> ⚠️ {bundle.caveat}", ""]
     lines += _adds_table(bundle)
+    lines += _alternates_table(bundle)
     lines += _drops_table(bundle)
     lines += _trades_section(bundle)
     lines += _stash_section(bundle)

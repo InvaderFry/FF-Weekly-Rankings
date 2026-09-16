@@ -24,7 +24,8 @@ from .columns import ColumnFetcher, index_mentions
 from .models import DropCandidate, LeagueRules, PoolPlayer, WaiverBundle
 from .season_values import SeasonValueProvider, URLS, protected_rank
 from .score import (BYE_HORIZON, MIN_LEAGUE_TEAMS, STREAM_POSITIONS, bye_gaps,
-                    dedupe_players, droppable, find_stashes, has_ecr, pick_adds,
+                    dedupe_players, droppable, find_stashes, has_ecr,
+                    pick_adds, pick_alternates,
                     score_positions, signal_coverage, stash_candidates,
                     starting_slots, team_players, viable_adds_by_position)
 from .trades import suggest_trades
@@ -138,7 +139,8 @@ def build_bundle(settings: Settings, label: str, provider: LeagueViewProvider,
                  schedule: Optional[ScheduleProvider] = None,
                  column_fetcher: Optional[ColumnFetcher] = None,
                  season_values: Optional[SeasonValueProvider] = None,
-                 limit: int = 150, max_adds: int = 8, max_trades: int = 5,
+                 limit: int = 150, max_adds: int = 8, max_alternates: int = 5,
+                 max_trades: int = 5,
                  include_trades: bool = True,
                  include_columns: bool = True,
                  preseason: Optional[bool] = None,
@@ -265,9 +267,20 @@ def build_bundle(settings: Settings, label: str, provider: LeagueViewProvider,
     my_team = next((t for t in teams if t.is_mine), None)
     faab_left = rules.faab_remaining(my_team.faab_spent if my_team else None)
 
-    bundle.adds = pick_adds(index, pool, drops + streamers, rules, faab_remaining=faab_left,
+    all_drops = drops + streamers
+    bundle.adds = pick_adds(index, pool, all_drops, rules, faab_remaining=faab_left,
                             journalist_ranks=ranks, mentions=mentions,
                             max_adds=max_adds)
+    # The same candidates against the same drops, minus the pairing: the adds
+    # table runs out of roster spots long before it runs out of players worth
+    # adding, and an empty row there used to be indistinguishable from a quiet
+    # wire. Position caps carry over from ``bundle.adds`` (see
+    # ``score.add_position_cap``), so this cannot reintroduce the third
+    # quarterback the cap just removed.
+    bundle.alternates = pick_alternates(index, pool, all_drops, rules, bundle.adds,
+                                        faab_remaining=faab_left,
+                                        journalist_ranks=ranks, mentions=mentions,
+                                        max_alternates=max_alternates)
     # Counted from the same gate ``pick_adds`` applies, so "N were compared" and
     # the table it explains can never name different Ns.
     bundle.considered_adds = viable_adds_by_position(index, pool, rules)
@@ -277,7 +290,8 @@ def build_bundle(settings: Settings, label: str, provider: LeagueViewProvider,
     playing = _weeks_playing(schedule, week)
     bye_teams = _bye_teams(candidates, playing.get(week))
 
-    taken = {t.score.player.key for t in bundle.adds}
+    taken = {t.score.player.key
+             for t in list(bundle.adds) + list(bundle.alternates)}
     bundle.stashes = find_stashes(index, pool, taken, bye_teams)
     bundle.stash_pool = stash_candidates(index, pool, taken, bye_teams)
     bundle.byes = bye_gaps(my_players, rules, week, playing)

@@ -349,6 +349,30 @@ def _waiver_adds_table(bundle) -> str:
     return "\n".join(rows)
 
 
+def _waiver_alternates_table(bundle) -> str:
+    """Mirrors ``waivers/render._alternates_table`` — see its note on why it is
+    a separate table rather than more rows in the adds table above."""
+    if not bundle.alternates:
+        return ""
+    rows = ["<h3>Also consider adding</h3>",
+            "<p class='note'>No roster spot open for these — they clear the same "
+            "bar as the table above.</p>",
+            "<table><thead><tr><th>Add</th><th>Pos</th><th class='num'>Depth</th>"
+            "<th>Bid</th><th>Why</th></tr></thead><tbody>"]
+    for t in bundle.alternates:
+        why = "; ".join(t.reasons) or "—"  # no drop line to skip here
+        depth = "—" if t.depth_ratio is None else f"{t.depth_ratio:.2f}"
+        rows.append(
+            f"<tr><td class='start'>{escape(t.score.player.name)}</td>"
+            f"<td>{escape(t.score.player.position)}</td>"
+            f"<td class='num'>{depth}</td>"
+            f"<td>{escape(t.bid or '—')}</td>"
+            f"<td>{escape(why)}</td></tr>"
+        )
+    rows.append("</tbody></table>")
+    return "\n".join(rows)
+
+
 def _waiver_drops_table(bundle) -> str:
     if not bundle.drops:
         return ""
@@ -433,6 +457,7 @@ def _waiver_body(bundle) -> list[str]:
     if bundle.caveat:
         body.append(f"<div class='callout'>⚠️ {escape(bundle.caveat)}</div>")
     body.append(_waiver_adds_table(bundle))
+    body.append(_waiver_alternates_table(bundle))
     body.append(_waiver_drops_table(bundle))
     body.append(_waiver_trades(bundle))
     body.append(_waiver_lists(bundle))

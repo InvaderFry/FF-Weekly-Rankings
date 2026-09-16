@@ -692,3 +692,69 @@ def test_both_renderers_carry_the_empty_stash_sentence():
 
     html = build_waivers_html(b.week, [b], "2026-09-09")
     assert "Stash watch" in html and sentence in html
+
+
+# --- "Also consider adding": adds with no roster spot behind them -----------
+def _alternates_bundle():
+    b = _bundle(adds=1, trades=0)
+    b.alternates = [
+        WaiverTarget(score=_ps("a1", "Spare Back", "RB", 66.0), depth_ratio=0.88,
+                     bid="bid ~$6 (8% of your $78 left)",
+                     reasons=("rostered in 12% of leagues",)),
+        WaiverTarget(score=_ps("a2", "No Ratio Guy", "WR", 60.0), depth_ratio=None,
+                     bid="", reasons=()),
+    ]
+    return b
+
+
+def test_all_three_renderers_carry_the_alternates_section():
+    """One bundle field, three renderers — the failure this repo keeps hitting is
+    a fix that reaches the digest and not the dashboard beside it."""
+    b = _alternates_bundle()
+    md = render_waiver_digest(9, [b])
+    html = build_waivers_html(9, [b], "2026-09-09")
+    payload = json.dumps(build_waiver_payload(9, [b]))
+
+    for rendered in (md, html, payload):
+        assert "Also consider" in rendered
+        assert "Spare Back" in rendered
+        assert "No Ratio Guy" in rendered
+
+
+def test_the_alternates_table_shows_no_drop_column():
+    """There is no drop — that is the entire distinction from the table above,
+    and a column of em dashes would read as data the report failed to fetch."""
+    md = render_waiver_digest(9, [_alternates_bundle()])
+    block = md.split("Also consider")[1].split("Conditional drop")[0]
+    assert "| Add | Pos | Depth | Bid | Why |" in block
+    assert "Drop for him" not in block
+
+    html = build_waivers_html(9, [_alternates_bundle()], "2026-09-09")
+    alt = html.split("Also consider")[1].split("Conditional drop")[0]
+    assert "<th>Drop for him</th>" not in alt
+
+
+def test_a_missing_depth_ratio_renders_as_a_dash_in_the_alternates_table():
+    """Same contract as the adds table's Depth and the drop table's ROS rank:
+    renderers tolerate a target built outside ``pick_alternates``."""
+    md = render_waiver_digest(9, [_alternates_bundle()])
+    row = [ln for ln in md.splitlines() if "No Ratio Guy" in ln][0]
+    assert "| — |" in row
+
+
+def test_an_empty_alternates_list_renders_nothing_at_all():
+    """No reason sentence here, unlike the adds and stash sections: the adds
+    table above already accounts for the wire, and silence means only that it
+    took everything worth taking."""
+    b = _bundle(adds=1, trades=0)
+    assert b.alternates == []
+    assert "Also consider" not in render_waiver_digest(9, [b])
+    assert "Also consider" not in build_waivers_html(9, [b], "2026-09-09")
+    assert "Also consider" not in json.dumps(build_waiver_payload(9, [b]))
+
+
+def test_the_discord_message_still_fits_its_budget_with_alternates():
+    bundles = [_alternates_bundle() for _ in range(MAX_EMBEDS + 3)]
+    payload = build_waiver_payload(9, bundles)
+    assert len(payload["embeds"]) <= MAX_EMBEDS
+    assert len(json.dumps(payload["embeds"])) <= MAX_CHARS

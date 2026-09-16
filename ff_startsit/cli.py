@@ -890,6 +890,7 @@ def _waiver_bundles(args, settings: Settings, week: int) -> list:
                 lsettings, _league_label(profile) or profile.name, provider,
                 players, week, limit=limit,
                 max_adds=lsettings.waiver_max_adds,
+                max_alternates=lsettings.waiver_max_alternates,
                 max_trades=lsettings.max_trade_ideas,
                 include_trades=include_trades,
                 include_columns=include_columns,
