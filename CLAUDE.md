@@ -617,6 +617,59 @@ reason a piece of it is shaped the way it is.
   `len(teams)` in `build_bundle`, floored by `MIN_LEAGUE_TEAMS` (4) — a partial
   team parse understates every position's demand, which reads the whole wire as
   filler and empties the report, turning an outage into "nothing worth adding".
+- **How many adds a position gets is the league's answer, not a constant.**
+  `score.add_position_cap` caps recommended adds at what the league *starts*
+  there, and applies only to `CAPPED_ADD_POSITIONS` (QB, TE, K, DEF) — RB and WR
+  are deliberately uncapped, because a flex slot, a bye and an injury all cash in
+  running-back and receiver depth while a third quarterback in a one-QB league is
+  a bench body who can never enter the lineup. The cap reads `roster_slots`, so a
+  2-QB or 2-TE league gets two without a special case, and it adds
+  `flex_slots["SUPER_FLEX"]` back **for QB only**: a superflex league's second
+  quarterback is a weekly starter recorded there rather than in `roster_slots`
+  (see `LeagueRules.flex_slots`). An ordinary `FLEX` must *not* raise the TE cap
+  — it takes RB/WR/TE and the body filling it is almost never the second tight
+  end, so counting it would reintroduce exactly the row this removes.
+
+  This replaced a streamer-specific trick inside `pick_adds` that stripped a
+  position's remaining drops after its first pick at that position. That held K
+  and DEF to one and said nothing about QB or TE, so a one-QB league could be
+  told to add three quarterbacks; the cap subsumes it for all four positions and
+  `tests/test_waiver_score.py` pins that K and DEF did not lose the guard in the
+  swap.
+- **The adds table runs out of roster spots long before it runs out of players.**
+  Every target in `pick_adds` consumes a **distinct** drop, so the loop stops on
+  `not available_drops` and a tight roster produces a three-row table on a week
+  the wire is full — with nothing on the page saying which of those two it was.
+  Raising `max_adds` cannot fix that, which is why `score.pick_alternates` exists
+  and renders as a separate **"Also consider adding"** section
+  (`WaiverBundle.alternates`, ceiling `FF_WAIVER_MAX_ALTERNATES`, default 5).
+
+  It is the same candidates, sorted the same way, against the same drops, minus
+  the pairing: a player qualifies only by passing `_worth_adding` against *some*
+  drop this league offered — the identical test, not a lower bar — so the section
+  honestly reads "these are adds, you are out of spots" rather than a second-tier
+  ranking. `_add_candidates` and `_build_target` are shared by both functions
+  rather than copied, for the reason `add_candidate_ratio` was extracted from
+  `pick_adds`: the second list only means what it says while the two agree about
+  who the candidates are and in what order.
+
+  Three rules hold. The position caps **carry over** from `pick_adds` into
+  `pick_alternates`, so a candidate the cap displaced is removed rather than
+  demoted one heading — otherwise the same three quarterbacks stay on the page
+  and the cap bought nothing. An alternate is **never** folded into
+  `adds`: every `adds` entry is a claim instruction the Discord renderer emits as
+  "drop X for Y", and these carry no drop, so folding them in would print an add
+  list whose Drop column was half empty. And the ceiling is a **ceiling, not a
+  target** — a quiet wire yields an empty section and nothing pads it out, which
+  is also why this section alone has no `no_*_reason` companion: the adds table
+  above already accounts for the wire, and silence here means only that it took
+  everything worth taking.
+
+  Two knock-ons. `WaiverBundle.no_adds_at_positions` counts alternates as
+  `filled`, because a receiver in this section *did* beat someone you could drop
+  and "none beat anyone you could drop" would be false about his position. And
+  `build_bundle` passes adds **and** alternates as `taken` to `find_stashes` /
+  `stash_candidates`, so a player named once is not named again below.
 - **A missing ECR is not a bad ECR.** FantasyPros ranks 40-75 per position; most
   of a waiver pool is below that line and a bye-week player falls off it
   entirely. Without ECR the blend runs on injury alone and returns a healthy

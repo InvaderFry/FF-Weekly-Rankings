@@ -208,6 +208,13 @@ class WaiverBundle:
     week: int
     rules: LeagueRules = field(default_factory=LeagueRules)
     adds: list[WaiverTarget] = field(default_factory=list)
+    #: Adds that clear the same bar as ``adds`` but had no droppable body left to
+    #: pair with — ``score.pick_alternates``. Rendered as a separate "Also
+    #: consider adding" section with no Drop column, because there is no drop:
+    #: ``WaiverTarget.drop`` and ``margin`` are both ``None`` here. Kept out of
+    #: ``adds`` deliberately — the Discord renderer emits a claim instruction per
+    #: ``adds`` entry ("drop X for Y"), and these carry no such instruction.
+    alternates: list[WaiverTarget] = field(default_factory=list)
     drops: list[DropCandidate] = field(default_factory=list)
     trades: list[TradeIdea] = field(default_factory=list)
     #: Whether ``suggest_trades`` actually ran. An empty ``trades`` otherwise
@@ -356,7 +363,11 @@ class WaiverBundle:
                  if n and pos.upper() not in STREAM_POSITIONS}
         if not slots:
             return None
-        filled = {t.score.player.position.upper() for t in self.adds}
+        # Alternates count as filled: a receiver in the "Also consider" section
+        # did beat someone you could drop, so "none beat anyone you could drop"
+        # would be false about the position he is standing in.
+        filled = {t.score.player.position.upper()
+                  for t in list(self.adds) + list(self.alternates)}
         weighed: list[str] = []
         unranked: list[str] = []
         for pos in ROSTER_ORDER:

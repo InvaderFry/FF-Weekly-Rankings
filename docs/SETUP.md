@@ -26,7 +26,7 @@ set it in both places.
 | `FANTASYPROS_API_KEY` | ECR via API (optional) | FantasyPros; without it the app scrapes the public page |
 | `DISCORD_WEBHOOK_URL` | Discord notifications (optional) | Discord webhook ([steps](#5-discord-optional)) |
 | `SLEEPER_USERNAME`, `SLEEPER_LEAGUE_ID` | Sleeper roster (alternative to ESPN) | Your Sleeper account |
-| `FF_WAIVER_LIMIT`, `FF_WAIVER_MAX_ADDS`, `FF_TRADE_SUGGESTIONS`, `FF_MAX_TRADE_IDEAS`, `FF_COLUMN_SCRAPE` | Waiver/trade report (optional) | Sensible defaults baked in ([steps](#7-waiver-wire--trades)) |
+| `FF_WAIVER_LIMIT`, `FF_WAIVER_MAX_ADDS`, `FF_WAIVER_MAX_ALTERNATES`, `FF_TRADE_SUGGESTIONS`, `FF_MAX_TRADE_IDEAS`, `FF_COLUMN_SCRAPE` | Waiver/trade report (optional) | Sensible defaults baked in ([steps](#7-waiver-wire--trades)) |
 | `FF_SCORING`, `FF_WEIGHT_*`, `FF_INJURY`, `FF_WEATHER`, `FF_CLOSE_CALL_THRESHOLD`, `FF_CLOSE_RAW_GAP_*`, `FF_PRESEASON_FILL` | Tuning (all optional) | Sensible defaults baked in — see `.env.example` |
 
 ## 1. Local setup (`.env`)
@@ -459,6 +459,7 @@ The knobs are all optional:
 |---|---|---|
 | `FF_WAIVER_LIMIT` | `150` | Free agents considered per league, in the platform's own relevance order |
 | `FF_WAIVER_MAX_ADDS` | `8` | Most adds (and drop candidates) listed per league |
+| `FF_WAIVER_MAX_ALTERNATES` | `5` | Ceiling on the "Also consider adding" list — free agents who clear the add bar but have no roster spot left. `0` turns the section off |
 | `FF_TRADE_SUGGESTIONS` | `1` | `0` removes the trade section |
 | `FF_MAX_TRADE_IDEAS` | `5` | Cap on trade ideas per league |
 | `FF_COLUMN_SCRAPE` | `1` | `0` skips fetching the CBS/Yahoo waiver columns |

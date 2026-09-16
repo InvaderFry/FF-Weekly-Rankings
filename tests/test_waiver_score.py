@@ -10,9 +10,11 @@ from ff_startsit.models import Player, SignalValue
 from ff_startsit.sources.base import Signal
 from ff_startsit.waivers.models import (ACQ_FAAB, ACQ_PRIORITY, ACQ_UNKNOWN,
                                         LeagueRules, PoolPlayer, WaiverTarget)
-from ff_startsit.waivers.score import (bye_gaps, dedupe_players, depth_ratio,
+from ff_startsit.waivers.score import (add_position_cap, bye_gaps,
+                                       dedupe_players, depth_ratio,
                                        droppable, find_stashes, has_ecr,
-                                       keep_counts, pick_adds, score_positions,
+                                       keep_counts, pick_adds, pick_alternates,
+                                       score_positions,
                                        signal_coverage, starter_demand,
                                        suggest_bid)
 
@@ -647,3 +649,183 @@ def test_stash_candidates_counts_what_the_gates_rejected():
     # A wire with nobody shelved or on bye was not weighed at all -- a genuinely
     # quiet section, not a gate that held.
     assert stash_candidates(index, [healthy], taken=set(), bye_teams=set()) == 0
+
+
+# --- per-position add caps ------------------------------------------------
+def test_a_one_qb_league_is_never_told_to_add_three_quarterbacks():
+    """A backup you cannot start is not worth a roster spot, and the report was
+    spending rows on him. The cap comes from what the league *starts*, so this
+    is one QB here and two in the superflex test below."""
+    roster = [_p("r1", "My QB", "QB"), _p("r2", "Bench QB", "QB"),
+              _p("r3", "Spare QB", "QB"), _p("r4", "Third QB", "QB")]
+    pool = [PoolPlayer(_p("f1", "Best FA QB", "QB")),
+            PoolPlayer(_p("f2", "Next FA QB", "QB")),
+            PoolPlayer(_p("f3", "Third FA QB", "QB"))]
+    ranks = {"r1": 3, "r2": 26, "r3": 28, "r4": 30,
+             "f1": 8, "f2": 9, "f3": 10}
+    _, index = _score(roster + [pp.player for pp in pool], ranks)
+    rules = LeagueRules(roster_slots={"QB": 1}, team_count=12)
+
+    drops = droppable([index[p.key] for p in roster], rules)
+    assert len(drops) >= 3          # the spots are there; the cap is what binds
+    adds = pick_adds(index, pool, drops, rules)
+    assert [t.score.player.key for t in adds] == ["f1"]
+
+
+def test_superflex_raises_the_quarterback_cap_to_two():
+    """``SUPER_FLEX`` lives in ``flex_slots``, not ``roster_slots`` — a cap read
+    off the latter alone would hold a two-QB lineup to one add."""
+    roster = [_p("r1", "My QB", "QB"), _p("r2", "Bench QB", "QB"),
+              _p("r3", "Spare QB", "QB"), _p("r4", "Third QB", "QB")]
+    pool = [PoolPlayer(_p("f1", "Best FA QB", "QB")),
+            PoolPlayer(_p("f2", "Next FA QB", "QB")),
+            PoolPlayer(_p("f3", "Third FA QB", "QB"))]
+    ranks = {"r1": 3, "r2": 26, "r3": 28, "r4": 30,
+             "f1": 8, "f2": 9, "f3": 10}
+    _, index = _score(roster + [pp.player for pp in pool], ranks)
+    rules = LeagueRules(roster_slots={"QB": 1}, flex_slots={"SUPER_FLEX": 1},
+                        team_count=12)
+
+    adds = pick_adds(index, pool, droppable([index[p.key] for p in roster], rules),
+                     rules)
+    assert [t.score.player.key for t in adds] == ["f1", "f2"]
+
+
+def test_the_tight_end_cap_is_not_raised_by_an_ordinary_flex_slot():
+    """A FLEX takes RB/WR/TE and is almost never filled by the second tight end,
+    so counting it toward the TE cap would reintroduce the row this removes."""
+    rules = LeagueRules(roster_slots={"TE": 1, "RB": 2, "WR": 3},
+                        flex_slots={"FLEX": 2}, team_count=12)
+    assert add_position_cap("TE", rules) == 1
+    assert add_position_cap("QB", rules) == 1
+    # RB and WR are uncapped: a flex slot, a bye and an injury all cash in depth.
+    assert add_position_cap("RB", rules) is None
+    assert add_position_cap("WR", rules) is None
+
+
+def test_a_two_te_league_is_allowed_two_tight_end_adds():
+    rules = LeagueRules(roster_slots={"TE": 2}, team_count=12)
+    assert add_position_cap("TE", rules) == 2
+
+
+def test_running_backs_are_not_capped():
+    """The point of the cap is a body who can never enter the lineup. Three
+    running backs is an ordinary week's advice, not noise."""
+    roster = [_p("r1", "RB1", "RB"), _p("r2", "RB2", "RB"), _p("r3", "RB3", "RB"),
+              _p("r4", "RB4", "RB"), _p("r5", "RB5", "RB")]
+    pool = [PoolPlayer(_p("f1", "FA One", "RB")), PoolPlayer(_p("f2", "FA Two", "RB")),
+            PoolPlayer(_p("f3", "FA Three", "RB"))]
+    ranks = {"r1": 3, "r2": 8, "r3": 50, "r4": 55, "r5": 60,
+             "f1": 20, "f2": 22, "f3": 24}
+    _, index = _score(roster + [pp.player for pp in pool], ranks)
+    rules = LeagueRules(roster_slots={"RB": 2}, team_count=12)
+
+    adds = pick_adds(index, pool, droppable([index[p.key] for p in roster], rules),
+                     rules)
+    assert [t.score.player.key for t in adds] == ["f1", "f2", "f3"]
+
+
+# --- "Also consider adding" ----------------------------------------------
+def _alternates_fixture():
+    """One droppable body, three free agents who all beat him."""
+    roster = [_p("r1", "RB1", "RB"), _p("r2", "RB2", "RB"), _p("r3", "Cuttable", "RB")]
+    pool = [PoolPlayer(_p("f1", "FA One", "RB")), PoolPlayer(_p("f2", "FA Two", "RB")),
+            PoolPlayer(_p("f3", "FA Three", "RB"))]
+    ranks = {"r1": 3, "r2": 8, "r3": 70, "f1": 20, "f2": 22, "f3": 24}
+    _, index = _score(roster + [pp.player for pp in pool], ranks)
+    rules = LeagueRules(roster_slots={"RB": 2}, team_count=12)
+    drops = droppable([index[p.key] for p in roster], rules)
+    return index, pool, drops, rules
+
+
+def test_adds_run_out_of_roster_spots_before_they_run_out_of_players():
+    """The premise of the whole section: ``pick_adds`` stops on the drop list,
+    not on ``max_adds``, so a tight roster hides a wire full of useful players."""
+    index, pool, drops, rules = _alternates_fixture()
+    assert len(drops) == 1
+    assert [t.score.player.key for t in pick_adds(index, pool, drops, rules)] == ["f1"]
+
+
+def test_alternates_are_the_players_with_no_spot_left_for_them():
+    index, pool, drops, rules = _alternates_fixture()
+    adds = pick_adds(index, pool, drops, rules)
+    alts = pick_alternates(index, pool, drops, rules, adds)
+
+    assert [t.score.player.key for t in alts] == ["f2", "f3"]
+    # No drop is named because there is none — renderers show no Drop column and
+    # ``add_reasons`` omits its first line accordingly.
+    assert all(t.drop is None and t.margin is None for t in alts)
+    assert all(t.depth_ratio is not None for t in alts)
+    # The bid still stands: ``suggest_bid`` prices conviction off the add's own
+    # depth ratio, which does not depend on who he would replace.
+    assert all(t.bid for t in alts) or rules.acquisition_type == ACQ_UNKNOWN
+
+
+def test_an_alternate_must_clear_the_same_bar_as_a_real_add():
+    """Not a second-tier list with a lower bar: a free agent who beats nobody
+    you could drop is absent from both tables."""
+    roster = [_p("r1", "RB1", "RB"), _p("r2", "RB2", "RB"), _p("r3", "Cuttable", "RB")]
+    pool = [PoolPlayer(_p("f1", "FA One", "RB")), PoolPlayer(_p("f2", "Not Good", "RB"))]
+    ranks = {"r1": 3, "r2": 8, "r3": 40, "f1": 20, "f2": 75}
+    _, index = _score(roster + [pp.player for pp in pool], ranks)
+    rules = LeagueRules(roster_slots={"RB": 2}, team_count=12)
+    drops = droppable([index[p.key] for p in roster], rules)
+
+    adds = pick_adds(index, pool, drops, rules)
+    alts = pick_alternates(index, pool, drops, rules, adds)
+    assert [t.score.player.key for t in adds] == ["f1"]
+    assert alts == []
+
+
+def test_the_position_cap_binds_both_lists_together():
+    """A quarterback the cap removed from the adds table must not reappear one
+    heading down — that would leave the same three QBs on the page."""
+    roster = [_p("r1", "My QB", "QB"), _p("r2", "Bench QB", "QB"),
+              _p("r3", "Spare QB", "QB"), _p("r4", "Third QB", "QB")]
+    pool = [PoolPlayer(_p("f1", "Best FA QB", "QB")),
+            PoolPlayer(_p("f2", "Next FA QB", "QB"))]
+    ranks = {"r1": 3, "r2": 26, "r3": 28, "r4": 30, "f1": 8, "f2": 9}
+    _, index = _score(roster + [pp.player for pp in pool], ranks)
+    rules = LeagueRules(roster_slots={"QB": 1}, team_count=12)
+    drops = droppable([index[p.key] for p in roster], rules)
+
+    adds = pick_adds(index, pool, drops, rules)
+    assert [t.score.player.key for t in adds] == ["f1"]
+    assert pick_alternates(index, pool, drops, rules, adds) == []
+
+
+def test_alternates_never_repeat_a_recommended_add():
+    index, pool, drops, rules = _alternates_fixture()
+    adds = pick_adds(index, pool, drops, rules)
+    alts = pick_alternates(index, pool, drops, rules, adds)
+    assert not ({t.score.player.key for t in adds}
+                & {t.score.player.key for t in alts})
+
+
+def test_the_alternates_ceiling_is_a_ceiling_and_not_a_target():
+    """A quiet wire yields none and nothing pads the section out."""
+    index, pool, drops, rules = _alternates_fixture()
+    adds = pick_adds(index, pool, drops, rules)
+    assert len(pick_alternates(index, pool, drops, rules, adds,
+                               max_alternates=1)) == 1
+    assert pick_alternates(index, pool, drops, rules, adds,
+                           max_alternates=0) == []
+    # Nothing on the wire at all: an empty list, not five filler rows.
+    assert pick_alternates(index, [], drops, rules, adds) == []
+
+
+def test_only_one_kicker_is_ever_recommended():
+    """``pick_adds`` used to hold streamers to one by stripping their drops after
+    the first pick. ``add_position_cap`` replaced that with a rule that also
+    covers QB and TE — this pins that K and DEF did not lose the guard."""
+    roster = [_p("r1", "My K", "K"), _p("r2", "Spare K", "K"),
+              _p("r3", "Third K", "K")]
+    pool = [PoolPlayer(_p("f1", "Free K", "K")), PoolPlayer(_p("f2", "Other K", "K"))]
+    ranks = {"r1": 30, "r2": 31, "r3": 32, "f1": 2, "f2": 3}
+    _, index = _score(roster + [pp.player for pp in pool], ranks)
+    rules = LeagueRules(roster_slots={"K": 1}, team_count=12)
+    drops = droppable([index[p.key] for p in roster], rules)
+
+    adds = pick_adds(index, pool, drops, rules)
+    assert [t.score.player.key for t in adds] == ["f1"]
+    assert pick_alternates(index, pool, drops, rules, adds) == []

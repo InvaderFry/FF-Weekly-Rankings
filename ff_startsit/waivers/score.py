@@ -331,6 +331,114 @@ def viable_adds_by_position(index: dict[str, PlayerScore],
     return counts
 
 
+#: Positions where a second body you cannot start is not worth a roster spot, so
+#: the number of adds recommended there is capped at what the league starts.
+#:
+#: RB and WR are deliberately absent. A flex slot, a bye week and an injury all
+#: cash in running-back and receiver depth, so a third of either is a real
+#: recommendation; a third quarterback in a one-QB league is a bench body who can
+#: never enter the lineup, and the report was spending rows on him. K and DEF were
+#: already held to one by ``pick_adds`` stripping their drops after the first pick
+#: — an indirect mechanism that said nothing about QB or TE, and that this
+#: replaces for all four positions at once.
+CAPPED_ADD_POSITIONS = frozenset({"QB", "TE", "K", "DEF"})
+
+
+def add_position_cap(position: str, rules: LeagueRules) -> Optional[int]:
+    """How many adds at ``position`` a report may recommend — ``None`` for no cap.
+
+    Derived from the league rather than hardcoded at one, because "one QB" is only
+    right for the leagues that start one. ``roster_slots`` already carries a 2-QB
+    or 2-TE league's answer, and a superflex league's second quarterback is a
+    weekly starter recorded in ``flex_slots`` rather than ``roster_slots`` (see
+    ``LeagueRules.flex_slots``) — so ``SUPER_FLEX`` is added back here, and only
+    for QB. An ordinary ``FLEX`` deliberately does **not** raise the TE cap: it
+    takes RB/WR/TE, and the body filling it is almost never the second tight end.
+
+    The cap binds the two add lists *together*. A candidate displaced by it is not
+    demoted to "Also consider" — he is the row this exists to remove, and moving
+    him one heading down would leave the same three quarterbacks on the page.
+    """
+    pos = (position or "").upper()
+    if pos not in CAPPED_ADD_POSITIONS:
+        return None
+    cap = max(1, starting_slots(rules).get(pos, 1))
+    if pos == "QB":
+        cap += int(rules.flex_slots.get("SUPER_FLEX", 0) or 0)
+    return cap
+
+
+def _capped(position: str, rules: LeagueRules, counts: dict[str, int]) -> bool:
+    """Whether ``position`` has already had its allowance of recommended adds."""
+    cap = add_position_cap(position, rules)
+    return cap is not None and counts.get((position or "").upper(), 0) >= cap
+
+
+def _add_candidates(index: dict[str, PlayerScore], pool: Sequence[PoolPlayer],
+                    rules: LeagueRules) -> list[tuple[float, PlayerScore]]:
+    """Free agents worth a roster spot, in the order both add lists read.
+
+    Shared by ``pick_adds`` and ``pick_alternates`` rather than built twice, for
+    the reason ``add_candidate_ratio`` was extracted from ``pick_adds``: the
+    second list only means "the same players, minus the spots" while the two
+    agree about who the players are and what order they come in.
+
+    Streamers last, then shallowest first; ``final`` only breaks ties, where both
+    are at one position and it is a real comparison again.
+
+    The streamer key is not cosmetic. ``depth_ratio`` ranks by starter scarcity,
+    and a league starts one kicker and one defense, so the second-best defense
+    scores 2/8 = 0.25 while a genuinely useful TE17 scores 17/12 = 1.42 — and
+    every league's table opened with a defense and a kicker while the skill
+    players who actually decide a week sat below them. Scarcity is the right axis
+    *within* a position and the wrong one across this particular boundary, because
+    the points between DEF2 and DEF10 are nearly nothing. Ordering only: the
+    streamers are still listed, still bid on the same way (``suggest_bid`` caps
+    them), and nothing about who is worth adding moves.
+    """
+    candidates: list[tuple[float, PlayerScore]] = []
+    for pp in pool:
+        key = pp.player.key
+        ratio = add_candidate_ratio(index.get(key), pp, rules)
+        if ratio is None:
+            continue
+        candidates.append((ratio, index[key]))
+    candidates.sort(key=lambda c: (c[1].player.position in STREAM_POSITIONS,
+                                   c[0], -c[1].final))
+    return candidates
+
+
+def _build_target(score: PlayerScore, ratio: float, drop: Optional[PlayerScore],
+                  pool_by_key: dict[str, PoolPlayer], rules: LeagueRules,
+                  faab_remaining: Optional[float],
+                  journalist_ranks: dict[str, float],
+                  mentions: dict[str, list[ColumnMention]]) -> WaiverTarget:
+    """Assemble one recommended add, with or without a drop paired to it.
+
+    ``drop=None`` is the "Also consider" case and is not a degraded target: the
+    bid and the reasons are unchanged, because ``suggest_bid`` prices conviction
+    off the add's own depth ratio and ``add_reasons`` already omits its first line
+    when there is no drop to name. The only thing missing is the one thing that is
+    genuinely absent — a roster spot.
+    """
+    margin = None
+    if drop is not None and drop.player.position == score.player.position:
+        margin = score.final - drop.final
+    target = WaiverTarget(
+        score=score,
+        margin=margin,
+        drop=drop,
+        pool=pool_by_key.get(score.player.key),
+        depth_ratio=ratio,
+        journalist_avg=journalist_ranks.get(score.player.key),
+        mentions=tuple(mentions.get(score.player.key, ())),
+    )
+    target.bid = suggest_bid(target, rules, faab_remaining,
+                             conviction=_conviction(ratio))
+    target.reasons = tuple(add_reasons(target))
+    return target
+
+
 def pick_adds(index: dict[str, PlayerScore], pool: Sequence[PoolPlayer],
               drops: Sequence[DropCandidate], rules: LeagueRules,
               faab_remaining: Optional[float] = None,
@@ -341,7 +449,10 @@ def pick_adds(index: dict[str, PlayerScore], pool: Sequence[PoolPlayer],
 
     An add is only an add if there is a body to cut for him, so each target is
     matched to a distinct drop — a ranking with no roster to compare against would
-    just be a list of free agents, which is what every other site already gives you.
+    just be a list of free agents, which is what every other site already gives
+    you. That pairing is also the real length limit on this table: ``max_adds`` is
+    rarely what stops it, a roster with three droppable bodies is. ``pick_alternates``
+    is the answer to that, and exists precisely so this rule does not have to bend.
 
     Ordering and the worth-it test both read ``depth_ratio``, not ``final``.
     Dropping a WR to add an RB is an ordinary roster move, but ``rb.final -
@@ -349,64 +460,92 @@ def pick_adds(index: dict[str, PlayerScore], pool: Sequence[PoolPlayer],
     So the pairing stays, the *arithmetic* goes — ``margin`` is filled in only when
     the add and his drop share a position, and whether an add is worth making is
     decided by where he ranks against his own position's starter demand.
+
+    Per-position caps come from ``add_position_cap``, which replaced the old
+    streamer-specific trick of stripping a position's drops after its first pick.
+    That trick held K and DEF to one and left QB and TE uncapped, so a one-QB
+    league could be told to add three quarterbacks it could never start.
     """
     journalist_ranks = journalist_ranks or {}
     mentions = mentions or {}
     pool_by_key = {pp.player.key: pp for pp in pool}
 
-    candidates: list[tuple[float, PlayerScore]] = []
-    for key, pp in pool_by_key.items():
-        ratio = add_candidate_ratio(index.get(key), pp, rules)
-        if ratio is None:
-            continue
-        candidates.append((ratio, index[key]))
-    # Streamers last, then shallowest first; ``final`` only breaks ties, where
-    # both are at one position and it is a real comparison again.
-    #
-    # The streamer key is not cosmetic. ``depth_ratio`` ranks by starter
-    # scarcity, and a league starts one kicker and one defense, so the second-best
-    # defense scores 2/8 = 0.25 while a genuinely useful TE17 scores 17/12 = 1.42
-    # — and every league's table opened with a defense and a kicker while the
-    # skill players who actually decide a week sat below them. Scarcity is the
-    # right axis *within* a position and the wrong one across this particular
-    # boundary, because the points between DEF2 and DEF10 are nearly nothing.
-    # Ordering only: the streamers are still listed, still bid on the same way
-    # (``suggest_bid`` caps them), and nothing about who is worth adding moves.
-    candidates.sort(key=lambda c: (c[1].player.position in STREAM_POSITIONS,
-                                   c[0], -c[1].final))
-
     available_drops = list(drops)
+    counts: dict[str, int] = {}
     targets: list[WaiverTarget] = []
-    for ratio, score in candidates:
+    for ratio, score in _add_candidates(index, pool, rules):
         if len(targets) >= max_adds or not available_drops:
             break
+        position = score.player.position.upper()
+        if _capped(position, rules, counts):
+            continue
         drop = next((d for d in available_drops
                      if _worth_adding(score, d.score, rules)), None)
         if drop is None:
             continue
         available_drops.remove(drop)
-        if score.player.position in STREAM_POSITIONS:
-            # Alternatives are not instructions to roster several streamers.
-            available_drops = [d for d in available_drops
-                               if d.score.player.position != score.player.position]
-        margin = None
-        if drop.score.player.position == score.player.position:
-            margin = score.final - drop.score.final
-        pp = pool_by_key.get(score.player.key)
-        target = WaiverTarget(
-            score=score,
-            margin=margin,
-            drop=drop.score,
-            pool=pp,
-            depth_ratio=ratio,
-            journalist_avg=journalist_ranks.get(score.player.key),
-            mentions=tuple(mentions.get(score.player.key, ())),
-        )
-        target.bid = suggest_bid(target, rules, faab_remaining,
-                                 conviction=_conviction(ratio))
-        target.reasons = tuple(add_reasons(target))
-        targets.append(target)
+        counts[position] = counts.get(position, 0) + 1
+        targets.append(_build_target(score, ratio, drop.score, pool_by_key, rules,
+                                     faab_remaining, journalist_ranks, mentions))
     return targets
+
+
+def pick_alternates(index: dict[str, PlayerScore], pool: Sequence[PoolPlayer],
+                    drops: Sequence[DropCandidate], rules: LeagueRules,
+                    targets: Sequence[WaiverTarget],
+                    faab_remaining: Optional[float] = None,
+                    journalist_ranks: Optional[dict[str, float]] = None,
+                    mentions: Optional[dict[str, list[ColumnMention]]] = None,
+                    max_alternates: int = 5) -> list[WaiverTarget]:
+    """Free agents who clear the add bar but have no roster spot left to take.
+
+    The adds table is bounded by droppable bodies, not by how much the wire is
+    worth: every target in ``pick_adds`` consumes a distinct drop, so a tight
+    roster produces a three-row table on a week the wire is full of useful
+    players, and nothing on the page says which of those two it was. Raising
+    ``max_adds`` cannot fix that — the loop stops on ``not available_drops``.
+
+    So this is the same list with the same gate, minus the pairing. A player
+    qualifies when he passes ``_worth_adding`` against **some** drop this league
+    offered — the identical test, against the identical candidates, so the section
+    is honestly "these are adds, you are out of spots" rather than a second-tier
+    ranking with a lower bar. A candidate who beats nobody you could drop is not
+    here either.
+
+    ``counts`` carries over from ``targets``, so ``add_position_cap`` binds the two
+    lists together: a quarterback already recommended above means no quarterback
+    here, which is the whole point of the cap.
+
+    No drop is named, because there is none — ``margin`` stays ``None`` and
+    renderers show no Drop column. ``max_alternates`` is a ceiling on a naturally
+    variable list, not a target length: a quiet wire yields none and nothing pads
+    it out.
+    """
+    journalist_ranks = journalist_ranks or {}
+    mentions = mentions or {}
+    pool_by_key = {pp.player.key: pp for pp in pool}
+
+    taken = {t.score.player.key for t in targets}
+    counts: dict[str, int] = {}
+    for t in targets:
+        pos = t.score.player.position.upper()
+        counts[pos] = counts.get(pos, 0) + 1
+
+    out: list[WaiverTarget] = []
+    for ratio, score in _add_candidates(index, pool, rules):
+        if len(out) >= max_alternates:
+            break
+        if score.player.key in taken:
+            continue
+        position = score.player.position.upper()
+        if _capped(position, rules, counts):
+            continue
+        if not any(_worth_adding(score, d.score, rules) for d in drops):
+            continue
+        counts[position] = counts.get(position, 0) + 1
+        out.append(_build_target(score, ratio, None, pool_by_key, rules,
+                                 faab_remaining, journalist_ranks, mentions))
+    return out
 
 
 def _worth_adding(add: PlayerScore, drop: PlayerScore, rules: LeagueRules) -> bool:
