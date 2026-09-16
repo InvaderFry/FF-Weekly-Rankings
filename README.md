@@ -112,8 +112,7 @@ the variable takes precedence.
 
 During the final seven days before kickoff, start/sit uses live Week 1 data with
 an early-week banner, even before the season begins. Earlier preseason runs still
-use labeled samples. A September Wednesday report runs at 17:00 UTC in addition
-to the Thursday/Sunday schedule to cover Wednesday openers.
+use labeled samples.
 
 > **`ffstartsit: command not found`?** The command lives in `.venv/bin/`, so it's
 > only on your `PATH` once the venv is activated. Any of these work:
@@ -330,16 +329,16 @@ You don't need to run anything locally to use this on the go. GitHub Actions
 runners have internet access, so they run the tool for you and surface results in
 the GitHub mobile app. Three workflows ship in `.github/workflows/`:
 
-- **Weekly digest** (`weekly-report.yml`) — runs Thursday afternoon and Sunday
-  morning (and on-demand via *Actions → Run workflow*). Each run:
+- **Weekly digest** (`weekly-report.yml`) — runs Thursday morning and twice
+  Sunday morning (and on-demand via *Actions → Run workflow*). Each run:
   - posts your lineup + rankings as a **GitHub Issue** titled `Week N start/sit`
     (watch the repo → All Activity for a phone notification),
   - publishes a styled **HTML dashboard to GitHub Pages** (full lineup +
     rankings, with injury/close-call rows highlighted), and
   - **pings Discord** with the lineup, alerts, and a link to the dashboard — if a
     `DISCORD_WEBHOOK_URL` secret is set.
-- **Tuesday waivers** (`waivers.yml`) — runs Tuesday evening, after Monday night
-  football and before Wednesday-morning waivers process. Posts a `Week N waiver
+- **Tuesday waivers** (`waivers.yml`) — runs Tuesday mid-morning, after Monday
+  night football and well before Wednesday's waiver run. Posts a `Week N waiver
   wire` issue with adds, drops, bids, trade ideas and bye holes for every
   league, publishes them to `waivers.html` on the same Pages site, and pings
   Discord in a different colour so it's distinguishable at a glance from the
@@ -425,9 +424,20 @@ Notes:
 - Only the **repo owner's** comments trigger ChatOps, and only a fixed set of
   commands runs — secrets are never echoed.
 - Cron times are UTC and drift ~1h with daylight saving; edit the `cron:` lines in
-  `weekly-report.yml` / `waivers.yml` to taste. The waiver run is set for 7pm
-  Tuesday Central (6pm once standard time starts) — early enough to act before
-  Wednesday's waiver processing either way.
+  `weekly-report.yml` / `waivers.yml` to taste. Each one is placed by its
+  **worst-case** arrival, not its nominal time: GitHub starts a scheduled run
+  when its queue allows, and measured delays on this repo run from 18 minutes to
+  **8h01**, with September consistently worse than the summer. Two runs have
+  already published after their kickoff on the old schedule. Keep ~8h of margin
+  ahead of anything a run feeds, and note the runner's `date.today()` is UTC —
+  `season.is_rehearsal_window` reads it, so a slot that straddles UTC midnight
+  under load can give one preseason two rehearsals and the next none.
+- Sunday fires **twice** (11:00 and 13:00 UTC) rather than simply moving earlier.
+  Nothing is cached between runs, so a later run is a *fresher* run — it reads
+  live ECR, Vegas, injury and weather at execution time, including Sunday
+  inactives. The 11:00 pass is the floor that always lands; the 13:00 pass
+  supersedes it with better data when it arrives in time. The second pass
+  comments on the same week's issue instead of opening a new one.
 - ESPN cookies expire periodically — if the digest starts erroring, re-grab
   `ESPN_S2`/`ESPN_SWID` and update the secrets.
 

@@ -2,13 +2,32 @@ name: Weekly start/sit report
 
 # Posts your lineup + rankings as a GitHub Issue, publishes an HTML dashboard to
 # GitHub Pages, and (if configured) pings Discord with the summary + dashboard link.
-# Runs Thursday afternoon (before TNF) and Sunday morning (before the early games),
+# Runs Thursday morning (before TNF) and twice Sunday (before the early games),
 # and can be triggered manually from the GitHub mobile app (Actions -> Run workflow).
+#
+# Every cron here is set by its WORST-CASE arrival, not its nominal time. GitHub
+# runs a schedule when the queue allows: measured delays on this repo range from
+# 18 minutes to 8h01, and the September readings (2h38-4h11) are consistently
+# worse than the summer ones. A cron whose margin only covers the median is a
+# cron that publishes after kickoff a few times a season -- which already
+# happened twice on the old Thursday slot (2026-08-06 +3h59, 2026-08-27 +8h01)
+# and once on the old Sunday slot (2026-08-30 +4h11, landing 12:11pm CT).
+# Leave >=8h of margin ahead of any kickoff these feed.
+#
+# Nothing is cached between runs -- there is no actions/cache step and the only
+# file restored onto the runner is the decision log -- so a late run is not a
+# stale run. It reads live ECR, Vegas, injury and weather at execution time.
+# That is why Sunday fires twice rather than simply moving earlier: the 11:00
+# pass is the guaranteed-to-land floor, and the 13:00 pass supersedes it with
+# post-inactives data whenever it arrives in time. The issue step matches on
+# the season+week title and comments on the existing issue, so the second pass
+# appends rather than duplicating, and the shared Pages concurrency group makes
+# the two deploys queue instead of race.
 on:
   schedule:
-    - cron: "0 21 * * 4"   # Thursday ~21:00 UTC (≈5pm ET EDT / 4pm EST)
-    - cron: "0 13 * * 0"   # Sunday   ~13:00 UTC (≈9am ET EDT / 8am EST)
-    - cron: "0 17 * 9 3"   # September Wednesdays, ahead of early season openers
+    - cron: "0 15 * * 4"   # Thursday ~15:00 UTC (≈10am CT) -- TNF is ~7:15pm CT
+    - cron: "0 11 * * 0"   # Sunday   ~11:00 UTC (≈6am CT)  -- the floor
+    - cron: "0 13 * * 0"   # Sunday   ~13:00 UTC (≈8am CT)  -- fresher if it lands
   workflow_dispatch:
     inputs:
       artifact_only:

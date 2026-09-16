@@ -1,15 +1,35 @@
 name: Tuesday waiver wire & trades
 
 # Posts waiver-wire adds/drops and trade ideas as a GitHub Issue, republishes the
-# GitHub Pages site (both pages), and pings Discord — Tuesday evening, after
-# Monday night football has settled the week and before Wednesday-morning waivers
-# process. Can also be run on demand (Actions -> Run workflow) from the phone.
+# GitHub Pages site (both pages), and pings Discord — Tuesday, after Monday
+# night football has settled the week and well before waivers process at 3:00am
+# CT Wednesday. Can also be run on demand (Actions -> Run workflow) from the phone.
 on:
   schedule:
-    # 00:00 UTC Wednesday = 7:00pm Tuesday CDT. GitHub cron has no daylight
-    # saving, so from early November this lands at 6:00pm CST — still Tuesday
-    # evening, still ahead of Wednesday's waiver run. Edit to taste.
-    - cron: "0 0 * * 3"
+    # 15:00 UTC Tuesday = 10:00am CDT / 9:00am CST. Two constraints fix this
+    # slot, and both are about the WORST case rather than the nominal time --
+    # GitHub starts a scheduled run when its queue allows, and this repo has
+    # measured delays from 18 minutes to 8h01.
+    #
+    # 1. It must still be Tuesday *in CT* when it lands, with room before the
+    #    3:00am Wednesday waiver run. Worst case here is 23:01 UTC = 6:01pm CT
+    #    Tuesday, roughly nine hours clear. The old 00:00 UTC Wednesday slot
+    #    (7:00pm Tuesday CT) had already drifted to 10:57pm CT on +3h57, and an
+    #    8h01 delay would have landed it at 3:01am CT -- at the waiver run.
+    #
+    # 2. It must still be Tuesday *in UTC* when it lands, because the runner's
+    #    date.today() is UTC and season.is_rehearsal_window reads it. The
+    #    rehearsal window is exactly 7 days wide so that precisely one weekly
+    #    cron falls inside it (tests/test_preseason.py). A slot that straddles
+    #    UTC midnight under load resolves to Tuesday some weeks and Wednesday
+    #    others, which can hand one preseason two rehearsals and the next none.
+    #    15:00 + 8h01 = 23:01 UTC keeps every firing on one UTC weekday, the
+    #    same property the old 00:00 UTC slot had.
+    #
+    # Landing midday rather than evening is also fine for waivers/columns.py:
+    # the Tuesday columns post in the morning, and a column that is not up yet
+    # degrades through ColumnFetcher.unavailable -- it costs quotes, not picks.
+    - cron: "0 15 * * 2"
   workflow_dispatch:
     inputs:
       artifact_only:
