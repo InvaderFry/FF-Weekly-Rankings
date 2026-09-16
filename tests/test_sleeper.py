@@ -34,10 +34,21 @@ class _StubClient(SleeperClient):
         return self._state
 
 
-def test_preseason_week_is_not_reported_as_a_fantasy_week():
+def test_preseason_week_is_not_reported_as_a_fantasy_week(monkeypatch):
     """/state/nfl counts preseason games in August — week 3 there is the third
-    preseason game, not Week 3 of the season."""
-    assert _StubClient({"season_type": "pre", "week": 3}).current_week() == 1
+    preseason game, not Week 3 of the season.
+
+    The invariant is that a preseason reading **defers to ``date_week``**,
+    whatever ``date_week`` happens to say. Asserting a literal ``1`` here instead
+    pinned the calendar rather than the behaviour: it only held before kickoff,
+    where ``date_week`` returns 1, and turned every in-season run of the suite
+    red on a test about August. Patching the seam is what makes the sharp
+    assertion — the result is the fallback and *not* the preseason number —
+    available on any date, including a real Week 3, where the two collide and an
+    equality check alone would pass for the wrong reason.
+    """
+    monkeypatch.setattr("ff_startsit.roster.sleeper.date_week", lambda: 11)
+    assert _StubClient({"season_type": "pre", "week": 3}).current_week() == 11
 
 
 def test_regular_season_week_is_taken_as_is():
