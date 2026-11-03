@@ -228,6 +228,13 @@ class WaiverBundle:
     #: for the same reason ``pool_size`` is the one ``no_adds_reason`` needs.
     stash_pool: int = 0
     byes: list[ByeGap] = field(default_factory=list)
+    #: The Tuesday expert board (``waivers/board.py``): every free agent a
+    #: writer named, each writer's reading side by side. Display only — it
+    #: changes no add, drop or bid.
+    expert_rows: list = field(default_factory=list)
+    #: The boards behind ``expert_rows``, in column order, carrying each
+    #: writer's unavailable reason when his article couldn't be read.
+    expert_boards: list = field(default_factory=list)
     sources: list[tuple[str, str]] = field(default_factory=list)  # (author, url)
     #: Surfaced by every renderer, like ``report.Lineup.caveat`` — the honest
     #: "here is what this report could not see this week" line.
@@ -237,6 +244,12 @@ class WaiverBundle:
     #: started" and "this league's free-agent list was unreachable" stay
     #: distinguishable to every renderer.
     banner: Optional[str] = None
+    #: Which kind of run produced this: ``"live"``, ``"rehearsal"`` (preseason
+    #: by the calendar, live signals) or ``"preseason"`` (the refusal). Carried
+    #: into the retry marker, because with no writer board read all three share
+    #: a season, week and read list, and a refusal or rehearsal already posted
+    #: for Week 1 would otherwise suppress the live Week 1 report.
+    mode: str = "live"
     #: Your drafted roster, shown under a banner that has nothing else to say.
     #: Only populated on the preseason refusal, where the report would otherwise
     #: be a warning and nothing else — and where the roster is the one real thing

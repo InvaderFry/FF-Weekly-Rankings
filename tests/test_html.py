@@ -151,13 +151,15 @@ def test_analyst_html_warning_note_silence_and_escaping():
     conflict = AnalystConflict('Justin Boone', 'RB', 'Alpha', 'Bravo <script>', 19, 6, False, True)
     rec.analyst_conflicts = [conflict]
     html = _position_section('RB', rec)
-    assert "class='callout analyst'" in html and 'Justin Boone disagrees' in html
-    assert 'Bravo &lt;script&gt;' in html and '<script>' not in html
-    rec.analyst_conflicts = [replace(conflict, preferred='Bravo', leader_rank=8, material=False)]
-    html = _position_section('RB', rec)
-    assert "class='analyst-note'" in html and 'within 2 spots' in html
+    # A plain note under the table now, marked; never a callout box.
+    assert "class='analyst-note'" in html and '▲ Justin Boone disagrees' in html
     assert "class='callout analyst'" not in html
     assert html.index('analyst-note') > html.index('</table>')
+    assert 'Bravo &lt;script&gt;' in html and '<script>' not in html
+    # A minor inversion is readable in the Boone column itself: no sentence.
+    rec.analyst_conflicts = [replace(conflict, preferred='Bravo', leader_rank=8, material=False)]
+    html = _position_section('RB', rec)
+    assert 'within 2 spots' not in html and 'analyst-note' not in html
 
 
 def test_analyst_unposted_note_renders_below_the_table_and_escapes():

@@ -143,7 +143,30 @@ ffstartsit notify --url https://you.github.io/repo/   # push to a Discord webhoo
 ffstartsit publish --report report.md --dashboard site/index.html --discord --url https://you.github.io/repo/
 ```
 
-### Preferred journalists (optional view)
+### Expert columns (side by side)
+
+Every position table shows each trusted source's own positional rank beside
+the blended score:
+
+| Column | Source | Enabled by |
+|---|---|---|
+| **FP** | FantasyPros consensus | always |
+| **Boone** | Justin Boone's Yahoo ranks | `FF_ANALYSTS=boone` |
+| **CBS** | CBS staff consensus (average of CBS's analysts) | `FF_ANALYSTS=cbs` |
+| **Eisenberg**, **Richard** | each analyst's own column on that CBS page | `FF_ANALYSTS=cbs` |
+
+Use `FF_ANALYSTS=boone,cbs` for all of them. CBS publishes no half-PPR list, so
+half-PPR leagues show its PPR list with "(PPR)" in the column header. Discord
+gets the short form: for each close call, one line comparing FP, Boone and the
+CBS average. These columns never change the score, the pick or the close-call
+flag; they're there so you can see where the people you trust disagree. See
+[docs/EXPERT_BOARD_PLAN.md](docs/EXPERT_BOARD_PLAN.md) for what's coming.
+
+### Preferred journalists (optional view, paid FantasyPros key)
+
+> You probably want the **expert columns** above instead: Boone, CBS, Eisenberg
+> and Richard need no key. This older section only serves FantasyPros' paid
+> per-expert ranks.
 
 If you trust a few specific rankers — say Justin Boone, Jamey Eisenberg, and
 Dave Richard — you can add a **"Preferred journalists"** section to the report
@@ -167,7 +190,41 @@ ffstartsit report                    # digest now ends with the section
 These ranks also annotate every add in the waiver report, so this variable is
 worth setting even if you never look at the journalists section itself.
 
+### Trade values (`values`, Wednesdays)
+
+```bash
+ffstartsit values --all-leagues                 # every league's roster on both charts
+ffstartsit values --boone-chart <URL>           # if Boone's pages don't link this week's charts yet
+```
+
+Your skill players on **Dave Richard's** trade chart (posted Tuesday; he notes it
+doubles as rest-of-season rankings) and **Justin Boone's** four trade value
+charts (posted Wednesday), with FantasyPros' rest-of-season rank beside them. A
+player the two charts rank far apart is flagged ("Boone much higher (RB12 vs
+RB24)") — a buy-low or sell-high lead. Each trade idea from the waiver pass is
+judged on each chart separately ("Richard +6 · Boone −3"), because the two
+charts use different scales and adding them would mean nothing. Boone publishes
+no standard-scoring values, so standard leagues see him for quarterbacks only.
+
+The **Wednesday values** workflow (`values.yml`) runs this at 4:30pm Central,
+with an evening retry that posts only if it found a chart the first run
+couldn't, and publishes `values.html` plus the full tables to Discord.
+
 ### Waiver wire & trades (`waivers`)
+
+**What the writers say.** With `FF_ANALYSTS=boone,cbs`, each league's report
+opens with a table of every free agent named by Justin Boone's waiver column,
+Jamey Eisenberg's waiver column or Dave Richard's trade chart, side by side
+(an illustrative row):
+
+| Player | Pos | Boone | Eisenberg | Richard | FP ROS | This tool |
+|---|---|---|---|---|---|---|
+| Mike Washington Jr. | RB | RB1 · $29 · top-10 #1 | RB2 · 10%+ FAAB | 9 · RB34 | #88 | add (drop …) |
+
+Boone's bids are FAB dollars, Eisenberg's are a share of remaining FAAB, and
+Richard's number is his trade/rest-of-season value for your scoring. A writer
+whose article isn't up yet is named under the table rather than silently left
+out. Only free agents in *that* league are listed.
 
 The Tuesday-evening companion to the Sunday lineup. Where the rest of the app
 asks *who do I start?*, this asks *who do I acquire?* — and it can see your whole
@@ -224,13 +281,11 @@ Each league's section gives you:
   where both starting lineups improve — and shows the gain on each side.
 - **Stash watch and bye-week holes**, including ranked players who are only on
   the wire because their team is on bye this week.
-- **What the writers said** — quotes from Justin Boone's, Jamey Eisenberg's and
-  Dave Richard's weekly waiver columns, matched against your free-agent pool and
-  linked back to each piece. The two halves fail independently: if a column
-  can't be read, the quotes vanish and nothing else does. Note the *ranks* half
-  needs `FANTASYPROS_API_KEY` and an analyst FantasyPros actually ranks — of
-  those three, only Boone qualifies, so the columns are what the CBS pair
-  contribute. `ffstartsit experts --verify` says which of yours are usable.
+- **What the writers say** — with `FF_ANALYSTS=boone,cbs`, the board described
+  above, with each writer's own words quoted under it and linked to the column
+  ("Why, in their words"). Without the board, quotes from the writers' columns
+  still appear for the suggested adds. If a column can't be read, its quotes
+  vanish and nothing else does.
 
 Two things it deliberately does not do. It adds **no blend signal**, so no
 start/sit ranking changes. And it is **never written to the results log** — a
@@ -337,12 +392,14 @@ the GitHub mobile app. Three workflows ship in `.github/workflows/`:
     rankings, with injury/close-call rows highlighted), and
   - **pings Discord** with the lineup, alerts, and a link to the dashboard — if a
     `DISCORD_WEBHOOK_URL` secret is set.
-- **Tuesday waivers** (`waivers.yml`) — runs Tuesday mid-morning, after Monday
-  night football and well before Wednesday's waiver run. Posts a `Week N waiver
-  wire` issue with adds, drops, bids, trade ideas and bye holes for every
-  league, publishes them to `waivers.html` on the same Pages site, and pings
-  Discord in a different colour so it's distinguishable at a glance from the
-  start/sit post.
+- **Tuesday waivers** (`waivers.yml`) — runs Tuesday afternoon Central, after
+  the writers' Tuesday articles and well before Wednesday's waiver run, with an
+  evening retry that posts only if it found an article the first pass couldn't.
+  Posts a `Week N waiver wire` issue with the writers' board, adds, drops, bids,
+  trade ideas and bye holes for every league, publishes them to `waivers.html`
+  on the same Pages site, and pings Discord in a different colour so it's
+  distinguishable at a glance from the start/sit post. The full writers' board
+  goes to Discord too, one message per league.
 - **ChatOps** (`chatops.yml`) — comment a slash command on any issue and the bot
   reply-comments the answer:
 
@@ -353,6 +410,7 @@ the GitHub mobile app. Three workflows ship in `.github/workflows/`:
   | `/compare Josh Allen \| Jalen Hurts` | head-to-head with close-call flag |
   | `/report` | the full digest on demand |
   | `/waivers` | waiver adds/drops + trade ideas (`/waivers all` for every league) |
+  | `/values` | your roster on Richard's and Boone's trade charts (`/values all`) |
 
   Inline options work on any command: `week N`, `source espn\|sleeper\|manual`,
   `league ID`, `team ID`, `league-name NAME` — e.g. `/rank WR week 5` or
@@ -412,9 +470,10 @@ same `id:Name,...` value as your local `.env`.
 For the **dashboard + Discord** delivery:
 - **Enable GitHub Pages once:** repo → *Settings → Pages → Build and deployment →
   Source = GitHub Actions*. After the next weekly run your dashboard lives at
-  `https://<owner>.github.io/<repo>/`, with the waiver report next to it at
-  `/waivers.html` (the two pages link to each other). Each deploy replaces the
-  whole site, so both workflows rebuild both pages and share a `concurrency`
+  `https://<owner>.github.io/<repo>/`, with the waiver report at
+  `/waivers.html` and the trade values at `/values.html` (the pages link to each
+  other). Each deploy replaces the whole site, so every workflow copies the
+  live versions of the pages it didn't build, and they share a `concurrency`
   group to keep their deploys from racing.
 - **Discord (optional):** create an incoming webhook (Discord → *Server Settings →
   Integrations → Webhooks → New Webhook → Copy URL*) and add it as the

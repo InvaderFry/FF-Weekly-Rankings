@@ -18,10 +18,11 @@ from .output.render import LINEUP_UNSCORED_NOTE, lineup_unscored_keys, md_cell, 
 from .engine.blend import flag_starter_boundary_pair
 from .pipeline import build_signals, log_deferred, recommend
 from .season import preseason_banner, season_year
+from .boards.boone import boone_board_or_none
+from .boards.fantasypros import fantasypros_weekly
 from .engine.analyst import detect_conflicts
 from .sources.analysts import AnalystFetcher, not_published_yet
-from .sources.journalists import (Expert, JournalistFetcher, JournalistRow,
-                                  JournalistView, parse_experts)
+from .sources.journalists import JournalistFetcher, JournalistView, parse_experts
 
 # A common 1QB/PPR-ish starting set used for the suggested lineup.
 LINEUP_SLOTS = ["QB", "RB", "RB", "WR", "WR", "TE", "FLEX", "K", "DEF"]
@@ -123,7 +124,8 @@ class LeagueBundle:
 def rank_each_position(settings: Settings, players: Sequence[Player], week: int,
                        log: bool = False,
                        signals: Optional[Sequence] = None,
-                       analyst_fetcher: Optional[AnalystFetcher] = None) -> dict[str, Recommendation]:
+                       analyst_fetcher: Optional[AnalystFetcher] = None,
+                       cbs_fetcher=None) -> dict[str, Recommendation]:
     """Rank each position group once. One scoring pass = one set of API calls.
 
     The signal instances are built once and reused across positions so each
@@ -150,6 +152,7 @@ def rank_each_position(settings: Settings, players: Sequence[Player], week: int,
                               exclude_unavailable=True,
                               defer_log=True)
     sample = any(getattr(signal, "is_sample", False) for signal in signals)
+    boone_ranks = None
     if settings.analysts == "boone" and sample:
         for rec in recs.values():
             rec.source_status.append((("analyst", "Justin Boone", settings.league_label),
@@ -157,6 +160,7 @@ def rank_each_position(settings: Settings, players: Sequence[Player], week: int,
     if settings.analysts == "boone" and not sample:
         fetcher = analyst_fetcher or AnalystFetcher(season_year(), settings.data_dir)
         ranks = fetcher.fetch(players, week, settings.scoring)
+        boone_ranks = ranks
         status = ranks.status(week, settings.league_label)
         for pos, rec in recs.items():
             # Ranks are kept on the rec so `flag_starter_boundaries` can redo
@@ -176,7 +180,74 @@ def rank_each_position(settings: Settings, players: Sequence[Player], week: int,
                     f"{'full' if settings.scoring == 'ppr' else 'half'}-PPR "
                     f"{'DST' if pos in {'DEF', 'DST'} else pos} rankings yet.")
             rec.source_status.append(status)
+    cbs_boards = []
+    if settings.cbs_rankings and not sample:
+        cbs_boards = cbs_boards_for(settings, players, week, cbs_fetcher,
+                                    schedule=_signal_schedule(signals))
+        line = cbs_status(settings, cbs_boards, cbs_fetcher)
+        for rec in recs.values():
+            rec.source_status.append(line)
+    attach_boards(recs.values(), boone_ranks, cbs_boards)
     return recs
+
+
+def _signal_schedule(signals):
+    """The week's schedule the signals already share, so CBS's matchup check
+    reads the same games Vegas and weather do (and costs no extra request)."""
+    for signal in signals or ():
+        schedule = getattr(signal, "schedule", None)
+        if schedule is not None:
+            return schedule
+    return None
+
+
+def cbs_boards_for(settings: Settings, players: Sequence[Player], week: int,
+                   fetcher=None, schedule=None) -> list:
+    """CBS consensus + Eisenberg + Richard boards. Never raises: an annotation
+    must not sink the start/sit run beside it."""
+    from .boards.cbs import CbsFetcher
+    try:
+        fetcher = fetcher or CbsFetcher(settings.data_dir, schedule=schedule)
+        return fetcher.fetch(players, week, settings.scoring)
+    except Exception as exc:  # pragma: no cover - fetch already degrades per position
+        print(f"warning: CBS rankings unavailable: {exc}", file=sys.stderr)
+        return []
+
+
+def cbs_status(settings: Settings, boards, fetcher=None) -> tuple[tuple, str]:
+    """One Data status line for the CBS columns in this league."""
+    label = settings.league_label or "This league"
+    which = "PPR list (CBS has no half-PPR list)" if settings.scoring == "half" else \
+        ("standard list" if settings.scoring == "std" else "PPR list")
+    consensus = boards[0] if boards else None
+    if consensus is None:
+        return ("board", "cbs", settings.league_label), f"{label}: CBS rankings unavailable"
+    line = f"{label}: CBS staff consensus, {which}"
+    if consensus.fetched_at:
+        line += (f", read {consensus.fetched_at:%Y-%m-%d %H:%M} UTC "
+                 "(fetch time, not CBS's update time)")
+    reasons = sorted(set(consensus.unavailable.values()))
+    if reasons:
+        line += "; " + "; ".join(reasons)
+    if fetcher is not None:
+        line += "".join(f"; {note}" for note in sorted(set(fetcher.status.values())))
+    return ("board", "cbs", settings.league_label), line
+
+
+def attach_boards(recs, boone_ranks=None, extra_boards=()) -> None:
+    """Hang the expert boards on every recommendation in one run.
+
+    Display-only: the boards sit beside the blend and never feed it (see
+    ``ff_startsit/boards``). One board object per source is shared across the
+    run's sections; each renderer reads only the players in front of it.
+    Column order is FP, Boone, then CBS consensus, Eisenberg, Richard.
+    """
+    recs = list(recs)
+    boards = [b for b in (fantasypros_weekly(recs), boone_board_or_none(boone_ranks))
+              if b is not None]
+    boards += [b for b in extra_boards if b is not None]
+    for rec in recs:
+        rec.expert_boards = list(boards)
 
 
 def rank_pooled(settings: Settings, cands: Sequence[Player], week: int,
@@ -240,7 +311,8 @@ def rank_flex_pool(settings: Settings, players: Sequence[Player], week: int,
 def score_week(settings: Settings, players: Sequence[Player], week: int,
                log: bool = False,
                slots: Optional[Sequence[str]] = None,
-               analyst_fetcher: Optional[AnalystFetcher] = None) -> WeekScores:
+               analyst_fetcher: Optional[AnalystFetcher] = None,
+               cbs_fetcher=None) -> WeekScores:
     """One signal set, one per-position pass, one pooled FLEX pass.
 
     ``log`` appends the per-position decisions to the results log, so the
@@ -265,7 +337,9 @@ def score_week(settings: Settings, players: Sequence[Player], week: int,
     signals = build_signals(settings)
     recs = rank_each_position(settings, players, week, log=log, signals=signals,
                               **({"analyst_fetcher": analyst_fetcher}
-                                 if analyst_fetcher is not None else {}))
+                                 if analyst_fetcher is not None else {}),
+                              **({"cbs_fetcher": cbs_fetcher}
+                                 if cbs_fetcher is not None else {}))
     flex, note = rank_flex_pool(settings, players, week, signals=signals)
     ws = WeekScores(recs=recs, flex=flex, flex_note=note)
     flag_starter_boundaries(settings, recs, build_lineup(
@@ -431,66 +505,14 @@ def build_lineup(by_pos: dict[str, list[PlayerScore]],
                   caveat=caveat if has_flex else None)
 
 
-#: The analyst transport's id in a ``JournalistView``. Not a FantasyPros expert
-#: id and deliberately unlike one -- these ranks come from the analyst's own
-#: published lists, and a column that cannot say which source it came from is
-#: how consensus gets published under a byline.
-ANALYST_EXPERT_ID = "yahoo-boone"
-
-
-def _analyst_journalist_view(settings: Settings, players: Sequence[Player],
-                             week: int) -> Optional[JournalistView]:
-    """The Preferred journalists section, served by the analyst transport.
-
-    Per-expert FantasyPros ranks need a **paid** API key -- the free tier 403s
-    on that endpoint, and the public page filters in the browser and serves the
-    same consensus whatever is asked for (``experts --verify`` says exactly
-    this). Boone is also the only configured journalist whose id resolves at
-    all. So the section never rendered, while ``sources/analysts.py`` was
-    already fetching that same analyst's real ranks for the disagreement notes.
-
-    This reuses them rather than adding a scrape. The expert is labelled with
-    its actual source so the table can never read as FantasyPros consensus --
-    the same fail-closed attribution rule ``ecr._matches_filters`` and
-    ``analysts._verify_sole_contributor`` hold.
-    """
-    if settings.analysts != "boone":
-        return None
-    from .sources.analysts import AnalystFetcher
-
-    try:
-        ranks = AnalystFetcher(season_year(), settings.data_dir).fetch(
-            players, week, settings.scoring)
-    except Exception as exc:
-        import sys
-        print(f"warning: analyst journalist view unavailable: {exc}", file=sys.stderr)
-        return None
-    if not ranks.by_position:
-        return None
-
-    expert = Expert(id=ANALYST_EXPERT_ID, name=f"{ranks.analyst} (Yahoo)")
-    by_position: dict[str, list[JournalistRow]] = {}
-    for p in players:
-        rank = ranks.by_position.get(p.position, {}).get(p.key)
-        if rank is None:
-            continue          # unranked or on bye -- left out, not ranked last
-        by_position.setdefault(p.position, []).append(
-            JournalistRow(player=p, avg_rank=rank, ranks={expert.id: rank}))
-    if not by_position:
-        return None
-    for rows in by_position.values():
-        rows.sort(key=lambda r: r.avg_rank)
-    return JournalistView(experts=[expert], by_position=by_position)
-
-
 def build_journalist_view(settings: Settings, players: Sequence[Player],
                           week: int) -> Optional[JournalistView]:
     """Build the preferred-journalists view, or None when disabled/no data.
 
-    FantasyPros first when experts are configured, then the analyst transport --
-    which is what actually renders today, since the per-expert FantasyPros
-    endpoint is a paid product. The paid path stays first so a key, once
-    present, wins without a config change.
+    FantasyPros per-expert ranks only, which need a **paid** API key. Boone's
+    Yahoo ranks used to fill this section when that path came back empty (which
+    is always, without the key); they are a column beside the blend now
+    (``boards/``), so the section would only repeat them.
     """
     experts = parse_experts(settings.preferred_experts)
     view = None
@@ -503,8 +525,6 @@ def build_journalist_view(settings: Settings, players: Sequence[Player],
             import sys
             print(f"warning: preferred-journalists view unavailable: {exc}",
                   file=sys.stderr)
-    if view is None:
-        view = _analyst_journalist_view(settings, players, week)
     return view
 
 

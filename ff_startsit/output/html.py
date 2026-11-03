@@ -15,8 +15,10 @@ from html import escape
 from typing import TYPE_CHECKING, Optional, Sequence
 
 from ..models import PlayerScore, Recommendation
-from .render import (DEPTH_LEGEND, LINEUP_UNSCORED_NOTE, UNRANKED_NOTE,
-                     flat_signal_note, lineup_unscored_keys, analyst_conflict_text)
+from .board import (board_cell, boards_legend, section_boards, waiver_cell,
+                    waiver_legend)
+from .render import (DEPTH_LEGEND, LINEUP_UNSCORED_NOTE, unranked_note,
+                     flat_signal_note, lineup_unscored_keys, conflict_lines, section_cell)
 from ..sources.journalists import JournalistView
 
 if TYPE_CHECKING:                    # the duck-typed bundle, named for the reader
@@ -48,6 +50,7 @@ tr.top td { background: rgba(46, 160, 67, .14); }
 tr.flagged td { background: rgba(210, 153, 34, .14); }
 .callout.analyst { background: rgba(88, 166, 255, .12); border-left-color: #58a6ff; }
 .analyst-note { color: #8b949e; margin: .7rem 0; font-size: .9rem; }
+th.expert, td.expert { background: rgba(88, 166, 255, .06); }
 .callout { background: rgba(210, 153, 34, .16); border-left: 3px solid #d29922;
            padding: .5rem .75rem; border-radius: 4px; margin: .35rem 0 .75rem; }
 .note { color: #9aa0ad; font-size: .85rem; margin: .35rem 0 1rem; }
@@ -111,8 +114,11 @@ def _position_table(rec: Recommendation) -> str:
             html += f"<p class='flag'>{escape('; '.join(s.flags))}</p>"
         return html
     signal_names = _signal_names(rec)
+    boards = section_boards(rec)
     cells = ["<th class='num'>#</th>", "<th>Player</th>", "<th>Pos</th>", "<th>Team</th>",
              "<th class='num'>Score</th>"]
+    cells += [f"<th class='num expert' title='{escape(b.label)}'>{escape(b.header)}</th>"
+              for b in boards]
     cells += [f"<th class='num'>{escape(n)}</th>" for n in [h.upper() for h in signal_names]]
     cells.append("<th>Flags</th>")
     rows = ["<tr>" + "".join(cells) + "</tr>"]
@@ -128,6 +134,8 @@ def _position_table(rec: Recommendation) -> str:
                f"<td>{escape(s.player.position)}</td>",
                f"<td>{escape(s.player.team or 'BYE')}</td>",
                f"<td class='num'>{escape(verdict)}</td>"]
+        tds += [f"<td class='num expert'>{escape(section_cell(rec, b, s))}</td>"
+                for b in boards]
         for name in signal_names:
             n = s.normalized.get(name)
             blank = n is None or rec.unranked
@@ -137,6 +145,8 @@ def _position_table(rec: Recommendation) -> str:
         rows.append(f"<tr{cls}>" + "".join(tds) + "</tr>")
 
     table = "<table>" + "".join(rows) + "</table>"
+    if boards:
+        table += f"<p class='note'>{escape(boards_legend(boards))}</p>"
     flat = flat_signal_note(rec)
     if flat:
         # Same sentence the digest carries: a column can look decisive purely
@@ -145,7 +155,7 @@ def _position_table(rec: Recommendation) -> str:
     if rec.unranked and rec.scores:
         # Same note the digest and the terminal table carry — a lone candidate
         # has no range to normalize against, so the columns are blanked.
-        table += f"<p class='note'>{escape(UNRANKED_NOTE)}</p>"
+        table += f"<p class='note'>{escape(unranked_note(rec))}</p>"
     return table
 
 
@@ -156,13 +166,9 @@ def _position_section(pos: str, rec: Recommendation) -> str:
         parts.append(f"<div class='callout'>⚠️ <strong>Close call</strong>{notes}</div>")
     elif rec.scores and rec.scores[0].final is not None:
         parts.append(f"<div class='start'>✅ Start: {escape(rec.scores[0].player.name)}</div>")
-    for conflict in rec.analyst_conflicts:
-        if conflict.material:
-            parts.append(f"<div class='callout analyst'>⚠️ {escape(analyst_conflict_text(conflict))}</div>")
     parts.append(_position_table(rec))
-    for conflict in rec.analyst_conflicts:
-        if not conflict.material:
-            parts.append(f"<div class='analyst-note'>{escape(analyst_conflict_text(conflict))}</div>")
+    for line in conflict_lines(rec):
+        parts.append(f"<div class='analyst-note'>{escape(line)}</div>")
     if rec.analyst_note:
         parts.append(f"<div class='analyst-note'>{escape(rec.analyst_note)}</div>")
     return "".join(parts)
@@ -230,7 +236,8 @@ def _dashboard_body(lineup: Sequence[tuple[str, Optional[PlayerScore]]],
 #: The pages the site publishes, as (filename, label). Both scheduled workflows
 #: emit the whole set, so either page can link to the other and neither run can
 #: leave a dangling link by replacing the site with just its own page.
-PAGES = (("index.html", "Start/sit"), ("waivers.html", "Waivers & trades"))
+PAGES = (("index.html", "Start/sit"), ("waivers.html", "Waivers & trades"),
+         ("values.html", "Trade values"))
 
 
 def _nav(active: str) -> str:
@@ -435,7 +442,9 @@ def _waiver_lists(bundle) -> str:
             out.append(f"<li>Week {escape(str(gap.week))}: only {gap.available} "
                        f"healthy {escape(gap.position)} for {gap.needed} slot(s)</li>")
         out.append("</ul>")
-    quoted = [(t, m) for t in bundle.adds for m in t.mentions]
+    # With the writers' board on, quotes sit under the board instead.
+    quoted = [] if getattr(bundle, "expert_boards", None) else \
+        [(t, m) for t in bundle.adds for m in t.mentions]
     if quoted:
         out.append("<h3>What the writers said</h3>")
         for target, mention in quoted:
@@ -449,6 +458,42 @@ def _waiver_lists(bundle) -> str:
     return "\n".join(out)
 
 
+def _waiver_expert_board(bundle) -> str:
+    """The Tuesday board: every free agent a writer named, side by side."""
+    boards = getattr(bundle, "expert_boards", None)
+    if not boards:
+        return ""
+    out = ["<h3>What the writers say</h3>"]
+    if bundle.expert_rows:
+        head = "".join(f"<th title='{escape(b.label)}'>{escape(b.short)}</th>" for b in boards)
+        out.append(f"<table><thead><tr><th>Player</th><th>Pos</th><th>Team</th>{head}"
+                   "<th>This tool</th></tr></thead><tbody>")
+        for row in bundle.expert_rows:
+            cls = " class='top'" if row.listed_by >= 2 else ""
+            from ..waivers.board import cell_position
+            cells = "".join(f"<td class='expert'>"
+                            f"{escape(waiver_cell(row.entries.get(b.source_id), cell_position(b, row.player)))}</td>"
+                            for b in boards)
+            out.append(f"<tr{cls}><td>{escape(row.player.name)}</td>"
+                       f"<td>{escape(row.player.position)}</td>"
+                       f"<td>{escape(row.player.team or 'FA')}</td>{cells}"
+                       f"<td>{escape(row.tool or '—')}</td></tr>")
+        out.append("</tbody></table>")
+    else:
+        out.append("<p class='note'>No free agent in this league was named by a writer this week.</p>")
+    out.append(f"<p class='note'>{escape(waiver_legend(boards))}</p>")
+    from ..waivers.board import board_reasons
+    for reason in board_reasons(boards):
+        out.append(f"<p class='note'>{escape(reason)}</p>")
+    quoted = [(row, q) for row in bundle.expert_rows for q in row.quotes]
+    if quoted:
+        out.append("<h4>Why, in their words</h4>")
+        for row, q in quoted:
+            out.append(f"<blockquote class='quote'><strong>{escape(row.player.name)}</strong> — "
+                       f"<a href='{escape(q.url)}'>{escape(q.author)}</a>: {escape(q.snippet)}</blockquote>")
+    return "".join(out)
+
+
 def _waiver_body(bundle) -> list[str]:
     body: list[str] = []
     if bundle.banner:
@@ -456,6 +501,7 @@ def _waiver_body(bundle) -> list[str]:
                     f"</strong></div>")
     if bundle.caveat:
         body.append(f"<div class='callout'>⚠️ {escape(bundle.caveat)}</div>")
+    body.append(_waiver_expert_board(bundle))
     body.append(_waiver_adds_table(bundle))
     body.append(_waiver_alternates_table(bundle))
     body.append(_waiver_drops_table(bundle))
@@ -533,3 +579,68 @@ def build_waivers_html(week: int, bundles: Sequence, generated_on: str) -> str:
 
     return _document(f"Week {escape(str(week))} waivers", "\n".join(sections),
                      active="waivers.html")
+
+
+# --- the Wednesday values page --------------------------------------------
+def _values_sheet(sheet) -> str:
+    from ..waivers.board import board_reasons, cell_position
+    from .board import trade_line, verdict_text
+    out = []
+    if sheet.banner:
+        out.append(f"<div class='callout'><strong>{escape(sheet.banner)}</strong></div>")
+    if sheet.caveat:
+        out.append(f"<div class='callout'>⚠️ {escape(sheet.caveat)}</div>")
+    if not sheet.boards:
+        return "".join(out)
+    if sheet.rows:
+        head = "".join(f"<th title='{escape(b.label)}'>{escape(b.short)}</th>" for b in sheet.boards)
+        out.append(f"<table><thead><tr><th>Player</th><th>Pos</th><th>Team</th>{head}"
+                   "<th>Charts</th></tr></thead><tbody>")
+        for row in sheet.rows:
+            cls = " class='flagged'" if row.split else ""
+            cells = "".join(f"<td class='expert'>"
+                            f"{escape(waiver_cell(row.entries.get(b.source_id), cell_position(b, row.player)))}</td>"
+                            for b in sheet.boards)
+            out.append(f"<tr{cls}><td>{escape(row.player.name)}</td><td>{escape(row.player.position)}</td>"
+                       f"<td>{escape(row.player.team or 'FA')}</td>{cells}"
+                       f"<td>{escape(row.charts_cell)}</td></tr>")
+        out.append("</tbody></table>")
+    out.append(f"<p class='note'>{escape(waiver_legend(sheet.boards))} Values are each "
+               "writer's own scale, so they're never added across charts.</p>")
+    for reason in board_reasons(sheet.boards):
+        out.append(f"<p class='note'>{escape(reason)}</p>")
+    out.append("<h3>Trade ideas, judged on each chart</h3>")
+    if sheet.verdicts:
+        out.append("<ul class='ideas'>")
+        for v in sheet.verdicts:
+            out.append(f"<li>{escape(trade_line(v.idea))} — <strong>{escape(verdict_text(v))}</strong></li>")
+        out.append("</ul><p class='note'>Net = value you get minus value you send, on that "
+                   "chart. “Off chart” means someone in the deal has no value there.</p>")
+    elif sheet.trades_considered:
+        out.append("<p class='note'>No trade idea cleared the waiver pass's fairness checks this week.</p>")
+    else:
+        out.append("<p class='note'>Trade ideas weren't searched for this league.</p>")
+    return "".join(out)
+
+
+def build_values_html(week: int, sheets: Sequence, generated_on: str) -> str:
+    """The Wednesday values page (values.html), styled like the other two."""
+    sections = [f"<h1>📈 Week {escape(str(week))} trade values</h1>",
+                f"<div class='meta'>Generated {escape(generated_on)} · {len(sheets)} league(s)</div>"]
+    if not sheets:
+        sections.append("<p class='note'>No configured league could be scored.</p>")
+    from ..data_status import bundle_status
+    status = bundle_status([s.bundle for s in sheets if s.bundle is not None])
+    if status:
+        sections.append(status.html())
+    multi = len(sheets) > 1
+    for sheet in sheets:
+        if multi:
+            sections.append("<details class='league' open>")
+            sections.append(f"<summary class='league'>{escape(sheet.label)} — "
+                            f"{escape(sheet.scoring.upper())}</summary>")
+        sections.append(_values_sheet(sheet))
+        if multi:
+            sections.append("</details>")
+    return _document(f"Week {escape(str(week))} trade values", "\n".join(sections),
+                     active="values.html")

@@ -31,6 +31,10 @@ from typing import Callable, Iterable, Mapping, Optional
 from ..models import Player, PlayerScore, Recommendation, SignalValue, _fmt_raw
 from .normalize import to_0_100
 
+#: The flag on a player held out of the blend as unable to play. Renderers
+#: test for it rather than inferring "ruled out" from a missing score.
+RULED_OUT_FLAG = "not startable: ruled out this week"
+
 
 def weighted_final(normalized: Mapping[str, float],
                    weights: Mapping[str, float]) -> Optional[float]:
@@ -136,7 +140,7 @@ def blend(
             # Held out above, so ``normalized`` is empty and ``final`` is None.
             # Say *why* rather than leaving a blank score that reads like a
             # failed fetch — the two look identical in every renderer.
-            ps.flags.append("not startable: ruled out this week")
+            ps.flags.append(RULED_OUT_FLAG)
         ps.final = weighted_final(ps.normalized, weights)
         scores.append(ps)
 

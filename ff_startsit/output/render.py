@@ -11,12 +11,45 @@ from rich.table import Table
 
 from ..models import Recommendation, _fmt_raw
 from ..engine.analyst import AnalystConflict
+from ..engine.blend import RULED_OUT_FLAG
+from .board import board_cell, boards_legend, section_boards
 
 _console = Console()
 
 
 #: Shown under a table with a single candidate. See ``Recommendation.unranked``.
 UNRANKED_NOTE = ("Only one candidate here, so there is nothing to rank against — the per-signal columns are blank rather than showing a midpoint placeholder.")
+ONE_PLAYABLE_NOTE = ("Only one of these players can play this week (the rest are ruled out), "
+                     "so there is nothing to rank him against — the per-signal columns are "
+                     "blank rather than showing a midpoint placeholder.")
+ONE_SCORED_NOTE = ("Only one of these players has a signal reading this run (each other "
+                   "player's flags say why), so there is nothing to rank him against — the "
+                   "per-signal columns are blank rather than showing a midpoint placeholder.")
+NO_SIGNAL_NOTE = ("No signal could score these players this run — every reading is missing "
+                  "(each player's flags say why), so there is no ranking here. That is a "
+                  "data problem, not a tie.")
+
+
+def unranked_note(rec: Recommendation) -> str:
+    """Why an ``unranked`` table has nothing to rank, in terms of its actual cause.
+
+    ``unranked`` means fewer than two players were scored, which has three
+    causes that call for different things: one player (nothing to do), one
+    playable player beside ruled-out ones (nothing to decide), or no signal
+    reading at all (an outage). The note used to say "only one candidate" for
+    all three, so a run where every source failed told the owner of four
+    running backs that he had one.
+    """
+    if len(rec.scores) <= 1:
+        return UNRANKED_NOTE
+    if not any(s.final is not None for s in rec.scores):
+        return NO_SIGNAL_NOTE
+    # "Ruled out" only when every unscored player actually carries that flag;
+    # an unmatched or unranked player is missing data, not out for the week.
+    unscored = [s for s in rec.scores if s.final is None]
+    if all(RULED_OUT_FLAG in s.flags for s in unscored):
+        return ONE_PLAYABLE_NOTE
+    return ONE_SCORED_NOTE
 
 #: Shown under the suggested-lineup table when a pick's score is a fabricated
 #: midpoint rather than a real reading. See ``lineup_unscored_keys``.
@@ -60,6 +93,9 @@ def render_table(rec: Recommendation, title: str = "") -> None:
     table.add_column("Pos")
     table.add_column("Team")
     table.add_column("Score", justify="right")
+    boards = section_boards(rec)
+    for board in boards:
+        table.add_column(board.header, justify="right")
     for name in signal_names:
         table.add_column(name.upper(), justify="right")
     table.add_column("Flags")
@@ -67,6 +103,7 @@ def render_table(rec: Recommendation, title: str = "") -> None:
     for i, s in enumerate(rec.scores, start=1):
         verdict = "—" if s.final is None else f"{s.final:.1f}"
         row = [str(i), s.player.name, s.player.position, s.player.team or "BYE", verdict]
+        row.extend(section_cell(rec, b, s) for b in boards)
         for name in signal_names:
             n = s.normalized.get(name)
             row.append("—" if n is None or rec.unranked else f"{n:.0f}")
@@ -76,8 +113,12 @@ def render_table(rec: Recommendation, title: str = "") -> None:
 
     _console.print(table)
 
+    if boards:
+        _console.print(f"[dim]{boards_legend(boards)}[/dim]")
+    for line in conflict_lines(rec):
+        _console.print(line, markup=False, highlight=False)
     if rec.unranked and rec.scores:
-        _console.print(f"[dim]{UNRANKED_NOTE}[/dim]")
+        _console.print(f"[dim]{unranked_note(rec)}[/dim]")
 
     if rec.close_call:
         _console.print("[bold yellow]⚠ Close call[/bold yellow] — lean, don't bank on it:")
@@ -158,6 +199,32 @@ def analyst_conflict_text(conflict: AnalystConflict) -> str:
             f"edge to {conflict.preferred}.")
 
 
+#: Marks Boone's rank on the player he would start instead of this tool's pick.
+ANALYST_MARK = "▲"
+
+
+def conflict_lines(rec: Recommendation) -> list[str]:
+    """The analyst disagreements worth a line under the table: material ones only.
+
+    Boone's rank sits in its own column beside the blend now, so a minor
+    inversion ("within 2 spots") is already readable in the table and its
+    sentence was the same numbers twice. A material one keeps its sentence,
+    as a plain note rather than a callout, and marks his rank with
+    ``ANALYST_MARK`` so the row it is about is visible in the table.
+    """
+    return [f"{ANALYST_MARK} {analyst_conflict_text(c)}"
+            for c in rec.analyst_conflicts if c.material]
+
+
+def section_cell(rec: Recommendation, board, score) -> str:
+    """A board's cell in a position table, with the analyst mark where it applies."""
+    cell = board_cell(board, score.player.key)
+    if (board.source_id == "boone_weekly" and cell != "—"
+            and any(c.material and c.preferred == score.player.name for c in rec.analyst_conflicts)):
+        cell += f" {ANALYST_MARK}"
+    return cell
+
+
 def render_markdown(rec: Recommendation, title: str = "") -> str:
     """Render a Recommendation as GitHub-flavored markdown (for issues/ChatOps)."""
     signal_names = sorted({name for s in rec.scores for name in s.normalized})
@@ -169,7 +236,9 @@ def render_markdown(rec: Recommendation, title: str = "") -> str:
         lines.extend(_lone_candidate_markdown(rec))
         return "\n".join(lines)
 
+    boards = section_boards(rec)
     header = ["#", "Player", "Pos", "Team", "Score",
+              *[md_cell(b.header) for b in boards],
               *[md_cell(n.upper()) for n in signal_names], "Flags"]
     lines.append("| " + " | ".join(header) + " |")
     lines.append("|" + "|".join("---" for _ in header) + "|")
@@ -178,6 +247,7 @@ def render_markdown(rec: Recommendation, title: str = "") -> str:
         verdict = "—" if s.final is None else f"{s.final:.1f}"
         cells = [str(i), md_cell(s.player.name), md_cell(s.player.position),
                  md_cell(s.player.team or "BYE"), verdict]
+        cells.extend(md_cell(section_cell(rec, b, s)) for b in boards)
         for name in signal_names:
             n = s.normalized.get(name)
             cells.append("—" if n is None or rec.unranked else f"{n:.0f}")
@@ -185,16 +255,18 @@ def render_markdown(rec: Recommendation, title: str = "") -> str:
         lines.append("| " + " | ".join(cells) + " |")
 
     lines.append("")
+    if boards:
+        lines.append(f"_{md_cell(boards_legend(boards))}_")
+        lines.append("")
     if rec.unranked and rec.scores:
-        lines.append(f"_{UNRANKED_NOTE}_")
+        lines.append(f"_{unranked_note(rec)}_")
         lines.append("")
     flat = flat_signal_note(rec)
     if flat:
         lines.append(f"_{flat}_")
         lines.append("")
-    for conflict in rec.analyst_conflicts:
-        text = md_cell(analyst_conflict_text(conflict))
-        lines.append(f"> ⚠️ {text}" if conflict.material else text)
+    for line in conflict_lines(rec):
+        lines.append(f"_{md_cell(line)}_")
         lines.append("")
     if rec.analyst_note:
         lines.append(f"_{md_cell(rec.analyst_note)}_")

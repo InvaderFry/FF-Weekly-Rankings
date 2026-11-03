@@ -21,6 +21,7 @@ import requests
 from ..data.matching import ExternalRow, match_rows
 from ..data.teams import normalize_team
 from ..models import Player, SignalValue
+from ..net import HEADERS
 from .base import Signal
 
 API_URL = "https://api.fantasypros.com/v2/json/nfl/{season}/consensus-rankings"
@@ -174,7 +175,7 @@ def fetch_scrape_rows(session: requests.Session, scoring: str, position: str,
     resp = session.get(
         SCRAPE_URL.format(slug=_scrape_slug(position, scoring)),
         params=params,
-        headers={"User-Agent": "Mozilla/5.0 (ff-startsit)"},
+        headers=HEADERS,
         timeout=timeout,
     )
     resp.raise_for_status()

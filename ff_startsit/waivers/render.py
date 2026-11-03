@@ -10,7 +10,9 @@ from __future__ import annotations
 from datetime import date
 from typing import Optional, Sequence
 
+from ..output.board import waiver_cell, waiver_legend
 from ..output.render import DEPTH_LEGEND, md_cell
+from .board import board_marker, board_reasons, bundles_read, cell_position
 from .models import WaiverBundle, WaiverTarget
 
 
@@ -181,7 +183,13 @@ def _with_team(player) -> str:
 
 
 def _mentions_section(bundle: WaiverBundle) -> list[str]:
-    """Quotes from the writers, attributed and linked back to their columns."""
+    """Quotes from the writers, attributed and linked back to their columns.
+
+    Only when the writers' board is off: with it on, the quotes sit under the
+    board beside the writers' own numbers (``_expert_board_section``).
+    """
+    if bundle.expert_boards:
+        return []
     quoted = [(t, m) for t in bundle.adds for m in t.mentions]
     if not quoted:
         return []
@@ -195,6 +203,39 @@ def _mentions_section(bundle: WaiverBundle) -> list[str]:
     return lines
 
 
+def _expert_board_section(bundle: WaiverBundle) -> list[str]:
+    """Every free agent a writer named, each writer's reading side by side."""
+    boards = bundle.expert_boards
+    if not boards:
+        return []
+    lines = ["### What the writers say", ""]
+    if bundle.expert_rows:
+        header = ["Player", "Pos", "Team", *[b.short for b in boards], "This tool"]
+        lines.append("| " + " | ".join(header) + " |")
+        lines.append("|" + "|".join("---" for _ in header) + "|")
+        for row in bundle.expert_rows:
+            cells = [md_cell(row.player.name), row.player.position, row.player.team or "FA",
+                     *[md_cell(waiver_cell(row.entries.get(b.source_id), cell_position(b, row.player)))
+                       for b in boards],
+                     md_cell(row.tool or "—")]
+            lines.append("| " + " | ".join(cells) + " |")
+        lines.append("")
+    else:
+        lines += ["_No free agent in this league was named by a writer this week._", ""]
+    lines.append(f"_{md_cell(waiver_legend(boards))}_")
+    for reason in board_reasons(boards):
+        lines.append(f"- {md_cell(reason)}")
+    lines.append("")
+    quoted = [(row, q) for row in bundle.expert_rows for q in row.quotes]
+    if quoted:
+        lines += ["**Why, in their words**", ""]
+        for row, q in quoted:
+            lines.append(f"- **{md_cell(row.player.name)}** — [{md_cell(q.author)}]({q.url}): "
+                         f"“{md_cell(q.snippet)}”")
+        lines.append("")
+    return lines
+
+
 def render_bundle(bundle: WaiverBundle, heading: str = "###") -> list[str]:
     """One league's section."""
     lines: list[str] = []
@@ -204,6 +245,7 @@ def render_bundle(bundle: WaiverBundle, heading: str = "###") -> list[str]:
         lines += [f"> **{bundle.banner}**", ""]
     if bundle.caveat:
         lines += [f"> ⚠️ {bundle.caveat}", ""]
+    lines += _expert_board_section(bundle)
     lines += _adds_table(bundle)
     lines += _alternates_table(bundle)
     lines += _drops_table(bundle)
@@ -252,4 +294,84 @@ def render_waiver_digest(week: int, bundles: Sequence[WaiverBundle],
                 sources.append(source)
     if sources:
         lines += ["**Sources**: " + ", ".join(f"[{a}]({u})" for a, u in sources), ""]
+    # Invisible in the rendered issue; read back by the Tuesday retry gate.
+    # Written even with every board off (``read=``): the season/week it carries
+    # is what tells next week's report from a retry of this one, and without it
+    # the default config (FF_ANALYSTS unset) let last week's open issue
+    # suppress every report after it.
+    from ..season import season_year
+    from .board import run_mode
+    lines += [board_marker(season_year(), week, bundles_read(bundles), run_mode(bundles)), ""]
+    return "\n".join(lines)
+
+
+# --- the Wednesday values sheet ------------------------------------------------
+
+def _values_section(sheet, heading: str = "###") -> list[str]:
+    from ..output.board import trade_line, verdict_text
+    from .board import board_reasons, cell_position
+    title = f"{heading} {sheet.label}" if sheet.label else f"{heading} Your team"
+    lines = [f"{title} · {sheet.scoring.upper()}", ""]
+    if sheet.banner:
+        lines += [f"> **{sheet.banner}**", ""]
+    if sheet.caveat:
+        lines += [f"> ⚠️ {sheet.caveat}", ""]
+    if not sheet.boards:
+        return lines
+    if sheet.rows:
+        header = ["Player", "Pos", "Team", *[b.short for b in sheet.boards], "Charts"]
+        lines.append("| " + " | ".join(header) + " |")
+        lines.append("|" + "|".join("---" for _ in header) + "|")
+        for row in sheet.rows:
+            cells = [md_cell(row.player.name), row.player.position, row.player.team or "FA",
+                     *[md_cell(waiver_cell(row.entries.get(b.source_id), cell_position(b, row.player)))
+                       for b in sheet.boards],
+                     md_cell(row.charts_cell)]
+            lines.append("| " + " | ".join(cells) + " |")
+        lines.append("")
+    lines.append(f"_{md_cell(waiver_legend(sheet.boards))} Values are each writer's own "
+                 "scale, so they're never added across charts._")
+    for reason in board_reasons(sheet.boards):
+        lines.append(f"- {md_cell(reason)}")
+    lines.append("")
+    lines.append(f"{heading}# Trade ideas, judged on each chart")
+    lines.append("")
+    if sheet.verdicts:
+        for v in sheet.verdicts:
+            lines.append(f"- {md_cell(trade_line(v.idea))} — {md_cell(verdict_text(v))}")
+        lines.append("")
+        lines.append("_Net = value you get minus value you send, on that chart. "
+                     "\"Off chart\" means someone in the deal has no value there._")
+    elif sheet.trades_considered:
+        lines.append("_No trade idea cleared the waiver pass's fairness checks this week._")
+    else:
+        lines.append("_Trade ideas weren't searched for this league._")
+    lines.append("")
+    return lines
+
+
+def render_values_digest(week: int, sheets, generated_on: Optional[str] = None) -> str:
+    """The Wednesday digest: every league's values sheet plus the retry marker."""
+    from .values import sheets_read
+    generated_on = generated_on or date.today().isoformat()
+    lines = [f"# Week {week} trade values", "", f"_Generated {generated_on}._", ""]
+    if not sheets:
+        return "\n".join(lines + ["No configured league could be scored.", ""])
+    from ..data_status import bundle_status
+    status = bundle_status([s.bundle for s in sheets if s.bundle is not None])
+    if status:
+        lines += [status.markdown(), ""]
+    multi = len(sheets) > 1
+    for sheet in sheets:
+        lines += _values_section(sheet, heading="##" if multi else "###")
+    sources: list[tuple[str, str]] = []
+    for sheet in sheets:
+        for b in sheet.boards:
+            if b.url and (b.label, b.url) not in sources:
+                sources.append((b.label, b.url))
+    if sources:
+        lines += ["**Sources**: " + ", ".join(f"[{a}]({u})" for a, u in sources), ""]
+    from ..season import season_year
+    from .board import run_mode
+    lines += [board_marker(season_year(), week, sheets_read(sheets), run_mode(sheets)), ""]
     return "\n".join(lines)

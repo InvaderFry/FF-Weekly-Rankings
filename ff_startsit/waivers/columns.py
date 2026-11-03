@@ -41,13 +41,12 @@ import requests
 
 from ..data.matching import is_defense, normalize_name
 from ..models import Player
+from ..net import HEADERS
 from .models import ColumnMention
 
-#: A real browser UA. These are public article pages; the request is one per
-#: author per week, and the report links back to each piece it quotes.
-_UA = {"User-Agent": ("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
-                      "AppleWebKit/537.36 (KHTML, like Gecko) "
-                      "Chrome/124.0 Safari/537.36")}
+#: Public article pages, one request per author per week, and the report
+#: links back to each piece it quotes. Plain identity: see ``net.py``.
+_UA = HEADERS
 
 _TAG_RE = re.compile(r"<(script|style)\b[^>]*>.*?</\1>", re.DOTALL | re.IGNORECASE)
 _ANY_TAG_RE = re.compile(r"<[^>]+>")

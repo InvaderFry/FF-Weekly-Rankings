@@ -47,6 +47,7 @@ from typing import Iterable, Optional, Sequence
 import requests
 
 from ..data.matching import normalize_name
+from ..net import HEADERS
 from .journalists import Expert
 
 #: One page per analyst. The slug is derived from their name. Kept only as the
@@ -62,7 +63,7 @@ EXPERTS_INDEX_URL = "https://www.fantasypros.com/experts/nfl/"
 #: app can ask for, which an entry in a separate staff directory is not.
 RANKINGS_PAGE_URL = "https://www.fantasypros.com/nfl/rankings/ppr-rb.php"
 
-_UA = {"User-Agent": "Mozilla/5.0 (ff-startsit)"}
+_UA = HEADERS
 
 #: Candidate shapes for an expert id, tried in order. The live markup could not
 #: be inspected when this was written (the authoring sandbox blocks

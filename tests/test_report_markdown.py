@@ -751,11 +751,11 @@ def test_analyst_markdown_warning_note_and_silence():
     assert 'Justin Boone' not in render_markdown(rec)
     conflict = AnalystConflict('Justin Boone', 'RB', 'Alpha', 'Bravo', 19, 6, False, True)
     rec.analyst_conflicts = [conflict]
-    assert '> ⚠️ Justin Boone disagrees: he starts Bravo (his RB6) over Alpha (his RB19).' in render_markdown(rec)
+    assert '_▲ Justin Boone disagrees: he starts Bravo (his RB6) over Alpha (his RB19)._' in render_markdown(rec)
     rec.analyst_conflicts = [replace(conflict, leader_rank=8, material=False)]
     md = render_markdown(rec)
-    assert 'within 2 spots (Alpha RB8, Bravo RB6), edge to Bravo.' in md
-    assert '> ⚠️ Justin Boone' not in md
+    # Minor inversions are readable in the Boone column; no sentence for them.
+    assert 'within 2 spots' not in md and 'Justin Boone' not in md
     rec.analyst_conflicts = [replace(conflict, boundary=True)]
     assert 'would flip your last starting spot: Bravo (his RB6)' in render_markdown(rec)
 
@@ -789,10 +789,10 @@ def test_analyst_markdown_keeps_apostrophes_unescaped():
     assert '&#x27;' not in md and '&amp;' not in md
     assert "he starts Ja'Marr Chase (his RB6) over D'Andre Swift (his RB19)." in md
 
+    # A minor inversion no longer gets a sentence (the Boone column shows it).
     rec.analyst_conflicts = [replace(conflict, leader_rank=8, material=False)]
     md = render_markdown(rec)
-    assert '&#x27;' not in md
-    assert "(D'Andre Swift RB8, Ja'Marr Chase RB6), edge to Ja'Marr Chase." in md
+    assert '&#x27;' not in md and 'edge to' not in md
 
     rec.analyst_conflicts = []
     rec.analyst_note = "Justin Boone has not posted D'Andre Swift's position yet."
@@ -811,3 +811,31 @@ def test_analyst_markdown_still_escapes_table_breaking_pipes():
                                              19, 6, False, True)]
     md = render_markdown(rec)
     assert 'A\\|pha' in md and 'Br\\|vo' in md
+
+
+def test_unranked_note_names_the_actual_cause():
+    """Found in review: with every source down, a four-back table said "Only
+    one candidate here". Three causes, three sentences."""
+    from ff_startsit.models import PlayerScore
+    from ff_startsit.output.render import (NO_SIGNAL_NOTE, ONE_PLAYABLE_NOTE,
+                                           UNRANKED_NOTE, unranked_note)
+    from ff_startsit.output.html import _position_table
+    lone = _rec(_ps('1', 'Alpha', 'RB', 90))
+    assert unranked_note(lone) == UNRANKED_NOTE
+    outage = _rec(*[PlayerScore(player=_ps(k, n, 'RB', 0).player)
+                    for k, n in (('1', 'Alpha'), ('2', 'Bravo'), ('3', 'Charlie'))])
+    assert unranked_note(outage) == NO_SIGNAL_NOTE
+    assert NO_SIGNAL_NOTE in render_markdown(outage) and "Only one candidate" not in render_markdown(outage)
+    assert "No signal could score" in _position_table(outage)
+    from ff_startsit.engine.blend import RULED_OUT_FLAG
+    from ff_startsit.output.render import ONE_SCORED_NOTE
+    out = PlayerScore(player=_ps('2', 'Bravo', 'RB', 0).player, flags=[RULED_OUT_FLAG])
+    ruled_out = _rec(_ps('1', 'Alpha', 'RB', 90), out)
+    assert unranked_note(ruled_out) == ONE_PLAYABLE_NOTE
+    # Found in review: an unmatched player (no ECR reading, not injured) is
+    # missing data, and the note used to call him ruled out.
+    unmatched = PlayerScore(player=_ps('3', 'Charlie', 'RB', 0).player, flags=["ecr: unmatched"])
+    missing = _rec(_ps('1', 'Alpha', 'RB', 90), unmatched)
+    assert unranked_note(missing) == ONE_SCORED_NOTE
+    assert "ruled out" not in render_markdown(missing)
+    assert unranked_note(_rec(_ps('1', 'Alpha', 'RB', 90), out, unmatched)) == ONE_SCORED_NOTE

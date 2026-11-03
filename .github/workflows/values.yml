@@ -1,0 +1,175 @@
+name: Wednesday trade values
+
+# Posts each league's roster on Dave Richard's and Justin Boone's trade-value
+# charts (with FantasyPros rest-of-season beside them) as a GitHub issue,
+# publishes it to values.html on the Pages site, and sends the full tables to
+# Discord. Richard's chart posts Tuesday; Boone's four charts post Wednesday
+# afternoon. Can also be run on demand (Actions -> Run workflow), where a Boone
+# chart URL can be passed if his pages don't link this week's yet.
+on:
+  schedule:
+    # Placed by WORST-CASE arrival (this repo has measured GitHub delays of
+    # 18 minutes to 8h01). 22:30 UTC = 4:30pm CST / 5:30pm CDT, after Boone's
+    # charts (~21:15 UTC). The 02:30 UTC Thursday retry (Wednesday evening
+    # Central) publishes only when it read a chart the first pass couldn't
+    # (workflow.py `news`), so a normal week is one post.
+    - cron: "30 22 * * 3"
+    - cron: "30 2 * * 4"
+  workflow_dispatch:
+    inputs:
+      artifact_only:
+        description: "Build the page as a run artifact without production publishing"
+        type: boolean
+        default: false
+      week:
+        description: "NFL week (blank = auto-detect)"
+        required: false
+        default: ""
+      boone_chart:
+        description: "A Boone trade chart URL, if his pages don't link this week's yet"
+        required: false
+        default: ""
+
+permissions:
+  contents: read        # no decision log: nothing here is a start/sit decision
+  issues: write
+  pages: write
+  id-token: write
+
+# Shared with the other two workflows: a Pages deploy replaces the whole site,
+# so deploys must queue rather than race.
+concurrency:
+  group: ff-startsit-pages
+  cancel-in-progress: false
+  queue: max
+
+jobs:
+  values:
+    runs-on: ubuntu-latest
+    environment:
+      name: ${{ inputs.artifact_only && 'publishing-test' || 'github-pages' }}
+      url: ${{ steps.deployment.outputs.page_url }}
+    env:
+      FF_ROSTER_SOURCE: espn
+      FF_LEAGUES: ${{ secrets.FF_LEAGUES }}
+      FF_LEAGUE_SCORING: ${{ vars.FF_LEAGUE_SCORING }}
+      ESPN_LEAGUE_ID: ${{ secrets.ESPN_LEAGUE_ID }}
+      ESPN_TEAM_ID: ${{ secrets.ESPN_TEAM_ID }}
+      ESPN_S2: ${{ secrets.ESPN_S2 }}
+      ESPN_SWID: ${{ secrets.ESPN_SWID }}
+      SLEEPER_USERNAME: ${{ secrets.SLEEPER_USERNAME }}
+      ODDS_API_KEY: ${{ secrets.ODDS_API_KEY }}
+      FANTASYPROS_API_KEY: ${{ secrets.FANTASYPROS_API_KEY }}
+      FF_ANALYSTS: ${{ vars.FF_ANALYSTS }}
+      DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+      ARTIFACT_ONLY: ${{ inputs.artifact_only || false }}
+      INPUT_WEEK: ${{ github.event.inputs.week }}
+      INPUT_BOONE_CHART: ${{ github.event.inputs.boone_chart }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+
+      - name: Install
+        run: pip install -e .
+
+      # Same retry gate as waivers.yml: compare against what's already published.
+      - name: Fetch this week's published values (scheduled runs)
+        if: ${{ github.event_name == 'schedule' && !inputs.artifact_only }}
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          NUM=$(gh issue list --state open --search 'in:title "trade values"' \
+                --json number --jq '.[0].number // empty')
+          if [ -n "$NUM" ]; then
+            gh issue view "$NUM" --json body,comments \
+              --jq '.body, (.comments[].body)' > previous.md
+          fi
+
+      - name: Trade values
+        run: |
+          WEEK_ARGS=()
+          if [ -n "$INPUT_WEEK" ]; then WEEK_ARGS=(--week "$INPUT_WEEK"); fi
+          CHART_ARGS=()
+          if [ -n "$INPUT_BOONE_CHART" ]; then CHART_ARGS=(--boone-chart "$INPUT_BOONE_CHART"); fi
+          SINCE_ARGS=()
+          if [ "$GITHUB_EVENT_NAME" = "schedule" ]; then SINCE_ARGS=(--since previous.md); fi
+          python -m ff_startsit.workflow run values "${WEEK_ARGS[@]}" "${CHART_ARGS[@]}" "${SINCE_ARGS[@]}" \
+            --all-leagues --discord --report values.md --dashboard ./site/values.html
+          cat values.md >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Anything new to publish?
+        id: news
+        run: |
+          if [ "$GITHUB_EVENT_NAME" = "schedule" ]; then
+            python -m ff_startsit.workflow news values.md previous.md
+          else
+            echo "news=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      # This workflow builds values.html only. The other two pages are copied
+      # from the live site rather than re-scored (no Odds API credits spent);
+      # if either can't be fetched, the deploy below is skipped and the live
+      # site stays as it is (workflow.restore_pages / verify_site).
+      - name: Keep the published start/sit and waiver pages
+        if: steps.news.outputs.news == 'true'
+        run: |
+          OWNER="${GITHUB_REPOSITORY%%/*}"; REPO="${GITHUB_REPOSITORY##*/}"
+          python -m ff_startsit.workflow restore "https://${OWNER,,}.github.io/${REPO}" index.html waivers.html
+
+      - name: Post / update issue
+        id: issue
+        if: ${{ !inputs.artifact_only && steps.news.outputs.news == 'true' }}
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TITLE=$(python -m ff_startsit.workflow identity values.md "trade values")
+          NUM=$(gh issue list --state open --search "in:title \"$TITLE\"" \
+                --json number,title --jq ".[] | select(.title==\"$TITLE\") | .number" | head -1)
+          if [ -n "$NUM" ]; then
+            echo "Updating issue #$NUM"
+            gh issue comment "$NUM" --body-file values.md
+          else
+            echo "Creating issue: $TITLE"
+            gh issue create --title "$TITLE" --body-file values.md
+          fi
+
+      - name: Report issue failure
+        if: always() && steps.issue.outcome == 'failure'
+        run: |
+          echo "::warning title=Issue not posted::The values report was not posted or updated. The digest is in this run's summary; the site deploy below was unaffected."
+
+      - name: Verify the site is complete
+        id: site
+        if: steps.news.outputs.news == 'true'
+        run: |
+          python -m ff_startsit.workflow site
+
+      - name: Upload Pages artifact
+        if: steps.site.outputs.complete == 'true' && !inputs.artifact_only
+        uses: actions/upload-pages-artifact@v5
+        with:
+          path: ./site
+
+      - name: Deploy to GitHub Pages
+        if: steps.site.outputs.complete == 'true' && !inputs.artifact_only
+        id: deployment
+        uses: actions/deploy-pages@v5
+
+      - name: Upload test artifacts
+        if: inputs.artifact_only && steps.site.outputs.complete == 'true'
+        uses: actions/upload-artifact@v7
+        with:
+          name: publishing-test
+          path: |
+            site/
+            values.md
+          retention-days: 7
+
+      - name: Require complete test site
+        if: inputs.artifact_only && steps.site.outputs.complete != 'true'
+        run: exit 1

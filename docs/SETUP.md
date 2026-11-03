@@ -157,24 +157,28 @@ to change if you only have one.
 > League ids aren't credentials, but a committed file would expose your league
 > list. See the CI secrets table below.
 
-## Justin Boone disagreements
+## Expert columns: Justin Boone and CBS (`FF_ANALYSTS`)
 
-Set these in `.env` for local start/sit reports:
+Set this in `.env` for local runs, and as a repository **variable** for the
+scheduled ones:
 
 ```dotenv
-FF_ANALYSTS=boone
+FF_ANALYSTS=boone,cbs
 FF_ANALYST_MIN_GAP=5
 ```
 
-`FF_ANALYSTS` is empty/off by default. Empty, `off`, `0`, `false`, and `no`
-disable it. Boone is the only supported analyst. Unknown names warn and disable
-comparison. The gap must be a finite, non-negative number; invalid input warns
-and uses 5.
+`FF_ANALYSTS` is a comma-separated list, empty/off by default (empty, `off`,
+`0`, `false` and `no` disable it). `boone` adds Justin Boone's Yahoo ranks;
+`cbs` adds CBS's staff consensus plus Jamey Eisenberg's and Dave Richard's own
+ranks. The same names switch on their Tuesday waiver-board columns and their
+Wednesday trade charts. An unknown name warns and is ignored; the rest still
+apply. The gap must be a finite, non-negative number; invalid input warns and
+uses 5.
 
-The dashboard (`index.html`) and Markdown digest show Boone's disagreements
-with the blend's top pair and the last starting spot at each position. A gap of
-at least 5 **positional spots** gets an analyst warning; a smaller inversion gets
-a quiet note. Agreement and missing player ranks render no annotation. A
+Each source is a column beside the blended score in every position table. When
+Boone would start someone other than the tool's pick by at least 5
+**positional spots**, his rank on that player is marked ▲ and one line under
+the table says so; smaller differences are just visible in the column. Agreement and missing player ranks render no annotation. A
 position whose list he has not posted yet says so in its own section, so an
 absent comparison does not read as agreement; every other failure reason is the
 same at every position and is reported once in Data status instead. Data
@@ -226,7 +230,12 @@ times, and a cached miss does not imply Boone will remain unavailable all week.
 
 ## 3. Preferred journalists (`FF_PREFERRED_EXPERTS`)
 
-This is the most valuable optional variable, because it feeds **two** reports:
+> **Most people can skip this section.** Boone's, Eisenberg's and Richard's
+> ranks reach every report through `FF_ANALYSTS=boone,cbs` (above) with no key.
+> This variable is only for FantasyPros' *paid* per-expert ranks, and without
+> `FANTASYPROS_API_KEY` it shows nothing.
+
+With a paid key, it feeds **two** reports:
 the **"Preferred journalists"** section of the weekly digest (each analyst's rank
 per player, plus their average) *and* the Tuesday waiver report, where those
 ranks annotate every suggested add. It's display-only — it never changes the

@@ -220,3 +220,12 @@ def test_discord_payload_defaults_unchanged():
     assert embed["color"] == 0x2EA043
     # Without a repo URL the pointer still ships, as a footer.
     assert "not here in Discord" in embed["footer"]["text"]
+
+
+def test_the_rehearsal_window_reads_the_central_date(monkeypatch):
+    """The Tuesday cron can land after UTC midnight; Central still says Tuesday."""
+    from datetime import datetime, timezone
+    late_tuesday = datetime(2026, 9, 9, 4, 31, tzinfo=timezone.utc)  # 11:31pm CDT Sep 8
+    assert season.central_today(late_tuesday) == date(2026, 9, 8)
+    monkeypatch.setattr(season, "central_today", lambda now=None: date(2026, 9, 8))
+    assert season.is_rehearsal_window() is True

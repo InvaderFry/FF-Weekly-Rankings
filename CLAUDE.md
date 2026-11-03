@@ -393,6 +393,20 @@ name is real — it is the attribution that is false. If CBS ranks are ever
 wanted, the only honest route is a data endpoint that names the analyst in its
 response, so the fetcher can fail closed the way both ECR transports do.
 
+**That route exists, and `boards/cbs.py` uses it** (found 2026-11-02). The
+*consensus* page, `/rankings/<ppr|standard>/<POS>/weekly/` with no slug, is one
+server-rendered table carrying every analyst's rank in its own column, and its
+header **names** each analyst in column order (Eisenberg, Richard, Cummings).
+`RK` is their average, sorted. So that page is attributable where the slug pages
+are not, and the parser fails closed: no named analysts, a row whose analyst
+cells don't match the header count, a title naming another position, or (for
+PPR) a title without "PPR" refuses the page. The page never states its week,
+so `week_mismatch` checks its matchups against the schedule. CBS has no
+half-PPR list; its `half-ppr` URL serves an analyst-less table, so half-PPR
+leagues read the PPR list under a "(PPR)" header. The slug pages above are still
+a trap, and the FantasyPros statement stands: no CBS analyst is in *that*
+directory.
+
 `ecr._matches_filters` is the guard underneath all of that, and it **fails
 closed on both transports**, including when the response names no `filters` at
 all. A response that doesn't say which experts it covers is not evidence that it
@@ -404,6 +418,92 @@ the scrape path failed closed — and `JournalistFetcher._warn_if_filter_ignored
 cannot cover that gap, because it needs two experts returning identical ranks to
 compare, which is exactly the single-journalist config that is left once the
 dead ids are dropped.
+
+### Expert boards (`boards/`)
+
+The side-by-side layer: each trusted source becomes one column beside the blend
+in every position table (terminal, Markdown, HTML), via one set of helpers in
+`output/board.py`. A board is **display data, never a `Signal`**. It has no
+weight, the "four places" rule doesn't apply, and nothing it holds reaches
+`notes` or `results_log.jsonl` (`tests/test_boards.py` pins both). The plan and
+the verified shape of every source page live in `docs/EXPERT_BOARD_PLAN.md`.
+
+- `ExpertSource` (`boards/base.py`) is the seam for new columns. Sources **fail
+  closed** on attribution and **never raise** for I/O; a missing list is an
+  `unavailable` reason with its own wording.
+- `fantasypros_weekly` costs no request: the `ecr` signal's raw value already
+  *is* the FantasyPros positional rank. It's built from per-position recs only,
+  never the pooled FLEX pass, whose raw value is a cross-position rank.
+- `cbs.py` adds three boards (CBS consensus, Eisenberg, Richard) when
+  `FF_ANALYSTS` includes `cbs` (it takes a comma list: `boone,cbs`). One
+  `CbsFetcher` is shared across leagues and caches each page for an hour. See
+  the CBS paragraph above for why this page is attributable.
+- **Waiver-column quotes come from the board's own sources** when the board is
+  on: `ArticleBoardSource.mentions` runs `columns.extract_mentions` on the
+  article the board already fetched, so a column is downloaded once, and the
+  quotes render under the board ("Why, in their words") instead of a separate
+  "What the writers said" section. Each source defines its own `body_region`,
+  and that matters: on Yahoo the first `<article>` is only the page header, so
+  the old `ColumnFetcher` path (still used when the board is off) found almost
+  nothing of Boone's, and the rest of the page carries "Recommended Stories"
+  headlines that name players. Boone's region is his first section heading
+  through his drop list; Eisenberg's is CBS's `<article id="Article-body">`.
+- Discord carries only FP, Boone and the CBS average, as one comparison line
+  per close call (`close_call_comparison`); every other renderer shows every
+  board.
+- Sample (preseason fill) runs get no boards (`Recommendation.sample_data`).
+- `section_boards` drops a column that reads nobody in that section, so a
+  missing list doesn't print a column of dashes in every table.
+- Every request sends `net.HEADERS`, a plain `ff-startsit/...` identity. Don't
+  reintroduce a browser User-Agent (`tests/test_net.py`), and don't add
+  "compatible;" to it: CBS answers 406 to that token.
+
+### The Tuesday expert board (`boards/writers.py`, `waivers/board.py`)
+
+`waivers` adds a **"What the writers say"** table per league: every free agent
+that Boone's waiver column, Eisenberg's waiver column or Richard's trade chart
+names, with each writer's reading side by side (Boone's positional rank, tier
+and FAB bid; Eisenberg's priority and FAAB %; Richard's value and rank by
+value), FantasyPros' overall ROS rank, and what this tool's own pass decided
+("add (drop X)", "also consider"). `FF_ANALYSTS=boone` enables Boone's column
+and `cbs` enables Eisenberg's and Richard's. It is a board, so the rules above
+hold: display only, no add/drop/bid changes (`test_board_changes_no_add_or_drop`),
+nothing in `results_log.jsonl`.
+
+- **Discovery and attribution** go through `boards/articles.py`: a link must
+  name the week, and the article's JSON-LD byline, week, season and kind
+  ("waiver wire", "trade chart") must all verify. Boone also writes a *college*
+  waiver column titled by week, which is why `never=("college",)` exists.
+- **Parsing fails closed.** Each parser raises on a page it doesn't recognise
+  ("layout not recognised"), and the page shapes are pinned by trimmed live
+  fixtures in `tests/fixtures/boards/` (prose removed). Specific shapes worth not
+  rediscovering: Eisenberg's per-card position label can be off-offense (Travis
+  Hunter is "CB"), so it falls back to the section's majority; Boone puts two
+  players under one heading with one table ("$9/$4"), split in heading order;
+  Richard's QB column depends on passing-TD points and superflex, and the other
+  positions have non/0.5/PPR columns, so half-PPR is covered.
+- **Rows are this league's free agents only.** Sources are handed the pool, so a
+  rostered player never appears as a pickup. Ranks print with their position
+  ("RB1") because the table mixes positions; FP ROS is overall ("#88").
+- **"Not posted yet" stays distinct from "broke"**, and since an author page
+  lists only recent pieces, a missing link says both possibilities ("not posted
+  yet, or too old to be listed").
+- **Discord gets the full table**, one message per league in 25-field embeds,
+  chunked by characters as well as fields: one embed of 25 long fields can
+  exceed the 6000-character message limit by itself.
+- **The retry gate.** The digest ends with an invisible
+  `<!-- ff-board season week mode read=... -->` marker, written on every
+  digest, boards on or off (`read=` when nothing was read). Scheduled runs
+  pass the newest open waiver issue's text as `--since`, and publish (Discord,
+  issue, Pages) only when nothing is published for that season, week and
+  **mode** yet or this run read a writer the published report didn't. Mode
+  (`WaiverBundle.mode`: `preseason`, `rehearsal`, `live`) is in the identity
+  because with nothing read all three are "Week 1" with the same read list,
+  and a refusal or rehearsal already posted would suppress the live report.
+  The values sheet records `read` per chart position (`boone_trade_values:TE`),
+  since Boone's charts post one at a time. Manual runs always publish. The decision
+  is `waivers.board.report_has_news`, shared by `cmd_waivers` and
+  `workflow.py news`.
 
 ### The analyst comparison (`sources/analysts.py`)
 
@@ -453,12 +553,16 @@ every candidate shares a position**: Boone's lists are per-position, so "his
 RB11 beats his WR6" compares two different rankings, the identical
 non-comparability `rank_pooled` exists to solve for ECR.
 
-The transport doubles as the **Preferred journalists** section's data source.
-`report._analyst_journalist_view` builds a `JournalistView` from these ranks
-when FantasyPros yields nothing, which is always without a paid key — that
-section otherwise never rendered at all. The expert is labelled `Justin Boone
-(Yahoo)` rather than borrowing a FantasyPros expert id, so a column can always
-say where it came from.
+How it renders changed with the boards: Boone's ranks are a column
+(`boards/boone.py`), so a **material** conflict marks his rank on the player he
+would start (`render.ANALYST_MARK`, ▲) and keeps one plain line under the table
+(`render.conflict_lines`), and a minor inversion gets no sentence at all,
+because the column already shows both ranks. It used to be a callout box above
+the table plus a "within N spots" note below, which repeated the numbers now in
+the column. And this transport **no longer feeds the Preferred journalists
+section**: it used to (`_analyst_journalist_view`, removed), which printed
+Boone's same ranks a second time beside his column. That section is now only
+the paid FantasyPros per-expert view.
 
 ### Game context (schedule)
 
@@ -514,13 +618,14 @@ precisely.
 The odds payload is the one fetch here that is **disk-cached** (`ODDS_CACHE_TTL`,
 30 minutes) rather than memoized per instance, because it is the one that varies
 by neither week nor league. `cli._league_bundles` builds a fresh signal set per
-league and every scheduled workflow scores each league *twice* — once for its own
-pass and once for the sibling page rebuild that keeps a Pages deploy from
-dropping the other page — so three leagues meant six identical calls per run. The
-Odds API bills **two credits per call**, one per market, against a 500/month free
-tier: the duplication, not the feed, was the running cost. The TTL is short on
-purpose; the only duplication it has to absorb happens minutes apart inside one
-run.
+league, and every scheduled workflow used to score each league *twice* — once
+for its own pass and once for the sibling page rebuild that kept a Pages deploy
+from dropping the other page — so three leagues meant six identical calls per
+run. The Odds API bills **two credits per call**, one per market, against a
+500/month free tier: the duplication, not the feed, was the running cost. The
+sibling rebuilds are gone now (pages are carried by `workflow.py restore`, see
+below), so each run scores each league once; the cache still absorbs any
+repeat inside one run.
 
 ### The lineup builder and the FLEX slot
 
@@ -758,15 +863,19 @@ reason a piece of it is shaped the way it is.
   and a run proves the least. The window is exactly one week wide so precisely
   one of `waivers.yml`'s weekly crons lands in it: one rehearsal a season, with
   no arithmetic tying the window to the schedule. That property has a second,
-  quieter requirement: `is_rehearsal_window` reads `date.today()`, which on a
-  runner is the **UTC** date, so the cron must land on the same UTC weekday
-  every week. GitHub starts a scheduled run when its queue allows — delays from
-  18 minutes to 8h01 are measured on this repo — so a slot close enough to UTC
-  midnight to straddle it under load resolves to one weekday some weeks and the
-  next on others, which can hand one preseason two rehearsals and the following
-  one none. `0 15 * * 2` leaves 9 hours of headroom (worst case 23:01 UTC); the
-  old `0 0 * * 3` had the same property by sitting just *after* midnight. Any
-  future move of this cron has to keep it. Nothing is invented if the data
+  quieter requirement: the first cron must land on the same weekday every week,
+  as `is_rehearsal_window` reads it. GitHub starts a scheduled run when its
+  queue allows — delays from 18 minutes to 8h01 are measured on this repo — so
+  a slot that can straddle midnight under load resolves to one weekday some
+  weeks and the next on others, which can hand one preseason two rehearsals and
+  the following one none. `is_rehearsal_window` therefore reads the **Central**
+  date (`season.central_today`), not the runner's UTC date: the Tuesday cron
+  moved to `30 20 * * 2` (after the writers' Tuesday articles), whose worst case
+  is 04:31 UTC — Wednesday in UTC, but 11:31pm Tuesday CDT. Any future move of
+  this cron has to keep its worst case inside Central Tuesday. The `30 1 * * 3`
+  retry is deliberately exempt: it publishes only when it read a writer the
+  first pass didn't (`waivers.board.has_news`), so its own preseason firing
+  cannot post a second rehearsal that adds nothing. Nothing is invented if the data
   isn't there yet — `score.has_ecr` already empties the report — so the banner
   carries `score.signal_coverage` counts, because an empty rehearsal must not
   read the same as a broken one. Those counts ride in the *banner*, not `notes`:
@@ -844,13 +953,56 @@ or paywalled, and a parsed article naming nobody in *this* league's pool. The
 last of those is not a failure at all, which is why it stopped being reported as
 "paywall or layout change?".
 
-Both scheduled workflows publish the **whole** `./site` (index.html +
-waivers.html) and share `concurrency: group: ff-startsit-pages`. A Pages deploy
-replaces the site wholesale, so two workflows deploying their own page would each
-silently delete the other's. The sibling rebuild is `continue-on-error`, which is
-how `./site` ends up with one page in it, so a `Verify the site is complete` step
-gates both the upload and the deploy on *both* files existing — skipping the
-deploy leaves the live site standing, which beats replacing it with half of one.
+All three scheduled workflows publish the **whole** `./site` (index.html,
+waivers.html, values.html) and share `concurrency: group: ff-startsit-pages`. A
+Pages deploy replaces the site wholesale, so a workflow deploying only its own
+page would silently delete the others. Each workflow builds only its own page
+and carries the others with `workflow.py restore`, which copies the *live* copy
+of a page into `./site` and costs no Odds API credits. That replaced the old
+sibling rebuild, where the start/sit and waiver workflows re-scored each other's
+page every run: the same pages for twice the credits. One consequence worth
+knowing: Tuesday no longer refreshes the start/sit page, so between Tuesday and
+Thursday it still shows Sunday's lineup. A restore that 404s means "never published"; any other
+failure leaves a `.restore-failed-<page>` marker that `verify_site` reads as a
+missing page, so the deploy is skipped and the live site stands. The
+start/sit and waiver workflows restore values.html with `--optional` instead:
+a Thursday lineup page held back for want of the values page would be the
+wrong trade, and values.html returns the next Wednesday. `verify_site` requires
+index.html and waivers.html always; values.html only through a failed
+non-optional restore, since before its first Wednesday it doesn't exist.
+
+### The Wednesday values sheet (`waivers/values.py`, `ffstartsit values`)
+
+Each league's skill players on **Richard's** trade chart (Tuesday, which he
+says doubles as rest-of-season rankings) and **Boone's** four per-position
+trade value charts (Wednesday), beside FantasyPros' overall ROS rank, plus every
+trade idea the waiver pass found, judged **once per chart**. It runs the waiver
+pass (no column quotes, no Tuesday board) through `_waiver_bundles`' `writers`
+and `on_bundle` hooks rather than copying it. Display only, no `--log`.
+
+- **The charts are on different scales** (Richard has Gibbs at 56, Boone at
+  104), so values are never added or averaged across charts. A verdict is one
+  net per chart ("Richard +6 · Boone −3"); `(charts split)` when they disagree
+  on whether the deal helps you. A chart that has no value for someone in the
+  deal prices it "off chart" rather than as a partial sum.
+- **Disagreement is judged on rank**, which is scale-free: `chart_split` flags
+  a player whose two chart ranks are at least `DISAGREE_SPOTS` (6) *and*
+  `DISAGREE_SHARE` (35%) of the better rank apart. "agree" is printed only when
+  both charts ranked him; a chart not read yet is left out of the comparison
+  and the verdicts entirely ("no chart read yet"), never read as agreement.
+- **Finding Boone's charts.** His author page lists only recent pieces and
+  does *not* list the charts once they scroll off. They are found, in order,
+  from the author page, from his weekly rankings hub
+  (`fantasy-football-week-N-rankings-justin-boone`, which the author page does
+  list; his per-position ranking articles don't link the charts, so they are
+  not fetched), and from `--boone-chart URL` (a `values.yml` dispatch input).
+  Every chart links its three siblings, so one is enough. Each is verified on
+  its own: byline, week, season, "trade value charts".
+- **Columns.** Boone: QB `1QB`/`2QB`, others `HALF`/`PPR` — **no standard
+  values**, so standard leagues show him for QBs only and say why. Richard: QB
+  `1QB-4`/`2QB`, others non/0.5/PPR. Superflex picks each chart's 2QB column.
+- `values.yml` runs Wednesday 22:30 UTC with a 02:30 UTC retry, gated by the
+  same `ff-board` marker and `report_has_news` as the Tuesday board.
 
 ### Output & delivery
 
@@ -877,6 +1029,14 @@ true for one healthy body beside two on IR: those rows carry "not startable:
 ruled out this week", which is exactly what a roster owner needs to see, so that
 table stays. The interactive `render_table` keeps its table too — someone who
 typed `rank TE` asked for it.
+
+An `unranked` table's note names its **cause** (`render.unranked_note`):
+one player, one *playable* player beside ruled-out ones, one *scored* player
+beside others with missing readings, or no signal reading at all. "Ruled out"
+is claimed only when every unscored player carries `blend.RULED_OUT_FLAG`; an
+unmatched player is missing data, not out for the week. It used to say "Only one candidate here" for all three, so a run where
+every source failed told the owner of four running backs that he had one —
+the distinguishable-failures-rendering-identically bug again.
 
 That collapse fixed the position table; it did not reach the lineup table one
 level up, which is `render.lineup_unscored_keys`' fix. `report.build_lineup`

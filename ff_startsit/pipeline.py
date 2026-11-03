@@ -191,6 +191,7 @@ def recommend(
         disagree_exempt=settings.disagree_exempt,
         dead_heat_exempt=settings.presentational_gaps,
     )
+    rec.sample_data = any(getattr(s, "is_sample", False) for s in signals)
 
     for sig in signals:
         _merge_source_status(rec, getattr(sig, "source_status", []))

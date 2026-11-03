@@ -25,6 +25,7 @@ from ..cache import atomic_write_text, read_json_or_none
 from ..data.matching import ExternalRow, match_rows, is_defense
 from ..data.teams import normalize_team
 from ..models import Player
+from ..net import HEADERS
 from .articles import verified_week
 
 UNIVERSAL_KINDS = frozenset({'QB', 'DST', 'K'})
@@ -32,7 +33,7 @@ KINDS = ('QB', 'RB', 'WR', 'TE', 'DST', 'K', 'FLEX', 'OVERALL')
 TTL = 3 * 3600
 PARTNER = 'https://partners.fantasypros.com/api/v1/consensus-rankings.php'
 WIDGET_PATH = '/external/widget/fp-widget.php'
-UA = {'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36'}
+UA = HEADERS
 VERIFY_REASON = 'byline or week could not be verified in the article'
 PARSE_REASON = 'rankings table could not be parsed'
 SCORING_REASON = 'scoring of the linked list could not be resolved'

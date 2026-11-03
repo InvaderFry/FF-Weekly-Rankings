@@ -206,8 +206,34 @@ def _build_parser() -> argparse.ArgumentParser:
     p_wai.add_argument("--rehearse", action="store_true",
                        help="preseason dress rehearsal: score live data instead "
                             "of refusing (no-op once the season starts)")
+    p_wai.add_argument("--since", type=Path, default=None,
+                       help="the report already published this week; send Discord "
+                            "only if this run read a writer it didn't (retry runs)")
     # Deliberately no --log: see cmd_waivers.
     p_wai.set_defaults(func=cmd_waivers)
+
+    p_val = sub.add_parser("values", parents=[roster_parent],
+                           help="Wednesday: your roster on Richard's and Boone's "
+                                "trade charts, plus trade ideas judged on each")
+    p_val.add_argument("--week", type=int, default=None)
+    p_val.add_argument("--report", type=Path, default=None,
+                       help="write the markdown digest here")
+    p_val.add_argument("--dashboard", type=Path, default=None,
+                       help="write the HTML values page here")
+    p_val.add_argument("--discord", action="store_true",
+                       help="also send the full tables to Discord")
+    p_val.add_argument("--all-leagues", action="store_true", dest="all_leagues",
+                       help="one sheet per configured league")
+    p_val.add_argument("--no-trades", action="store_true", dest="no_trades",
+                       help="skip the trade ideas")
+    p_val.add_argument("--boone-chart", action="append", default=[], dest="boone_chart",
+                       metavar="URL",
+                       help="a Boone trade chart URL, for when his pages don't link "
+                            "this week's yet (any one finds the other three)")
+    p_val.add_argument("--since", type=Path, default=None,
+                       help="the report already published this week; send Discord "
+                            "only if this run read a chart it didn't (retry runs)")
+    p_val.set_defaults(func=cmd_values)
 
     p_cal = sub.add_parser("calibrate",
                            help="learn blend weights from your logged decisions vs actual outcomes (#7)")
@@ -268,7 +294,10 @@ def _annotate_analyst(settings: Settings, rec, players, week: int, pos: str) -> 
     non-comparability `rank_pooled` exists to solve for ECR -- so the caller
     passes a single position or nothing happens.
     """
+    cbs = (report.cbs_boards_for(settings, players, week)
+           if settings.cbs_rankings and pos and not rec.sample_data else [])
     if settings.analysts != "boone" or not pos:
+        report.attach_boards([rec], extra_boards=cbs)
         return
     from .engine.analyst import detect_conflicts
     from .sources.analysts import AnalystFetcher, not_published_yet
@@ -277,7 +306,9 @@ def _annotate_analyst(settings: Settings, rec, players, week: int, pos: str) -> 
             players, week, settings.scoring)
     except Exception as exc:  # never sink a ranking over an annotation
         print(f"warning: analyst comparison unavailable: {exc}", file=sys.stderr)
+        report.attach_boards([rec], extra_boards=cbs)
         return
+    report.attach_boards([rec], ranks if not rec.sample_data else None, cbs)
     rec.analyst_ranks = dict(ranks.by_position.get(pos, {}))
     rec.analyst_name = ranks.analyst
     rec.analyst_conflicts = detect_conflicts(rec, rec.analyst_ranks, ranks.analyst,
@@ -452,14 +483,13 @@ def cmd_report(args, settings: Settings) -> int:
 
 def cmd_journalists(args, settings: Settings) -> int:
     """Print the preferred-journalists section on its own (quick id sanity check)."""
-    if not settings.preferred_experts and settings.analysts != "boone":
-        # The analyst transport serves this section without any expert id, so
-        # the demand for one only stands when that is off too. Requiring it
-        # regardless sent the user to configure a FantasyPros key that cannot
-        # work -- per-expert ranks there are a paid product.
-        print("FF_PREFERRED_EXPERTS is not set and FF_ANALYSTS is off — see "
-              ".env.example for the id:Name format and how to find "
-              "FantasyPros expert ids.", file=sys.stderr)
+    if not settings.preferred_experts:
+        # Boone's (and CBS's) ranks are columns in every position table now
+        # (FF_ANALYSTS); this section is only the paid FantasyPros per-expert view.
+        print("FF_PREFERRED_EXPERTS is not set. This section needs FantasyPros "
+              "expert ids and a paid FANTASYPROS_API_KEY; for Boone and CBS, set "
+              "FF_ANALYSTS=boone,cbs and read their columns in `rank` / `report`.",
+              file=sys.stderr)
         return 1
     settings, profile = _league_context(args, settings)
     players = _get_roster(args, settings, profile)
@@ -467,9 +497,10 @@ def cmd_journalists(args, settings: Settings) -> int:
     view = report.build_journalist_view(settings, players, week)
     if view is None:
         print("No preferred-journalist rankings available (bad expert ids, "
-              "offline, or no data for this week). Note per-expert FantasyPros "
-              "ranks need a paid API key — run `ffstartsit experts --verify` "
-              "— while FF_ANALYSTS=boone serves this section without one.",
+              "offline, or no data for this week). Per-expert FantasyPros ranks "
+              "need a paid API key — run `ffstartsit experts --verify`. Boone's "
+              "and CBS's ranks don't need one: they're columns in every position "
+              "table with FF_ANALYSTS=boone,cbs.",
               file=sys.stderr)
         return 1
     print(report.render_journalists_markdown(view))
@@ -777,6 +808,9 @@ def _league_bundles(args, settings: Settings, week: int) -> list:
     from .sources.analysts import AnalystFetcher
     analyst_fetcher = (AnalystFetcher(season.season_year(), settings.data_dir)
                        if settings.analysts == "boone" else None)
+    # One CBS fetcher for every league, so each page is read once per run.
+    from .boards.cbs import CbsFetcher
+    cbs_fetcher = CbsFetcher(settings.data_dir) if settings.cbs_rankings else None
     bundles: list = []
     for profile in settings.leagues:
         # Unconditional copy — see `_league_context`. Same-scoring leagues used to
@@ -789,7 +823,9 @@ def _league_bundles(args, settings: Settings, week: int) -> list:
             ws = report.score_week(lsettings, players, week,
                                    log=getattr(args, "log", False),
                                    **({"analyst_fetcher": analyst_fetcher}
-                                      if analyst_fetcher is not None else {}))
+                                      if analyst_fetcher is not None else {}),
+                                   **({"cbs_fetcher": cbs_fetcher}
+                                      if cbs_fetcher is not None else {}))
             recs = ws.recs
             lineup = report.lineup_from(ws)
             journalists = report.build_journalist_view(lsettings, players, week)
@@ -845,7 +881,8 @@ def _cmd_publish_all(args, settings: Settings) -> int:
     return 0
 
 
-def _waiver_bundles(args, settings: Settings, week: int) -> list:
+def _waiver_bundles(args, settings: Settings, week: int, writers=None,
+                    on_bundle=None) -> list:
     """Build one WaiverBundle per configured league.
 
     Modeled on ``_league_bundles``: a league that fails is skipped with a
@@ -869,6 +906,7 @@ def _waiver_bundles(args, settings: Settings, week: int) -> list:
     # one per league, so re-fetching per league would be three needless requests
     # each and three copies of the same credits line.
     fetcher = ColumnFetcher() if include_columns else None
+    writers = waiver_writer_sources(settings) if writers is None else writers
 
     from .data_status import DataStatus, finish_status
     status = DataStatus(season.season_year(), week, [p.name for p in profiles])
@@ -886,7 +924,7 @@ def _waiver_bundles(args, settings: Settings, week: int) -> list:
                       f"other teams.", file=sys.stderr)
                 continue
             players = _get_roster(args, lsettings, profile)
-            bundles.append(build_bundle(
+            bundle = build_bundle(
                 lsettings, _league_label(profile) or profile.name, provider,
                 players, week, limit=limit,
                 max_adds=lsettings.waiver_max_adds,
@@ -898,12 +936,34 @@ def _waiver_bundles(args, settings: Settings, week: int) -> list:
                 # None, not False, so an unset flag still lets build_bundle
                 # detect the pre-kickoff window on its own.
                 rehearse=getattr(args, "rehearse", False) or None,
-            ))
+                **({"writer_sources": writers} if writers else {}),
+            )
+            if on_bundle is not None:
+                on_bundle(bundle, players)
+            bundles.append(bundle)
         except (RosterError, SleeperError) as exc:
             status.skipped[profile.name] = str(exc)
             print(f"warning: skipping league {profile.name!r}: {exc}", file=sys.stderr)
             continue
     return finish_status(status, bundles)
+
+
+def waiver_writer_sources(settings: Settings) -> list:
+    """The Tuesday expert-board sources ``FF_ANALYSTS`` asks for, sharing one
+    article fetcher so each article is read once per run whatever the league
+    count: ``boone`` -> Boone's waiver column; ``cbs`` -> Eisenberg's waiver
+    column and Richard's trade chart."""
+    if settings.analysts != "boone" and not settings.cbs_rankings:
+        return []
+    from .boards.articles import ArticleFetcher
+    from .boards.writers import BooneWaivers, EisenbergWaivers, RichardChart
+    fetcher = ArticleFetcher(settings.data_dir)
+    sources: list = []
+    if settings.analysts == "boone":
+        sources.append(BooneWaivers(fetcher))
+    if settings.cbs_rankings:
+        sources += [EisenbergWaivers(fetcher), RichardChart(fetcher)]
+    return sources
 
 
 def cmd_waivers(args, settings: Settings) -> int:
@@ -945,6 +1005,14 @@ def cmd_waivers(args, settings: Settings) -> int:
         args.dashboard.write_text(html)
         print(f"Wrote waivers page ({len(bundles)} league(s)) to {args.dashboard}")
 
+    since = getattr(args, "since", None)
+    if args.discord and since is not None:
+        from .waivers.board import report_has_news
+        previous = since.read_text(encoding="utf-8") if since.exists() else ""
+        if not report_has_news(digest, previous):
+            print("Nothing new since this week's published report (same writers read); "
+                  "skipping Discord.", file=sys.stderr)
+            return 0
     if args.discord:
         if not settings.discord_webhook_url:
             print("DISCORD_WEBHOOK_URL is not set — skipping Discord.", file=sys.stderr)
@@ -960,6 +1028,95 @@ def cmd_waivers(args, settings: Settings) -> int:
                 # Same contract as publish: a Discord hiccup never sinks the
                 # digest and dashboard the rest of the workflow depends on.
                 print(f"warning: Discord notification failed: {exc}", file=sys.stderr)
+            # The full expert board, one message (or more) per league.
+            from .output.discord import build_waiver_board_payloads
+            for board_payload in build_waiver_board_payloads(week, bundles):
+                try:
+                    send_discord(settings.discord_webhook_url, board_payload)
+                except Exception as exc:
+                    print(f"warning: Discord expert board failed: {exc}", file=sys.stderr)
+    return 0
+
+
+def value_chart_sources(settings: Settings, boone_urls=()) -> list:
+    """Richard's chart (``cbs`` in FF_ANALYSTS) and Boone's (``boone``), sharing
+    one article fetcher. With neither enabled there is nothing to compare, so
+    ``values`` uses both regardless: the command exists to show these two."""
+    from .boards.articles import ArticleFetcher
+    from .boards.writers import BooneTradeValues, RichardChart
+    fetcher = ArticleFetcher(settings.data_dir)
+    want_boone = settings.analysts == "boone"
+    want_cbs = settings.cbs_rankings
+    if not want_boone and not want_cbs:
+        want_boone = want_cbs = True
+    sources: list = []
+    if want_cbs:
+        sources.append(RichardChart(fetcher))
+    if want_boone:
+        sources.append(BooneTradeValues(fetcher, override_urls=boone_urls))
+    return sources
+
+
+def cmd_values(args, settings: Settings) -> int:
+    """Wednesday: each league's roster on Richard's and Boone's trade charts.
+
+    Built on the waiver pass, which already scores every roster and finds trade
+    ideas; this adds the two charts beside your players and judges every trade
+    idea once per chart. Like ``waivers`` it has no ``--log``: nothing here is a
+    start/sit decision.
+    """
+    from datetime import date
+
+    from .output.discord import build_values_payloads, send_discord
+    from .output.html import build_values_html
+    from .waivers.render import render_values_digest
+    from .waivers.values import build_sheet
+
+    week = _resolve_week(args, settings)
+    sources = value_chart_sources(settings, getattr(args, "boone_chart", []) or [])
+    sheets: list = []
+
+    def on_bundle(bundle, players):
+        rules = bundle.rules
+        superflex = bool(rules.flex_slots.get("SUPER_FLEX")) or rules.roster_slots.get("QB", 1) >= 2
+        sheets.append(build_sheet(bundle, players, sources, week, superflex=superflex))
+
+    # The waiver pass without its Tuesday extras: no column quotes, no writers' board.
+    from types import SimpleNamespace
+    wargs = SimpleNamespace(**{**vars(args), "no_columns": True, "limit": None, "rehearse": False})
+    bundles = _waiver_bundles(wargs, settings, week, writers=[], on_bundle=on_bundle)
+    sheets = [s for s in sheets if s.bundle in bundles]
+    if not sheets:
+        print("No configured league could be scored for trade values.", file=sys.stderr)
+        return 1
+
+    digest = render_values_digest(week, sheets)
+    print(digest)
+    if args.report:
+        args.report.parent.mkdir(parents=True, exist_ok=True)
+        args.report.write_text(digest)
+    if args.dashboard:
+        args.dashboard.parent.mkdir(parents=True, exist_ok=True)
+        args.dashboard.write_text(build_values_html(week, sheets, generated_on=date.today().isoformat()))
+        print(f"Wrote values page ({len(sheets)} league(s)) to {args.dashboard}")
+
+    since = getattr(args, "since", None)
+    if args.discord and since is not None:
+        from .waivers.board import report_has_news
+        previous = since.read_text(encoding="utf-8") if since.exists() else ""
+        if not report_has_news(digest, previous):
+            print("Nothing new since this week's published values (same charts read); "
+                  "skipping Discord.", file=sys.stderr)
+            return 0
+    if args.discord:
+        if not settings.discord_webhook_url:
+            print("DISCORD_WEBHOOK_URL is not set — skipping Discord.", file=sys.stderr)
+        else:
+            for payload in build_values_payloads(week, sheets):
+                try:
+                    send_discord(settings.discord_webhook_url, payload)
+                except Exception as exc:
+                    print(f"warning: Discord values message failed: {exc}", file=sys.stderr)
     return 0
 
 

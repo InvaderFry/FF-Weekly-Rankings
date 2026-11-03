@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import os
 import sys
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta, timezone
 from typing import Optional
 
 #: Shown when a preseason run is auto-filled with bundled sample data.
@@ -129,14 +129,35 @@ def preseason_banner(settings, today: Optional[date] = None) -> Optional[str]:
     return SAMPLE_BANNER if getattr(settings, "preseason_fill", True) else NODATA_BANNER
 
 
+def central_today(now: Optional[datetime] = None) -> date:
+    """Today's date in US Central time, where the owner and the waiver deadline are.
+
+    A runner's ``date.today()`` is the UTC date, which turns over at 6-7pm
+    Central. The Tuesday waiver run starts mid-afternoon Central and GitHub can
+    delay it by up to ~8h, so on UTC dates it lands on Tuesday some weeks and
+    Wednesday others. Central dates keep it on Tuesday. Falls back to a fixed
+    UTC-6 offset where the tz database is missing (some Windows installs).
+    """
+    now = now or datetime.now(timezone.utc)
+    try:
+        from zoneinfo import ZoneInfo
+        return now.astimezone(ZoneInfo("America/Chicago")).date()
+    except Exception:
+        return (now.astimezone(timezone.utc) - timedelta(hours=6)).date()
+
+
 def is_rehearsal_window(today: Optional[date] = None) -> bool:
     """True in the final week before kickoff — when Week 1 data actually exists.
 
     The rehearsal is deliberately *not* the first week of preseason: that is late
     July, when there are no weekly rankings to fetch and Week 1 lines are thin, so
     a run then proves the least. A week out, the data is real.
+
+    The default date is **Central**, not the runner's UTC date: see
+    ``central_today``. The waiver cron starts Tuesday afternoon Central, and only
+    the Central date keeps every delayed firing on the same day.
     """
-    today = today or date.today()
+    today = today or central_today()
     delta = first_kickoff(season_year(today)) - today
     return timedelta(0) < delta <= timedelta(days=REHEARSAL_DAYS)
 

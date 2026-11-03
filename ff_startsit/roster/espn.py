@@ -31,6 +31,7 @@ from ..waivers.base import LeagueViewProvider
 from ..waivers.models import (ACQ_FAAB, ACQ_PRIORITY, ACQ_UNKNOWN, FantasyTeam,
                               LeagueRules, PoolPlayer)
 from .base import RosterError, RosterProvider
+from ..net import HEADERS
 
 BASE = ("https://lm-api-reads.fantasy.espn.com/apis/v3/games/ffl/seasons/"
         "{season}/segments/0/leagues/{league_id}")
@@ -39,7 +40,7 @@ BASE = ("https://lm-api-reads.fantasy.espn.com/apis/v3/games/ffl/seasons/"
 #: is what tells the waiver report FAAB from rolling priority.
 LEAGUE_VIEWS = [("view", "mRoster"), ("view", "mTeam"), ("view", "mSettings")]
 
-_UA = {"User-Agent": "Mozilla/5.0 (ff-startsit)"}
+_UA = HEADERS
 
 #: ESPN lineupSlotId -> our position code, for the free-agent filter and for
 #: reading starting-slot counts out of ``mSettings``. Flex/bench/IR slots are

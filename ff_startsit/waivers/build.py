@@ -144,7 +144,8 @@ def build_bundle(settings: Settings, label: str, provider: LeagueViewProvider,
                  include_trades: bool = True,
                  include_columns: bool = True,
                  preseason: Optional[bool] = None,
-                 rehearse: Optional[bool] = None) -> WaiverBundle:
+                 rehearse: Optional[bool] = None,
+                 writer_sources: Sequence = ()) -> WaiverBundle:
     """Score one league's waiver wire and build its report.
 
     Before Week 1 the report is **refused**, not filled. ``pipeline.build_signals``
@@ -176,7 +177,8 @@ def build_bundle(settings: Settings, label: str, provider: LeagueViewProvider,
         # refusal can say — that the draft landed and this is the team. Still no
         # scores or ranks, because there are none.
         return WaiverBundle(label=label, scoring=settings.scoring, week=week,
-                            banner=WAIVER_BANNER, roster=list(my_players))
+                            banner=WAIVER_BANNER, roster=list(my_players),
+                            mode="preseason")
 
     rules = _rules(provider)
     teams = _teams(provider)
@@ -240,6 +242,7 @@ def build_bundle(settings: Settings, label: str, provider: LeagueViewProvider,
 
     if rehearsing:
         bundle.banner = _rehearsal_banner(index, pool)
+        bundle.mode = "rehearsal"
 
     my_scores = [index[p.key] for p in my_players if p.key in index]
     protected = _lineup_keys(my_scores, rules)
@@ -257,7 +260,19 @@ def build_bundle(settings: Settings, label: str, provider: LeagueViewProvider,
     ranks = journalist_ranks(settings, dedupe_players(pool_players(pool), my_players), week)
 
     mentions: dict[str, list] = {}
-    if include_columns:
+    quoting = [s for s in writer_sources if getattr(s, "kind", "") == "waiver"
+               and hasattr(s, "mentions")]
+    if include_columns and quoting:
+        # The board's own sources already hold the columns: quote from those,
+        # rather than fetch the same articles again through ColumnFetcher.
+        found = []
+        for source in quoting:
+            try:
+                found += source.mentions(week, pool_players(pool))
+            except Exception as exc:     # quotes are decoration; never sink the report
+                print(f"warning: {source.label} quotes unavailable: {exc}", file=sys.stderr)
+        mentions = index_mentions(found)
+    elif include_columns:
         fetcher = column_fetcher or ColumnFetcher()
         mentions = index_mentions(fetcher.fetch(week, pool_players(pool)))
         bundle.sources.extend(fetcher.read)
@@ -286,6 +301,10 @@ def build_bundle(settings: Settings, label: str, provider: LeagueViewProvider,
     bundle.considered_adds = viable_adds_by_position(index, pool, rules)
     bundle.drops = drops[:max_adds]
 
+    if writer_sources:
+        _attach_expert_board(bundle, writer_sources, pool_players(pool), week,
+                             settings.scoring, rules, season_ranks, mentions)
+
     schedule = schedule or ScheduleProvider(cache_dir=settings.data_dir)
     playing = _weeks_playing(schedule, week)
     bye_teams = _bye_teams(candidates, playing.get(week))
@@ -310,6 +329,34 @@ def build_bundle(settings: Settings, label: str, provider: LeagueViewProvider,
             if bundle.trades:
                 bundle.notes.append(TRADE_NOTE)
     return bundle
+
+
+def _attach_expert_board(bundle: WaiverBundle, sources: Sequence, free_agents: Sequence[Player],
+                         week: int, scoring: str, rules: LeagueRules,
+                         season_ranks: dict, mentions: Optional[dict] = None) -> None:
+    """Each writer's reading of this league's wire, side by side (display only).
+
+    A source never raises for I/O, but one that does anyway costs its own
+    column and nothing else -- the add/drop report above is already built.
+    """
+    from .board import build_board, fp_ros_board
+    from ..boards.models import ALL_POSITIONS, ExpertBoard
+    superflex = bool(rules.flex_slots.get("SUPER_FLEX")) or rules.roster_slots.get("QB", 1) >= 2
+    boards = []
+    for source in sources:
+        try:
+            boards.append(source.fetch(free_agents, week, scoring, superflex=superflex))
+        except Exception as exc:
+            print(f"warning: {source.label} unavailable: {exc}", file=sys.stderr)
+            boards.append(ExpertBoard(source.id, source.short, source.label,
+                                      unavailable={ALL_POSITIONS: f"{source.label}: {exc}"}))
+    boards.append(fp_ros_board(season_ranks))
+    bundle.expert_boards = boards
+    bundle.expert_rows = build_board(free_agents, boards, bundle.adds, bundle.alternates,
+                                     mentions)
+    for board in boards:
+        if board.url:
+            bundle.sources.append((board.label, board.url))
 
 
 def _bye_teams(players: Sequence[Player], playing: Optional[set[str]]) -> set[str]:

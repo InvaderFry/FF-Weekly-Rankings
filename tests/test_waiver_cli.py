@@ -269,3 +269,133 @@ def test_rehearse_flag_reaches_the_builder_and_names_the_situation(
     captured = capsys.readouterr()
     assert "DRESS REHEARSAL" in captured.err     # not the refusal notice
     assert "Free Wr" in captured.out             # and it really scored the pool
+
+
+def test_waiver_writer_sources_follow_ff_analysts(tmp_path):
+    from dataclasses import replace
+    s = _settings(tmp_path)
+    assert cli.waiver_writer_sources(s) == []
+    assert [x.id for x in cli.waiver_writer_sources(replace(s, analysts="boone"))] == ["boone_waivers"]
+    both = cli.waiver_writer_sources(replace(s, analysts="boone", cbs_rankings=True))
+    assert [x.id for x in both] == ["boone_waivers", "eisenberg_waivers", "richard_chart"]
+    assert len({id(x.fetcher) for x in both}) == 1         # one fetcher, each article once
+
+
+def _board_on(monkeypatch, read):
+    """Turn the board on with fake writers that read ``read``."""
+    from ff_startsit.boards.models import ALL_POSITIONS, ExpertBoard
+
+    class Src:
+        def __init__(self, sid):
+            self.id, self.short, self.label = sid, sid, sid
+
+        def fetch(self, players, week, scoring, superflex=False):
+            board = ExpertBoard(self.id, self.short, self.label)
+            if self.id not in read:
+                board.unavailable[ALL_POSITIONS] = "not posted yet"
+            return board
+    monkeypatch.setattr(cli, "waiver_writer_sources",
+                        lambda s: [Src("boone_waivers"), Src("eisenberg_waivers")])
+
+
+def _sent(monkeypatch):
+    sent = []
+    monkeypatch.setattr("ff_startsit.output.discord.send_discord",
+                        lambda url, payload, **k: sent.append(payload))
+    return sent
+
+
+def test_retry_with_nothing_new_sends_nothing(monkeypatch, tmp_path, capsys):
+    monkeypatch.setattr(cli, "build_roster_provider", lambda *a, **k: _FakeProvider())
+    _board_on(monkeypatch, {"boone_waivers"})
+    sent = _sent(monkeypatch)
+    settings = _settings(tmp_path)
+    settings.discord_webhook_url = "https://discord.test/hook"
+    first = tmp_path / "first.md"
+    assert cli.cmd_waivers(_Args(discord=True, report=first,
+                                 since=tmp_path / "none.md"), settings) == 0
+    assert len(sent) == 2                       # the summary, then the board
+    sent.clear()
+    assert cli.cmd_waivers(_Args(discord=True, since=first), settings) == 0
+    assert sent == [] and "skipping Discord" in capsys.readouterr().err
+
+
+def test_retry_that_read_another_writer_posts(monkeypatch, tmp_path):
+    monkeypatch.setattr(cli, "build_roster_provider", lambda *a, **k: _FakeProvider())
+    _board_on(monkeypatch, {"boone_waivers"})
+    settings = _settings(tmp_path)
+    settings.discord_webhook_url = "https://discord.test/hook"
+    first = tmp_path / "first.md"
+    cli.cmd_waivers(_Args(report=first), settings)
+    _board_on(monkeypatch, {"boone_waivers", "eisenberg_waivers"})
+    sent = _sent(monkeypatch)
+    assert cli.cmd_waivers(_Args(discord=True, since=first), settings) == 0
+    assert len(sent) == 2
+
+
+def _charts(monkeypatch, read=("richard_chart", "boone_trade_values")):
+    from ff_startsit.boards.models import ALL_POSITIONS, BoardEntry, ExpertBoard
+
+    class Chart:
+        def __init__(self, sid, short):
+            self.id, self.short, self.label = sid, short, short
+
+        def fetch(self, players, week, scoring, superflex=False):
+            board = ExpertBoard(self.id, self.short, self.label)
+            if self.id not in read:
+                board.unavailable[ALL_POSITIONS] = "not posted yet"
+                return board
+            board.entries = {p.key: BoardEntry(value=10.0, pos_rank=5) for p in players}
+            return board
+    monkeypatch.setattr(cli, "value_chart_sources", lambda s, urls=(): [
+        Chart("richard_chart", "Richard"), Chart("boone_trade_values", "Boone")])
+
+
+def test_values_writes_digest_page_and_discord(monkeypatch, tmp_path, capsys):
+    monkeypatch.setattr(cli, "build_roster_provider", lambda *a, **k: _FakeProvider())
+    _charts(monkeypatch)
+    sent = _sent(monkeypatch)
+    settings = _settings(tmp_path)
+    settings.discord_webhook_url = "https://discord.test/hook"
+    report, page = tmp_path / "values.md", tmp_path / "site" / "values.html"
+    args = _Args(discord=True, report=report, dashboard=page, boone_chart=[], since=None)
+    assert cli.cmd_values(args, settings) == 0
+    md = report.read_text()
+    assert "Week 9 trade values" in md and "| Richard | Boone | FP ROS |" in md
+    # The issue step titles the post from the Data status line; it must be there.
+    from ff_startsit.workflow import issue_title
+    assert issue_title(md, "trade values").endswith("Week 9 trade values")
+    assert page.read_text().count("Trade values") >= 1
+    assert sent and all(e["title"].startswith("📈 Week 9 trade values") for p in sent for e in p["embeds"])
+
+
+def test_values_retry_with_the_same_charts_stays_quiet(monkeypatch, tmp_path, capsys):
+    monkeypatch.setattr(cli, "build_roster_provider", lambda *a, **k: _FakeProvider())
+    _charts(monkeypatch, read=("richard_chart",))
+    settings = _settings(tmp_path)
+    settings.discord_webhook_url = "https://discord.test/hook"
+    first = tmp_path / "first.md"
+    cli.cmd_values(_Args(report=first, boone_chart=[], since=None), settings)
+    sent = _sent(monkeypatch)
+    assert cli.cmd_values(_Args(discord=True, boone_chart=[], since=first), settings) == 0
+    assert sent == []
+    _charts(monkeypatch)            # Boone's charts are up now
+    assert cli.cmd_values(_Args(discord=True, boone_chart=[], since=first), settings) == 0
+    assert sent
+
+
+def test_value_chart_sources_follow_ff_analysts(tmp_path):
+    from dataclasses import replace
+    s = _settings(tmp_path)
+    ids = lambda st: [x.id for x in cli.value_chart_sources(st)]
+    assert ids(s) == ["richard_chart", "boone_trade_values"]          # neither set: both
+    assert ids(replace(s, analysts="boone")) == ["boone_trade_values"]
+    assert ids(replace(s, cbs_rankings=True)) == ["richard_chart"]
+    boone = cli.value_chart_sources(s, ["https://x/chart"])[1]
+    assert boone.override_urls == ["https://x/chart"]
+
+
+def test_the_values_parser_has_no_log_flag():
+    parser = cli._build_parser()
+    with pytest.raises(SystemExit):
+        parser.parse_args(["values", "--log"])

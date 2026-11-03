@@ -2,8 +2,9 @@ name: Weekly start/sit report
 
 # Posts your lineup + rankings as a GitHub Issue, publishes an HTML dashboard to
 # GitHub Pages, and (if configured) pings Discord with the summary + dashboard link.
-# Runs Thursday morning (before TNF) and twice Sunday (before the early games),
-# and can be triggered manually from the GitHub mobile app (Actions -> Run workflow).
+# Runs Thursday morning (before TNF), Saturday (for a Saturday-night read), and
+# twice Sunday (before the early games), and can be triggered manually from the
+# GitHub mobile app (Actions -> Run workflow).
 #
 # Every cron here is set by its WORST-CASE arrival, not its nominal time. GitHub
 # runs a schedule when the queue allows: measured delays on this repo range from
@@ -26,6 +27,7 @@ name: Weekly start/sit report
 on:
   schedule:
     - cron: "0 15 * * 4"   # Thursday ~15:00 UTC (≈10am CT) -- TNF is ~7:15pm CT
+    - cron: "0 16 * * 6"   # Saturday ~16:00 UTC (≈10am CST) -- worst case ~6pm, read Sat night
     - cron: "0 11 * * 0"   # Sunday   ~11:00 UTC (≈6am CT)  -- the floor
     - cron: "0 13 * * 0"   # Sunday   ~13:00 UTC (≈8am CT)  -- fresher if it lands
   workflow_dispatch:
@@ -134,18 +136,6 @@ jobs:
           # Mirror the digest to the run summary (viewable in the GitHub mobile app).
           cat report.md >> "$GITHUB_STEP_SUMMARY"
 
-      # The site is deployed as a whole, so this run has to republish the
-      # waivers page too or deploying would delete Tuesday's. No --discord and
-      # no issue post: this is the page only, Tuesday owns the notification.
-      - name: Rebuild waivers page (so the deploy doesn't drop it)
-        continue-on-error: true
-        run: |
-          WEEK_ARGS=()
-          if [ -n "$INPUT_WEEK" ]; then WEEK_ARGS=(--week "$INPUT_WEEK"); fi
-          python -m ff_startsit.workflow run waivers "${WEEK_ARGS[@]}" --all-leagues \
-            --report waivers.md --dashboard ./site/waivers.html
-          cat waivers.md >> "$GITHUB_STEP_SUMMARY"
-
       # Best-effort: the digest, dashboard and Discord ping are what the user
       # actually depends on, so a push failure here warns rather than failing the
       # run — same trade the publish command makes for a Discord hiccup.
@@ -196,11 +186,25 @@ jobs:
             echo "rather than guess at. The digest below is complete."
           } >> "$GITHUB_STEP_SUMMARY"
 
+      # The deploy replaces the whole site, so carry the pages this run didn't
+      # build by copying their *live* copies (workflow.restore_pages) rather
+      # than re-scoring them, which spent Odds API credits on a page nobody
+      # asked to refresh. waivers.html is required: if it can't be fetched the
+      # deploy is skipped and the live site stands, the same rule the old
+      # sibling rebuild had. values.html is optional: a lineup page held back
+      # for it would be the wrong trade, and Wednesday rebuilds it.
+      - name: Keep the published waiver and trade-values pages
+        run: |
+          OWNER="${GITHUB_REPOSITORY%%/*}"; REPO="${GITHUB_REPOSITORY##*/}"
+          BASE="https://${OWNER,,}.github.io/${REPO}"
+          python -m ff_startsit.workflow restore "$BASE" waivers.html
+          python -m ff_startsit.workflow restore "$BASE" --optional values.html
+
       # A Pages deploy replaces the whole site, so uploading a directory that is
-      # missing a page silently deletes that page from the live site. The sibling
-      # rebuild above is `continue-on-error`, which is exactly how ./site ends up
-      # incomplete. Skipping the deploy leaves the current site — both pages —
-      # standing, which is strictly better than replacing it with half of one.
+      # missing a page silently deletes that page from the live site. A failed
+      # restore above is exactly how ./site ends up incomplete. Skipping the
+      # deploy leaves the current site standing, which is strictly better than
+      # replacing it with part of one.
       - name: Verify the site is complete
         id: site
         run: |
@@ -225,7 +229,6 @@ jobs:
           path: |
             site/
             report.md
-            waivers.md
           retention-days: 7
 
       - name: Require complete test site
