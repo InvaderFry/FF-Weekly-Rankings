@@ -932,13 +932,55 @@ or paywalled, and a parsed article naming nobody in *this* league's pool. The
 last of those is not a failure at all, which is why it stopped being reported as
 "paywall or layout change?".
 
-Both scheduled workflows publish the **whole** `./site` (index.html +
-waivers.html) and share `concurrency: group: ff-startsit-pages`. A Pages deploy
-replaces the site wholesale, so two workflows deploying their own page would each
-silently delete the other's. The sibling rebuild is `continue-on-error`, which is
-how `./site` ends up with one page in it, so a `Verify the site is complete` step
-gates both the upload and the deploy on *both* files existing — skipping the
-deploy leaves the live site standing, which beats replacing it with half of one.
+All three scheduled workflows publish the **whole** `./site` (index.html,
+waivers.html, values.html) and share `concurrency: group: ff-startsit-pages`. A
+Pages deploy replaces the site wholesale, so a workflow deploying only its own
+page would silently delete the others. The start/sit and waiver workflows still
+rebuild each other's page (the sibling rebuild, `continue-on-error`); the
+values page is carried differently: `workflow.py restore` copies the *live*
+copy of a page the run didn't build into `./site`, which costs no Odds API
+credits. `values.yml` restores index.html and waivers.html that way and
+re-scores neither. A restore that 404s means "never published"; any other
+failure leaves a `.restore-failed-<page>` marker that `verify_site` reads as a
+missing page, so the deploy is skipped and the live site stands. The
+start/sit and waiver workflows restore values.html with `--optional` instead:
+a Thursday lineup page held back for want of the values page would be the
+wrong trade, and values.html returns the next Wednesday. `verify_site` requires
+index.html and waivers.html always; values.html only through a failed
+non-optional restore, since before its first Wednesday it doesn't exist.
+
+### The Wednesday values sheet (`waivers/values.py`, `ffstartsit values`)
+
+Each league's skill players on **Richard's** trade chart (Tuesday, which he
+says doubles as rest-of-season rankings) and **Boone's** four per-position
+trade value charts (Wednesday), beside FantasyPros' overall ROS rank, plus every
+trade idea the waiver pass found, judged **once per chart**. It runs the waiver
+pass (no column quotes, no Tuesday board) through `_waiver_bundles`' `writers`
+and `on_bundle` hooks rather than copying it. Display only, no `--log`.
+
+- **The charts are on different scales** (Richard has Gibbs at 56, Boone at
+  104), so values are never added or averaged across charts. A verdict is one
+  net per chart ("Richard +6 · Boone −3"); `(charts split)` when they disagree
+  on whether the deal helps you. A chart that has no value for someone in the
+  deal prices it "off chart" rather than as a partial sum.
+- **Disagreement is judged on rank**, which is scale-free: `chart_split` flags
+  a player whose two chart ranks are at least `DISAGREE_SPOTS` (6) *and*
+  `DISAGREE_SHARE` (35%) of the better rank apart. "agree" is printed only when
+  both charts ranked him; a chart not read yet is left out of the comparison
+  and the verdicts entirely ("no chart read yet"), never read as agreement.
+- **Finding Boone's charts.** His author page lists only recent pieces and
+  does *not* list the charts once they scroll off. They are found, in order,
+  from the author page, from his weekly rankings hub
+  (`fantasy-football-week-N-rankings-justin-boone`, which the author page does
+  list; his per-position ranking articles don't link the charts, so they are
+  not fetched), and from `--boone-chart URL` (a `values.yml` dispatch input).
+  Every chart links its three siblings, so one is enough. Each is verified on
+  its own: byline, week, season, "trade value charts".
+- **Columns.** Boone: QB `1QB`/`2QB`, others `HALF`/`PPR` — **no standard
+  values**, so standard leagues show him for QBs only and say why. Richard: QB
+  `1QB-4`/`2QB`, others non/0.5/PPR. Superflex picks each chart's 2QB column.
+- `values.yml` runs Wednesday 22:30 UTC with a 02:30 UTC retry, gated by the
+  same `ff-board` marker and `report_has_news` as the Tuesday board.
 
 ### Output & delivery
 

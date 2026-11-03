@@ -42,9 +42,76 @@ def chatops_reply(comment):
     return f"> `{' '.join(argv)}`\n\n{out}\n"
 
 
+#: Every page the Pages site serves. A deploy replaces the whole site, so a
+#: workflow that builds one of these must carry the others.
+SITE_PAGES = ("index.html", "waivers.html", "values.html")
+#: Pages a deploy can never go without. values.html joined later and is
+#: restored rather than required: before its first Wednesday it doesn't exist.
+REQUIRED_PAGES = ("index.html", "waivers.html")
+#: Left in the site directory when a page couldn't be restored. Read by
+#: ``verify_site`` as a missing page, so the deploy is skipped.
+RESTORE_FAILED = ".restore-failed-"
+
+
+def restore_pages(base_url, directory, pages, session=None, optional=False):
+    """Copy the *published* pages this run didn't build into ``directory``.
+
+    The alternative, re-scoring every page in every workflow, costs Odds API
+    credits for pages nobody asked to refresh. Fetching the live copy keeps the
+    deploy complete for free. Three outcomes per page:
+
+    * ``restored`` — the live copy is now in the directory;
+    * ``absent`` — the site answered 404: never published, nothing to keep;
+    * ``failed`` — anything else. The page exists or might, and deploying
+      without it would delete it, so a marker file makes ``verify_site`` skip
+      the deploy and leave the live site standing.
+
+    A page already in ``directory`` was built by this run and is left alone.
+
+    ``optional`` drops the marker: the page is simply left out of this deploy.
+    The start/sit and waiver workflows restore values.html that way, because a
+    Thursday lineup page that fails to deploy costs more than a values page
+    missing until the next Wednesday rebuilds it.
+    """
+    import time
+    import requests
+    from .net import HEADERS
+    directory = Path(directory)
+    directory.mkdir(parents=True, exist_ok=True)
+    session = session or requests.Session()
+    outcome = {}
+    for page in pages:
+        target = directory / page
+        if target.is_file() and target.stat().st_size:
+            outcome[page] = "built"
+            continue
+        url = f"{base_url.rstrip('/')}/{page}?v={int(time.time())}"   # past the CDN cache
+        try:
+            resp = session.get(url, headers=HEADERS, timeout=30)
+            status = resp.status_code
+        except Exception:
+            status = None
+        if status == 200 and resp.text.strip():
+            target.write_text(resp.text, encoding="utf-8")
+            outcome[page] = "restored"
+        elif status == 404:
+            outcome[page] = "absent"
+        elif optional:
+            outcome[page] = "skipped"
+            print(f"::warning::{page} could not be restored (HTTP {status}); "
+                  "this deploy leaves it out until its own workflow rebuilds it.")
+        else:
+            (directory / f"{RESTORE_FAILED}{page}").write_text(str(status))
+            outcome[page] = "failed"
+        print(f"{page}: {outcome[page]}")
+    return outcome
+
+
 def verify_site(directory):
-    missing = [name for name in ("index.html", "waivers.html")
+    directory = Path(directory)
+    missing = [name for name in REQUIRED_PAGES
                if not (directory / name).is_file() or not (directory / name).stat().st_size]
+    missing += [m.name[len(RESTORE_FAILED):] for m in sorted(directory.glob(RESTORE_FAILED + "*"))]
     complete = not missing
     with open(os.environ["GITHUB_OUTPUT"], "a") as output:
         output.write(f"complete={str(complete).lower()}\n")
@@ -139,6 +206,11 @@ def main():
         verify_site(Path("site"))
     elif sys.argv[1] == "news":
         publish_news(sys.argv[2], sys.argv[3])
+    elif sys.argv[1] == "restore":
+        args = sys.argv[3:]
+        optional = "--optional" in args
+        restore_pages(sys.argv[2], Path("site"), [a for a in args if a != "--optional"],
+                      optional=optional)
 
 
 if __name__ == "__main__":

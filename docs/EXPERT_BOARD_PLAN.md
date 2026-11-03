@@ -1,6 +1,6 @@
 # Expert board plan
 
-Status: **Phases 0–3 done; Phase 4 next.**
+Status: **Phases 0–4 done; Phase 5 (cleanup) next.**
 Site findings below were verified against live pages on 2026-11-02.
 
 ## Goal
@@ -225,6 +225,10 @@ because code-block tables wrap badly on a phone.
   sell-high candidates.
 - The trade finder judges each idea per chart and shows both verdicts.
 - Discord: the full table, one message per league.
+- As built: Boone's charts have no standard-scoring values; the hub pattern is
+  narrowed to the real hub so his per-position ranking articles aren't fetched;
+  the new page is kept by copying the live site (`workflow.py restore`) rather
+  than re-scoring it, which is the first half of the Phase 5 Pages item.
 
 ### 5. Plumbing and cleanup
 - **Pages:** each workflow commits its own page to a `site` branch and deploys

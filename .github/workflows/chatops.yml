@@ -4,6 +4,7 @@ name: ChatOps start/sit
 #   /lineup                    /report
 #   /rank RB                   /rank WR week 5
 #   /compare Josh Allen | Jalen Hurts
+#   /waivers [all]             /values [all]
 # Optional inline options on any command: week N, source espn|sleeper|manual, league ID, team ID.
 # `source` only reaches a platform whose secrets are set — espn is what this repo
 # has; sleeper and manual are parsed but error without their own config.

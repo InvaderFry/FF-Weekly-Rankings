@@ -347,7 +347,22 @@ class BooneWaivers(ArticleBoardSource):
         return parse_boone_waivers(body)
 
 
-class RichardChart(ArticleBoardSource):
+class ChartSource(ArticleBoardSource):
+    """A trade-value chart: each entry is a value plus the rank it implies,
+    read from the column that matches the league's format."""
+
+    def column(self, position: str, scoring: str, superflex: bool) -> Optional[str]:
+        return chart_column(position, scoring, superflex)
+
+    def entry(self, item, position_list, index, scoring, superflex):
+        column = self.column(item.position, scoring, superflex)
+        if column is None or column not in item.values:
+            return None             # no value in this league's format
+        ranks = rank_by_value(position_list, column)
+        return BoardEntry(pos_rank=ranks.get(index), value=item.values[column])
+
+
+class RichardChart(ChartSource):
     id, short, kind = "richard_chart", "Richard", "ros"
     label = "Dave Richard's trade chart / rest-of-season values (CBS)"
     author = "Dave Richard"
@@ -360,12 +375,133 @@ class RichardChart(ArticleBoardSource):
     def parse(self, body):
         return parse_richard(body)
 
-    def entry(self, item, position_list, index, scoring, superflex):
-        column = chart_column(item.position, scoring, superflex)
-        if column not in item.values:
-            return None             # no value in this league's format
-        ranks = rank_by_value(position_list, column)
-        return BoardEntry(pos_rank=ranks.get(index), value=item.values[column])
+
+# --- Justin Boone's trade value charts (Yahoo), Wednesdays -------------------------
+
+_BREAKDOWN = re.compile(r"fantasy football (quarterback|running back|wide receiver|tight end) breakdown", re.I)
+#: Boone publishes half- and full-PPR values only; standard leagues get none.
+BOONE_SCORING_COLUMN = {"half": "half", "ppr": "ppr"}
+
+
+def parse_boone_chart(body: str, position: str) -> list[Listed]:
+    """One position's chart: Rk, Player, then 1QB/2QB (QB) or HALF/PPR."""
+    table = re.search(r'<table class="content-table">(.*?)</table>', body, re.S)
+    if not table:
+        raise ValueError("no value table")
+    rows = re.findall(r"<tr[^>]*>(.*?)</tr>", table.group(1), re.S)
+    cells = [[_text(c) for c in re.findall(r"<t[dh][^>]*>(.*?)</t[dh]>", r, re.S)] for r in rows]
+    if not cells:
+        raise ValueError("empty value table")
+    head = [h.lower() for h in cells[0]]
+    if head[:2] != ["rk", "player"] or len(head) < 3:
+        raise ValueError(f"value table header not recognised: {head}")
+    listed = []
+    for row in cells[1:]:
+        if len(row) != len(head):
+            continue
+        values = {}
+        for col, cell in zip(head[2:], row[2:]):
+            try:
+                values[col] = float(cell)
+            except ValueError:
+                pass
+        listed.append(Listed(row[1], position, values=values))
+    if not listed:
+        raise ValueError("value table has no rows")
+    return listed
+
+
+class BooneTradeValues(ChartSource):
+    """Boone's four per-position trade value charts (one Yahoo article each).
+
+    His author page lists recent pieces only, so the charts are found three
+    ways, in order: links on the author page, links in his weekly rankings hub
+    (which the author page does list), and a URL passed by hand
+    (``override_urls``, e.g. ``values --boone-chart URL``). Every chart links
+    its siblings, so any one of them finds the rest. Each article is verified on
+    its own: byline, week, season, and "trade value charts" in the headline.
+    """
+    id, short, kind = "boone_trade_values", "Boone", "ros"
+    label = "Justin Boone's trade value charts (Yahoo)"
+    author = "Justin Boone"
+    index_url = "https://sports.yahoo.com/author/justin-boone/"
+    base_url = "https://sports.yahoo.com"
+    article_kind = "trade value charts"
+
+    def __init__(self, fetcher=None, season=None, override_urls=()):
+        super().__init__(fetcher, season)
+        self.override_urls = list(override_urls)
+
+    def column(self, position, scoring, superflex):
+        if position == "QB":
+            return "2qb" if superflex else "1qb"
+        return BOONE_SCORING_COLUMN.get(scoring)
+
+    def _candidates(self, week: int) -> list[str]:
+        from .articles import week_links
+        found = [u.split("#", 1)[0] for u in self.override_urls]
+        index = self.fetcher.get(self.index_url)
+        if index:
+            found += week_links(index, self.base_url, week, ("trade-value-charts",))
+            # The hub is "fantasy-football-week-N-rankings-justin-boone"; his
+            # per-position ranking articles ("week-N-fantasy-football-qb-
+            # rankings-justin-boone") don't link the charts, so don't fetch them.
+            for hub in week_links(index, self.base_url, week,
+                                  ("fantasy-football-week-", "rankings-justin-boone")):
+                body = self.fetcher.get(hub)
+                if body:
+                    found += week_links(body, self.base_url, week, ("trade-value-charts",))
+        # Siblings of whatever was found (each chart links the other three).
+        for url in list(found):
+            body = self.fetcher.get(url)
+            if body:
+                found += week_links(body, self.base_url, week, ("trade-value-charts",))
+        return list(dict.fromkeys(found))
+
+    def article(self, week: int):
+        if week in self._weeks:
+            return self._weeks[week]
+        from ..season import season_year
+        from .articles import NOT_POSTED, verified_headline
+        season = self.season or season_year()
+        listed: list[Listed] = []
+        first_url = None
+        seen_positions: set[str] = set()
+        for url in self._candidates(week):
+            body = self.fetcher.get(url)
+            if not body or verified_headline(body, self.author, season, week,
+                                             ("trade value charts",)) is None:
+                continue
+            m = _BREAKDOWN.search(body)
+            pos = _CHART_POS.get(m.group(1).lower()) if m else None
+            if pos is None or pos in seen_positions:
+                continue
+            try:
+                listed += parse_boone_chart(body, pos)
+            except ValueError:
+                continue
+            seen_positions.add(pos)
+            first_url = first_url or url
+        if listed:
+            missing = [p for p in OFFENSE if p not in seen_positions]
+            self.missing = {p: f"Boone's Week {week} {p} trade chart not found" for p in missing}
+            result = (listed, first_url, None)
+        else:
+            self.missing = {}
+            result = ([], None, f"{self.author}'s Week {week} trade value charts aren't linked "
+                                f"from his author page or rankings hub ({NOT_POSTED}, or too old "
+                                "to be listed); pass one chart's URL with --boone-chart")
+        self._weeks[week] = result
+        return result
+
+    def fetch(self, players, week, scoring, superflex=False):
+        board = super().fetch(players, week, scoring, superflex)
+        if not board.unavailable:
+            board.unavailable.update(getattr(self, "missing", {}))
+            if scoring not in BOONE_SCORING_COLUMN:
+                for pos in ("RB", "WR", "TE"):
+                    board.unavailable[pos] = "Boone publishes no standard-scoring values"
+        return board
 
 
 def writer_sources(fetcher: Optional[ArticleFetcher] = None) -> list[ArticleBoardSource]:

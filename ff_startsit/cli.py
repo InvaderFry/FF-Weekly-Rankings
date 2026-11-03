@@ -212,6 +212,29 @@ def _build_parser() -> argparse.ArgumentParser:
     # Deliberately no --log: see cmd_waivers.
     p_wai.set_defaults(func=cmd_waivers)
 
+    p_val = sub.add_parser("values", parents=[roster_parent],
+                           help="Wednesday: your roster on Richard's and Boone's "
+                                "trade charts, plus trade ideas judged on each")
+    p_val.add_argument("--week", type=int, default=None)
+    p_val.add_argument("--report", type=Path, default=None,
+                       help="write the markdown digest here")
+    p_val.add_argument("--dashboard", type=Path, default=None,
+                       help="write the HTML values page here")
+    p_val.add_argument("--discord", action="store_true",
+                       help="also send the full tables to Discord")
+    p_val.add_argument("--all-leagues", action="store_true", dest="all_leagues",
+                       help="one sheet per configured league")
+    p_val.add_argument("--no-trades", action="store_true", dest="no_trades",
+                       help="skip the trade ideas")
+    p_val.add_argument("--boone-chart", action="append", default=[], dest="boone_chart",
+                       metavar="URL",
+                       help="a Boone trade chart URL, for when his pages don't link "
+                            "this week's yet (any one finds the other three)")
+    p_val.add_argument("--since", type=Path, default=None,
+                       help="the report already published this week; send Discord "
+                            "only if this run read a chart it didn't (retry runs)")
+    p_val.set_defaults(func=cmd_values)
+
     p_cal = sub.add_parser("calibrate",
                            help="learn blend weights from your logged decisions vs actual outcomes (#7)")
     p_cal.add_argument("--season", default=None, help="only use decisions from this season")
@@ -858,7 +881,8 @@ def _cmd_publish_all(args, settings: Settings) -> int:
     return 0
 
 
-def _waiver_bundles(args, settings: Settings, week: int) -> list:
+def _waiver_bundles(args, settings: Settings, week: int, writers=None,
+                    on_bundle=None) -> list:
     """Build one WaiverBundle per configured league.
 
     Modeled on ``_league_bundles``: a league that fails is skipped with a
@@ -882,7 +906,7 @@ def _waiver_bundles(args, settings: Settings, week: int) -> list:
     # one per league, so re-fetching per league would be three needless requests
     # each and three copies of the same credits line.
     fetcher = ColumnFetcher() if include_columns else None
-    writers = waiver_writer_sources(settings)
+    writers = waiver_writer_sources(settings) if writers is None else writers
 
     from .data_status import DataStatus, finish_status
     status = DataStatus(season.season_year(), week, [p.name for p in profiles])
@@ -900,7 +924,7 @@ def _waiver_bundles(args, settings: Settings, week: int) -> list:
                       f"other teams.", file=sys.stderr)
                 continue
             players = _get_roster(args, lsettings, profile)
-            bundles.append(build_bundle(
+            bundle = build_bundle(
                 lsettings, _league_label(profile) or profile.name, provider,
                 players, week, limit=limit,
                 max_adds=lsettings.waiver_max_adds,
@@ -913,7 +937,10 @@ def _waiver_bundles(args, settings: Settings, week: int) -> list:
                 # detect the pre-kickoff window on its own.
                 rehearse=getattr(args, "rehearse", False) or None,
                 **({"writer_sources": writers} if writers else {}),
-            ))
+            )
+            if on_bundle is not None:
+                on_bundle(bundle, players)
+            bundles.append(bundle)
         except (RosterError, SleeperError) as exc:
             status.skipped[profile.name] = str(exc)
             print(f"warning: skipping league {profile.name!r}: {exc}", file=sys.stderr)
@@ -1008,6 +1035,88 @@ def cmd_waivers(args, settings: Settings) -> int:
                     send_discord(settings.discord_webhook_url, board_payload)
                 except Exception as exc:
                     print(f"warning: Discord expert board failed: {exc}", file=sys.stderr)
+    return 0
+
+
+def value_chart_sources(settings: Settings, boone_urls=()) -> list:
+    """Richard's chart (``cbs`` in FF_ANALYSTS) and Boone's (``boone``), sharing
+    one article fetcher. With neither enabled there is nothing to compare, so
+    ``values`` uses both regardless: the command exists to show these two."""
+    from .boards.articles import ArticleFetcher
+    from .boards.writers import BooneTradeValues, RichardChart
+    fetcher = ArticleFetcher(settings.data_dir)
+    want_boone = settings.analysts == "boone"
+    want_cbs = settings.cbs_rankings
+    if not want_boone and not want_cbs:
+        want_boone = want_cbs = True
+    sources: list = []
+    if want_cbs:
+        sources.append(RichardChart(fetcher))
+    if want_boone:
+        sources.append(BooneTradeValues(fetcher, override_urls=boone_urls))
+    return sources
+
+
+def cmd_values(args, settings: Settings) -> int:
+    """Wednesday: each league's roster on Richard's and Boone's trade charts.
+
+    Built on the waiver pass, which already scores every roster and finds trade
+    ideas; this adds the two charts beside your players and judges every trade
+    idea once per chart. Like ``waivers`` it has no ``--log``: nothing here is a
+    start/sit decision.
+    """
+    from datetime import date
+
+    from .output.discord import build_values_payloads, send_discord
+    from .output.html import build_values_html
+    from .waivers.render import render_values_digest
+    from .waivers.values import build_sheet
+
+    week = _resolve_week(args, settings)
+    sources = value_chart_sources(settings, getattr(args, "boone_chart", []) or [])
+    sheets: list = []
+
+    def on_bundle(bundle, players):
+        rules = bundle.rules
+        superflex = bool(rules.flex_slots.get("SUPER_FLEX")) or rules.roster_slots.get("QB", 1) >= 2
+        sheets.append(build_sheet(bundle, players, sources, week, superflex=superflex))
+
+    # The waiver pass without its Tuesday extras: no column quotes, no writers' board.
+    from types import SimpleNamespace
+    wargs = SimpleNamespace(**{**vars(args), "no_columns": True, "limit": None, "rehearse": False})
+    bundles = _waiver_bundles(wargs, settings, week, writers=[], on_bundle=on_bundle)
+    sheets = [s for s in sheets if s.bundle in bundles]
+    if not sheets:
+        print("No configured league could be scored for trade values.", file=sys.stderr)
+        return 1
+
+    digest = render_values_digest(week, sheets)
+    print(digest)
+    if args.report:
+        args.report.parent.mkdir(parents=True, exist_ok=True)
+        args.report.write_text(digest)
+    if args.dashboard:
+        args.dashboard.parent.mkdir(parents=True, exist_ok=True)
+        args.dashboard.write_text(build_values_html(week, sheets, generated_on=date.today().isoformat()))
+        print(f"Wrote values page ({len(sheets)} league(s)) to {args.dashboard}")
+
+    since = getattr(args, "since", None)
+    if args.discord and since is not None:
+        from .waivers.board import report_has_news
+        previous = since.read_text(encoding="utf-8") if since.exists() else ""
+        if not report_has_news(digest, previous):
+            print("Nothing new since this week's published values (same charts read); "
+                  "skipping Discord.", file=sys.stderr)
+            return 0
+    if args.discord:
+        if not settings.discord_webhook_url:
+            print("DISCORD_WEBHOOK_URL is not set — skipping Discord.", file=sys.stderr)
+        else:
+            for payload in build_values_payloads(week, sheets):
+                try:
+                    send_discord(settings.discord_webhook_url, payload)
+                except Exception as exc:
+                    print(f"warning: Discord values message failed: {exc}", file=sys.stderr)
     return 0
 
 

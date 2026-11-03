@@ -240,7 +240,8 @@ def _dashboard_body(lineup: Sequence[tuple[str, Optional[PlayerScore]]],
 #: The pages the site publishes, as (filename, label). Both scheduled workflows
 #: emit the whole set, so either page can link to the other and neither run can
 #: leave a dangling link by replacing the site with just its own page.
-PAGES = (("index.html", "Start/sit"), ("waivers.html", "Waivers & trades"))
+PAGES = (("index.html", "Start/sit"), ("waivers.html", "Waivers & trades"),
+         ("values.html", "Trade values"))
 
 
 def _nav(active: str) -> str:
@@ -574,3 +575,68 @@ def build_waivers_html(week: int, bundles: Sequence, generated_on: str) -> str:
 
     return _document(f"Week {escape(str(week))} waivers", "\n".join(sections),
                      active="waivers.html")
+
+
+# --- the Wednesday values page --------------------------------------------
+def _values_sheet(sheet) -> str:
+    from ..waivers.board import board_reasons, cell_position
+    from .board import trade_line, verdict_text
+    out = []
+    if sheet.banner:
+        out.append(f"<div class='callout'><strong>{escape(sheet.banner)}</strong></div>")
+    if sheet.caveat:
+        out.append(f"<div class='callout'>⚠️ {escape(sheet.caveat)}</div>")
+    if not sheet.boards:
+        return "".join(out)
+    if sheet.rows:
+        head = "".join(f"<th title='{escape(b.label)}'>{escape(b.short)}</th>" for b in sheet.boards)
+        out.append(f"<table><thead><tr><th>Player</th><th>Pos</th><th>Team</th>{head}"
+                   "<th>Charts</th></tr></thead><tbody>")
+        for row in sheet.rows:
+            cls = " class='flagged'" if row.split else ""
+            cells = "".join(f"<td class='expert'>"
+                            f"{escape(waiver_cell(row.entries.get(b.source_id), cell_position(b, row.player)))}</td>"
+                            for b in sheet.boards)
+            out.append(f"<tr{cls}><td>{escape(row.player.name)}</td><td>{escape(row.player.position)}</td>"
+                       f"<td>{escape(row.player.team or 'FA')}</td>{cells}"
+                       f"<td>{escape(row.charts_cell)}</td></tr>")
+        out.append("</tbody></table>")
+    out.append(f"<p class='note'>{escape(waiver_legend(sheet.boards))} Values are each "
+               "writer's own scale, so they're never added across charts.</p>")
+    for reason in board_reasons(sheet.boards):
+        out.append(f"<p class='note'>{escape(reason)}</p>")
+    out.append("<h3>Trade ideas, judged on each chart</h3>")
+    if sheet.verdicts:
+        out.append("<ul class='ideas'>")
+        for v in sheet.verdicts:
+            out.append(f"<li>{escape(trade_line(v.idea))} — <strong>{escape(verdict_text(v))}</strong></li>")
+        out.append("</ul><p class='note'>Net = value you get minus value you send, on that "
+                   "chart. “Off chart” means someone in the deal has no value there.</p>")
+    elif sheet.trades_considered:
+        out.append("<p class='note'>No trade idea cleared the waiver pass's fairness checks this week.</p>")
+    else:
+        out.append("<p class='note'>Trade ideas weren't searched for this league.</p>")
+    return "".join(out)
+
+
+def build_values_html(week: int, sheets: Sequence, generated_on: str) -> str:
+    """The Wednesday values page (values.html), styled like the other two."""
+    sections = [f"<h1>📈 Week {escape(str(week))} trade values</h1>",
+                f"<div class='meta'>Generated {escape(generated_on)} · {len(sheets)} league(s)</div>"]
+    if not sheets:
+        sections.append("<p class='note'>No configured league could be scored.</p>")
+    from ..data_status import bundle_status
+    status = bundle_status([s.bundle for s in sheets if s.bundle is not None])
+    if status:
+        sections.append(status.html())
+    multi = len(sheets) > 1
+    for sheet in sheets:
+        if multi:
+            sections.append("<details class='league' open>")
+            sections.append(f"<summary class='league'>{escape(sheet.label)} — "
+                            f"{escape(sheet.scoring.upper())}</summary>")
+        sections.append(_values_sheet(sheet))
+        if multi:
+            sections.append("</details>")
+    return _document(f"Week {escape(str(week))} trade values", "\n".join(sections),
+                     active="values.html")

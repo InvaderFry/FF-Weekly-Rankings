@@ -286,3 +286,74 @@ def render_waiver_digest(week: int, bundles: Sequence[WaiverBundle],
         from ..season import season_year
         lines += [board_marker(season_year(), week, bundles_read(bundles)), ""]
     return "\n".join(lines)
+
+
+# --- the Wednesday values sheet ------------------------------------------------
+
+def _values_section(sheet, heading: str = "###") -> list[str]:
+    from ..output.board import trade_line, verdict_text
+    from .board import board_reasons, cell_position
+    title = f"{heading} {sheet.label}" if sheet.label else f"{heading} Your team"
+    lines = [f"{title} · {sheet.scoring.upper()}", ""]
+    if sheet.banner:
+        lines += [f"> **{sheet.banner}**", ""]
+    if sheet.caveat:
+        lines += [f"> ⚠️ {sheet.caveat}", ""]
+    if not sheet.boards:
+        return lines
+    if sheet.rows:
+        header = ["Player", "Pos", "Team", *[b.short for b in sheet.boards], "Charts"]
+        lines.append("| " + " | ".join(header) + " |")
+        lines.append("|" + "|".join("---" for _ in header) + "|")
+        for row in sheet.rows:
+            cells = [md_cell(row.player.name), row.player.position, row.player.team or "FA",
+                     *[md_cell(waiver_cell(row.entries.get(b.source_id), cell_position(b, row.player)))
+                       for b in sheet.boards],
+                     md_cell(row.charts_cell)]
+            lines.append("| " + " | ".join(cells) + " |")
+        lines.append("")
+    lines.append(f"_{md_cell(waiver_legend(sheet.boards))} Values are each writer's own "
+                 "scale, so they're never added across charts._")
+    for reason in board_reasons(sheet.boards):
+        lines.append(f"- {md_cell(reason)}")
+    lines.append("")
+    lines.append(f"{heading}# Trade ideas, judged on each chart")
+    lines.append("")
+    if sheet.verdicts:
+        for v in sheet.verdicts:
+            lines.append(f"- {md_cell(trade_line(v.idea))} — {md_cell(verdict_text(v))}")
+        lines.append("")
+        lines.append("_Net = value you get minus value you send, on that chart. "
+                     "\"Off chart\" means someone in the deal has no value there._")
+    elif sheet.trades_considered:
+        lines.append("_No trade idea cleared the waiver pass's fairness checks this week._")
+    else:
+        lines.append("_Trade ideas weren't searched for this league._")
+    lines.append("")
+    return lines
+
+
+def render_values_digest(week: int, sheets, generated_on: Optional[str] = None) -> str:
+    """The Wednesday digest: every league's values sheet plus the retry marker."""
+    from .values import sheets_read
+    generated_on = generated_on or date.today().isoformat()
+    lines = [f"# Week {week} trade values", "", f"_Generated {generated_on}._", ""]
+    if not sheets:
+        return "\n".join(lines + ["No configured league could be scored.", ""])
+    from ..data_status import bundle_status
+    status = bundle_status([s.bundle for s in sheets if s.bundle is not None])
+    if status:
+        lines += [status.markdown(), ""]
+    multi = len(sheets) > 1
+    for sheet in sheets:
+        lines += _values_section(sheet, heading="##" if multi else "###")
+    sources: list[tuple[str, str]] = []
+    for sheet in sheets:
+        for b in sheet.boards:
+            if b.url and (b.label, b.url) not in sources:
+                sources.append((b.label, b.url))
+    if sources:
+        lines += ["**Sources**: " + ", ".join(f"[{a}]({u})" for a, u in sources), ""]
+    from ..season import season_year
+    lines += [board_marker(season_year(), week, sheets_read(sheets)), ""]
+    return "\n".join(lines)

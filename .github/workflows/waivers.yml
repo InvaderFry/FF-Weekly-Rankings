@@ -198,6 +198,15 @@ jobs:
             echo "rather than guess at. The digest below is complete."
           } >> "$GITHUB_STEP_SUMMARY"
 
+      # The Wednesday values page is built by values.yml only. Carry the live
+      # copy so this deploy doesn't delete it; if it can't be fetched, deploy
+      # without it rather than hold back this page (workflow.restore_pages).
+      - name: Keep the published trade-values page
+        if: steps.news.outputs.news == 'true'
+        run: |
+          OWNER="${GITHUB_REPOSITORY%%/*}"; REPO="${GITHUB_REPOSITORY##*/}"
+          python -m ff_startsit.workflow restore "https://${OWNER,,}.github.io/${REPO}" --optional values.html
+
       # A Pages deploy replaces the whole site, so uploading a directory that is
       # missing a page silently deletes that page from the live site. The sibling
       # rebuild above is `continue-on-error`, which is exactly how ./site ends up

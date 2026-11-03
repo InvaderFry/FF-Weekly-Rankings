@@ -9,6 +9,8 @@ Examples:
     /report                          -> ["report"]
     /waivers                         -> ["waivers"]
     /waivers all                     -> ["waivers", "--all-leagues"]
+    /values                          -> ["values"]
+    /values all                      -> ["values", "--all-leagues"]
     /rank RB                         -> ["rank", "--pos", "RB", "--md"]
     /rank RB week 5                  -> ["rank", "--pos", "RB", "--md", "--week", "5"]
     /compare Josh Allen | Jalen Hurts-> ["compare", "Josh Allen", "Jalen Hurts", "--md"]
@@ -90,6 +92,11 @@ def parse_command(body: str) -> Optional[list[str]]:
         # pass is never written to the results log (see cli.cmd_waivers).
         extra = ["--all-leagues"] if head and head[0].lower() == "all" else []
         return ["waivers", *extra, *flags]
+
+    if cmd == "values":
+        head, flags = _split_options(rest)
+        extra = ["--all-leagues"] if head and head[0].lower() == "all" else []
+        return ["values", *extra, *flags]
 
     if cmd == "rank":
         head, flags = _split_options(rest)

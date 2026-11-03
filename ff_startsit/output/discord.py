@@ -489,3 +489,59 @@ def build_waiver_board_payloads(week: int, bundles: Sequence) -> list[dict]:
         if message:
             payloads.append({"embeds": message})
     return payloads
+
+
+# --- the Wednesday values sheet ----------------------------------------------
+_VALUES_COLOR = 0xA371F7   # purple: the third weekly post, told apart at a glance
+
+
+def build_values_payloads(week: int, sheets: Sequence) -> list[dict]:
+    """Every league's values sheet, full table, one message (or more) each.
+
+    One field per rostered player ("Richard 56 · RB1 | Boone 104 · RB1 | FP ROS
+    #3"), then the trade ideas with their per-chart verdicts. Chunked by field
+    count and characters, as the Tuesday board is.
+    """
+    from ..waivers.board import board_reasons, cell_position
+    from .board import trade_line, verdict_text
+    payloads: list[dict] = []
+    for sheet in sheets:
+        label = f" · {sheet.label}" if sheet.label else ""
+        title = _clip(f"📈 Week {week} trade values{label}", _TITLE_MAX)
+        notes = [sheet.banner, sheet.caveat, *board_reasons(sheet.boards)]
+        description = "\n".join(f"-# {n}" for n in notes if n)
+        fields = []
+        for row in sheet.rows:
+            p = row.player
+            value = " | ".join(f"{b.short} {waiver_cell(row.entries.get(b.source_id), cell_position(b, p))}"
+                               for b in sheet.boards)
+            if row.split:
+                value += f"\n⚠️ {row.split}"
+            fields.append({"name": _clip(f"{p.name} ({p.position}, {p.team or 'FA'})", _TITLE_MAX),
+                           "value": _clip(value, _FIELD_VALUE_MAX), "inline": False})
+        for v in sheet.verdicts:
+            fields.append({"name": _clip(f"🤝 {trade_line(v.idea)}", _TITLE_MAX),
+                           "value": _clip(verdict_text(v), _FIELD_VALUE_MAX), "inline": False})
+        first = {"title": title, "color": _VALUES_COLOR, "fields": []}
+        if description:
+            first["description"] = _clip(description, 4096)
+        embeds = [first]
+        for f in fields:
+            current = embeds[-1]
+            if current["fields"] and (len(current["fields"]) >= _FIELDS_PER_EMBED or
+                                      _embed_chars(current) + len(f["name"]) + len(f["value"]) > _TOTAL_CHARS_MAX):
+                current = {"title": _clip(f"{title} (cont.)", _TITLE_MAX), "color": _VALUES_COLOR,
+                           "fields": []}
+                embeds.append(current)
+            current["fields"].append(f)
+        message, used = [], 0
+        for embed in embeds:
+            cost = _embed_chars(embed)
+            if message and (len(message) >= _MAX_EMBEDS or used + cost > _TOTAL_CHARS_MAX):
+                payloads.append({"embeds": message})
+                message, used = [], 0
+            message.append(embed)
+            used += cost
+        if message:
+            payloads.append({"embeds": message})
+    return payloads

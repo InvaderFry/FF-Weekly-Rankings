@@ -186,6 +186,26 @@ ffstartsit report                    # digest now ends with the section
 These ranks also annotate every add in the waiver report, so this variable is
 worth setting even if you never look at the journalists section itself.
 
+### Trade values (`values`, Wednesdays)
+
+```bash
+ffstartsit values --all-leagues                 # every league's roster on both charts
+ffstartsit values --boone-chart <URL>           # if Boone's pages don't link this week's charts yet
+```
+
+Your skill players on **Dave Richard's** trade chart (posted Tuesday; he notes it
+doubles as rest-of-season rankings) and **Justin Boone's** four trade value
+charts (posted Wednesday), with FantasyPros' rest-of-season rank beside them. A
+player the two charts rank far apart is flagged ("Boone much higher (RB12 vs
+RB24)") — a buy-low or sell-high lead. Each trade idea from the waiver pass is
+judged on each chart separately ("Richard +6 · Boone −3"), because the two
+charts use different scales and adding them would mean nothing. Boone publishes
+no standard-scoring values, so standard leagues see him for quarterbacks only.
+
+The **Wednesday values** workflow (`values.yml`) runs this at 4:30pm Central,
+with an evening retry that posts only if it found a chart the first run
+couldn't, and publishes `values.html` plus the full tables to Discord.
+
 ### Waiver wire & trades (`waivers`)
 
 **What the writers say.** With `FF_ANALYSTS=boone,cbs`, each league's report
@@ -388,6 +408,7 @@ the GitHub mobile app. Three workflows ship in `.github/workflows/`:
   | `/compare Josh Allen \| Jalen Hurts` | head-to-head with close-call flag |
   | `/report` | the full digest on demand |
   | `/waivers` | waiver adds/drops + trade ideas (`/waivers all` for every league) |
+  | `/values` | your roster on Richard's and Boone's trade charts (`/values all`) |
 
   Inline options work on any command: `week N`, `source espn\|sleeper\|manual`,
   `league ID`, `team ID`, `league-name NAME` — e.g. `/rank WR week 5` or
@@ -447,10 +468,11 @@ same `id:Name,...` value as your local `.env`.
 For the **dashboard + Discord** delivery:
 - **Enable GitHub Pages once:** repo → *Settings → Pages → Build and deployment →
   Source = GitHub Actions*. After the next weekly run your dashboard lives at
-  `https://<owner>.github.io/<repo>/`, with the waiver report next to it at
-  `/waivers.html` (the two pages link to each other). Each deploy replaces the
-  whole site, so both workflows rebuild both pages and share a `concurrency`
-  group to keep their deploys from racing.
+  `https://<owner>.github.io/<repo>/`, with the waiver report at
+  `/waivers.html` and the trade values at `/values.html` (the pages link to each
+  other). Each deploy replaces the whole site, so every workflow carries the
+  other pages (rebuilding them, or copying the live copy) and they share a
+  `concurrency` group to keep their deploys from racing.
 - **Discord (optional):** create an incoming webhook (Discord → *Server Settings →
   Integrations → Webhooks → New Webhook → Copy URL*) and add it as the
   `DISCORD_WEBHOOK_URL` repository secret. Leave it unset to skip Discord.

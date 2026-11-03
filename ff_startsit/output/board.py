@@ -107,3 +107,26 @@ def waiver_cell(entry: Optional[BoardEntry], position: Optional[str] = None) -> 
 def waiver_legend(boards) -> str:
     """Where each Tuesday column came from."""
     return "Columns — " + "; ".join(f"{b.short}: {b.label}" for b in boards) + "."
+
+
+def chart_net(value: Optional[float]) -> str:
+    """A trade's net on one chart: "+6", "−3", "even", or "off chart"."""
+    if value is None:
+        return "off chart"
+    if value == 0:
+        return "even"
+    return f"{value:+g}".replace("-", "−")
+
+
+def trade_line(idea) -> str:
+    send = ", ".join(s.player.name for s in idea.you_send)
+    get = ", ".join(s.player.name for s in idea.you_get)
+    return f"Send {send} to {idea.partner} for {get}"
+
+
+def verdict_text(verdict) -> str:
+    """ "Richard +6 · Boone −3 (charts split)" """
+    if not verdict.net:
+        return "no chart read yet"
+    text = " · ".join(f"{name} {chart_net(v)}" for name, v in verdict.net.items())
+    return text + (" (charts split)" if verdict.split else "")
