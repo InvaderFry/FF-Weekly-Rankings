@@ -269,6 +269,7 @@ def _annotate_analyst(settings: Settings, rec, players, week: int, pos: str) -> 
     passes a single position or nothing happens.
     """
     if settings.analysts != "boone" or not pos:
+        report.attach_boards([rec])
         return
     from .engine.analyst import detect_conflicts
     from .sources.analysts import AnalystFetcher, not_published_yet
@@ -277,7 +278,9 @@ def _annotate_analyst(settings: Settings, rec, players, week: int, pos: str) -> 
             players, week, settings.scoring)
     except Exception as exc:  # never sink a ranking over an annotation
         print(f"warning: analyst comparison unavailable: {exc}", file=sys.stderr)
+        report.attach_boards([rec])
         return
+    report.attach_boards([rec], ranks if not rec.sample_data else None)
     rec.analyst_ranks = dict(ranks.by_position.get(pos, {}))
     rec.analyst_name = ranks.analyst
     rec.analyst_conflicts = detect_conflicts(rec, rec.analyst_ranks, ranks.analyst,

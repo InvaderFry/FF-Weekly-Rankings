@@ -18,6 +18,8 @@ from .output.render import LINEUP_UNSCORED_NOTE, lineup_unscored_keys, md_cell, 
 from .engine.blend import flag_starter_boundary_pair
 from .pipeline import build_signals, log_deferred, recommend
 from .season import preseason_banner, season_year
+from .boards.boone import boone_board_or_none
+from .boards.fantasypros import fantasypros_weekly
 from .engine.analyst import detect_conflicts
 from .sources.analysts import AnalystFetcher, not_published_yet
 from .sources.journalists import (Expert, JournalistFetcher, JournalistRow,
@@ -150,6 +152,7 @@ def rank_each_position(settings: Settings, players: Sequence[Player], week: int,
                               exclude_unavailable=True,
                               defer_log=True)
     sample = any(getattr(signal, "is_sample", False) for signal in signals)
+    boone_ranks = None
     if settings.analysts == "boone" and sample:
         for rec in recs.values():
             rec.source_status.append((("analyst", "Justin Boone", settings.league_label),
@@ -157,6 +160,7 @@ def rank_each_position(settings: Settings, players: Sequence[Player], week: int,
     if settings.analysts == "boone" and not sample:
         fetcher = analyst_fetcher or AnalystFetcher(season_year(), settings.data_dir)
         ranks = fetcher.fetch(players, week, settings.scoring)
+        boone_ranks = ranks
         status = ranks.status(week, settings.league_label)
         for pos, rec in recs.items():
             # Ranks are kept on the rec so `flag_starter_boundaries` can redo
@@ -176,7 +180,22 @@ def rank_each_position(settings: Settings, players: Sequence[Player], week: int,
                     f"{'full' if settings.scoring == 'ppr' else 'half'}-PPR "
                     f"{'DST' if pos in {'DEF', 'DST'} else pos} rankings yet.")
             rec.source_status.append(status)
+    attach_boards(recs.values(), boone_ranks)
     return recs
+
+
+def attach_boards(recs, boone_ranks=None) -> None:
+    """Hang the expert boards on every recommendation in one run.
+
+    Display-only: the boards sit beside the blend and never feed it (see
+    ``ff_startsit/boards``). One board object per source is shared across the
+    run's sections; each renderer reads only the players in front of it.
+    """
+    recs = list(recs)
+    boards = [b for b in (fantasypros_weekly(recs), boone_board_or_none(boone_ranks))
+              if b is not None]
+    for rec in recs:
+        rec.expert_boards = list(boards)
 
 
 def rank_pooled(settings: Settings, cands: Sequence[Player], week: int,

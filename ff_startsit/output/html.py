@@ -15,6 +15,7 @@ from html import escape
 from typing import TYPE_CHECKING, Optional, Sequence
 
 from ..models import PlayerScore, Recommendation
+from .board import board_cell, boards_legend, section_boards
 from .render import (DEPTH_LEGEND, LINEUP_UNSCORED_NOTE, UNRANKED_NOTE,
                      flat_signal_note, lineup_unscored_keys, analyst_conflict_text)
 from ..sources.journalists import JournalistView
@@ -48,6 +49,7 @@ tr.top td { background: rgba(46, 160, 67, .14); }
 tr.flagged td { background: rgba(210, 153, 34, .14); }
 .callout.analyst { background: rgba(88, 166, 255, .12); border-left-color: #58a6ff; }
 .analyst-note { color: #8b949e; margin: .7rem 0; font-size: .9rem; }
+th.expert, td.expert { background: rgba(88, 166, 255, .06); }
 .callout { background: rgba(210, 153, 34, .16); border-left: 3px solid #d29922;
            padding: .5rem .75rem; border-radius: 4px; margin: .35rem 0 .75rem; }
 .note { color: #9aa0ad; font-size: .85rem; margin: .35rem 0 1rem; }
@@ -111,8 +113,11 @@ def _position_table(rec: Recommendation) -> str:
             html += f"<p class='flag'>{escape('; '.join(s.flags))}</p>"
         return html
     signal_names = _signal_names(rec)
+    boards = section_boards(rec)
     cells = ["<th class='num'>#</th>", "<th>Player</th>", "<th>Pos</th>", "<th>Team</th>",
              "<th class='num'>Score</th>"]
+    cells += [f"<th class='num expert' title='{escape(b.label)}'>{escape(b.header)}</th>"
+              for b in boards]
     cells += [f"<th class='num'>{escape(n)}</th>" for n in [h.upper() for h in signal_names]]
     cells.append("<th>Flags</th>")
     rows = ["<tr>" + "".join(cells) + "</tr>"]
@@ -128,6 +133,8 @@ def _position_table(rec: Recommendation) -> str:
                f"<td>{escape(s.player.position)}</td>",
                f"<td>{escape(s.player.team or 'BYE')}</td>",
                f"<td class='num'>{escape(verdict)}</td>"]
+        tds += [f"<td class='num expert'>{escape(board_cell(b, s.player.key))}</td>"
+                for b in boards]
         for name in signal_names:
             n = s.normalized.get(name)
             blank = n is None or rec.unranked
@@ -137,6 +144,8 @@ def _position_table(rec: Recommendation) -> str:
         rows.append(f"<tr{cls}>" + "".join(tds) + "</tr>")
 
     table = "<table>" + "".join(rows) + "</table>"
+    if boards:
+        table += f"<p class='note'>{escape(boards_legend(boards))}</p>"
     flat = flat_signal_note(rec)
     if flat:
         # Same sentence the digest carries: a column can look decisive purely

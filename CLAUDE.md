@@ -405,6 +405,28 @@ cannot cover that gap, because it needs two experts returning identical ranks to
 compare, which is exactly the single-journalist config that is left once the
 dead ids are dropped.
 
+### Expert boards (`boards/`)
+
+The side-by-side layer: each trusted source becomes one column beside the blend
+in every position table (terminal, Markdown, HTML), via one set of helpers in
+`output/board.py`. A board is **display data, never a `Signal`**. It has no
+weight, the "four places" rule doesn't apply, and nothing it holds reaches
+`notes` or `results_log.jsonl` (`tests/test_boards.py` pins both). The plan and
+the verified shape of every source page live in `docs/EXPERT_BOARD_PLAN.md`.
+
+- `ExpertSource` (`boards/base.py`) is the seam for new columns. Sources **fail
+  closed** on attribution and **never raise** for I/O; a missing list is an
+  `unavailable` reason with its own wording.
+- `fantasypros_weekly` costs no request: the `ecr` signal's raw value already
+  *is* the FantasyPros positional rank. It's built from per-position recs only,
+  never the pooled FLEX pass, whose raw value is a cross-position rank.
+- Sample (preseason fill) runs get no boards (`Recommendation.sample_data`).
+- `section_boards` drops a column that reads nobody in that section, so a
+  missing list doesn't print a column of dashes in every table.
+- Every request sends `net.HEADERS`, a plain `ff-startsit/...` identity. Don't
+  reintroduce a browser User-Agent (`tests/test_net.py`), and don't add
+  "compatible;" to it: CBS answers 406 to that token.
+
 ### The analyst comparison (`sources/analysts.py`)
 
 `FF_ANALYSTS=boone` annotates the start/sit report with where **Justin Boone**

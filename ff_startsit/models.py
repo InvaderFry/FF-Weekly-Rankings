@@ -11,7 +11,12 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Optional
 
+from typing import TYPE_CHECKING
+
 from .engine.analyst import AnalystConflict
+
+if TYPE_CHECKING:  # pragma: no cover - typing only; boards imports nothing from here
+    from .boards.models import ExpertBoard
 
 
 def _fmt_raw(value: float) -> str:
@@ -161,6 +166,16 @@ class Recommendation:
     #: reaches ``notes`` or ``results_log.jsonl``, same rule as the two above.
     analyst_ranks: dict[str, float] = field(default_factory=dict)
     analyst_name: str = ""
+    #: Display-only: the expert boards shown beside the blend, one column each
+    #: (FantasyPros, Boone, ...). Shared across a run's position sections; a
+    #: renderer reads only the entries for the players in front of it. Never
+    #: reaches ``notes`` or ``results_log.jsonl`` -- these are side by side, not
+    #: blend inputs. See ``ff_startsit/boards``.
+    expert_boards: list["ExpertBoard"] = field(default_factory=list)
+    #: True when the run was scored on the bundled preseason sample signals.
+    #: Set by ``pipeline.recommend``; expert boards are withheld for such runs,
+    #: since sample ranks are nobody's real opinion.
+    sample_data: bool = False
 
     #: Whether this run survived every "never log this" rule in
     #: ``pipeline.recommend`` and is still owed a row in ``results_log.jsonl``.

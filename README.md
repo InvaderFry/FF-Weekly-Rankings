@@ -143,6 +143,15 @@ ffstartsit notify --url https://you.github.io/repo/   # push to a Discord webhoo
 ffstartsit publish --report report.md --dashboard site/index.html --discord --url https://you.github.io/repo/
 ```
 
+### Expert columns (side by side)
+
+Every position table shows each trusted source's own positional rank beside
+the blended score: **FP** (FantasyPros consensus, always) and **Boone** (Justin
+Boone's Yahoo ranks, with `FF_ANALYSTS=boone`). CBS staff consensus is next.
+These columns never change the score, the pick or the close-call flag; they're
+there so you can see where the people you trust disagree. See
+[docs/EXPERT_BOARD_PLAN.md](docs/EXPERT_BOARD_PLAN.md) for what's coming.
+
 ### Preferred journalists (optional view)
 
 If you trust a few specific rankers — say Justin Boone, Jamey Eisenberg, and

@@ -11,6 +11,7 @@ from rich.table import Table
 
 from ..models import Recommendation, _fmt_raw
 from ..engine.analyst import AnalystConflict
+from .board import board_cell, boards_legend, section_boards
 
 _console = Console()
 
@@ -60,6 +61,9 @@ def render_table(rec: Recommendation, title: str = "") -> None:
     table.add_column("Pos")
     table.add_column("Team")
     table.add_column("Score", justify="right")
+    boards = section_boards(rec)
+    for board in boards:
+        table.add_column(board.header, justify="right")
     for name in signal_names:
         table.add_column(name.upper(), justify="right")
     table.add_column("Flags")
@@ -67,6 +71,7 @@ def render_table(rec: Recommendation, title: str = "") -> None:
     for i, s in enumerate(rec.scores, start=1):
         verdict = "—" if s.final is None else f"{s.final:.1f}"
         row = [str(i), s.player.name, s.player.position, s.player.team or "BYE", verdict]
+        row.extend(board_cell(b, s.player.key) for b in boards)
         for name in signal_names:
             n = s.normalized.get(name)
             row.append("—" if n is None or rec.unranked else f"{n:.0f}")
@@ -76,6 +81,8 @@ def render_table(rec: Recommendation, title: str = "") -> None:
 
     _console.print(table)
 
+    if boards:
+        _console.print(f"[dim]{boards_legend(boards)}[/dim]")
     if rec.unranked and rec.scores:
         _console.print(f"[dim]{UNRANKED_NOTE}[/dim]")
 
@@ -169,7 +176,9 @@ def render_markdown(rec: Recommendation, title: str = "") -> str:
         lines.extend(_lone_candidate_markdown(rec))
         return "\n".join(lines)
 
+    boards = section_boards(rec)
     header = ["#", "Player", "Pos", "Team", "Score",
+              *[md_cell(b.header) for b in boards],
               *[md_cell(n.upper()) for n in signal_names], "Flags"]
     lines.append("| " + " | ".join(header) + " |")
     lines.append("|" + "|".join("---" for _ in header) + "|")
@@ -178,6 +187,7 @@ def render_markdown(rec: Recommendation, title: str = "") -> str:
         verdict = "—" if s.final is None else f"{s.final:.1f}"
         cells = [str(i), md_cell(s.player.name), md_cell(s.player.position),
                  md_cell(s.player.team or "BYE"), verdict]
+        cells.extend(board_cell(b, s.player.key) for b in boards)
         for name in signal_names:
             n = s.normalized.get(name)
             cells.append("—" if n is None or rec.unranked else f"{n:.0f}")
@@ -185,6 +195,9 @@ def render_markdown(rec: Recommendation, title: str = "") -> str:
         lines.append("| " + " | ".join(cells) + " |")
 
     lines.append("")
+    if boards:
+        lines.append(f"_{md_cell(boards_legend(boards))}_")
+        lines.append("")
     if rec.unranked and rec.scores:
         lines.append(f"_{UNRANKED_NOTE}_")
         lines.append("")

@@ -1,6 +1,6 @@
 # Expert board plan
 
-Status: **agreed; Phases 0–1 in progress.**
+Status: **Phases 0–1 done; Phase 2 next.**
 Site findings below were verified against live pages on 2026-11-02.
 
 ## Goal
