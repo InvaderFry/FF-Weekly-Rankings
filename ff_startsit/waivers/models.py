@@ -244,6 +244,12 @@ class WaiverBundle:
     #: started" and "this league's free-agent list was unreachable" stay
     #: distinguishable to every renderer.
     banner: Optional[str] = None
+    #: Which kind of run produced this: ``"live"``, ``"rehearsal"`` (preseason
+    #: by the calendar, live signals) or ``"preseason"`` (the refusal). Carried
+    #: into the retry marker, because with no writer board read all three share
+    #: a season, week and read list, and a refusal or rehearsal already posted
+    #: for Week 1 would otherwise suppress the live Week 1 report.
+    mode: str = "live"
     #: Your drafted roster, shown under a banner that has nothing else to say.
     #: Only populated on the preseason refusal, where the report would otherwise
     #: be a warning and nothing else — and where the roster is the one real thing

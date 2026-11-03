@@ -11,6 +11,7 @@ from rich.table import Table
 
 from ..models import Recommendation, _fmt_raw
 from ..engine.analyst import AnalystConflict
+from ..engine.blend import RULED_OUT_FLAG
 from .board import board_cell, boards_legend, section_boards
 
 _console = Console()
@@ -21,6 +22,9 @@ UNRANKED_NOTE = ("Only one candidate here, so there is nothing to rank against �
 ONE_PLAYABLE_NOTE = ("Only one of these players can play this week (the rest are ruled out), "
                      "so there is nothing to rank him against — the per-signal columns are "
                      "blank rather than showing a midpoint placeholder.")
+ONE_SCORED_NOTE = ("Only one of these players has a signal reading this run (each other "
+                   "player's flags say why), so there is nothing to rank him against — the "
+                   "per-signal columns are blank rather than showing a midpoint placeholder.")
 NO_SIGNAL_NOTE = ("No signal could score these players this run — every reading is missing "
                   "(each player's flags say why), so there is no ranking here. That is a "
                   "data problem, not a tie.")
@@ -40,7 +44,12 @@ def unranked_note(rec: Recommendation) -> str:
         return UNRANKED_NOTE
     if not any(s.final is not None for s in rec.scores):
         return NO_SIGNAL_NOTE
-    return ONE_PLAYABLE_NOTE
+    # "Ruled out" only when every unscored player actually carries that flag;
+    # an unmatched or unranked player is missing data, not out for the week.
+    unscored = [s for s in rec.scores if s.final is None]
+    if all(RULED_OUT_FLAG in s.flags for s in unscored):
+        return ONE_PLAYABLE_NOTE
+    return ONE_SCORED_NOTE
 
 #: Shown under the suggested-lineup table when a pick's score is a fabricated
 #: midpoint rather than a real reading. See ``lineup_unscored_keys``.

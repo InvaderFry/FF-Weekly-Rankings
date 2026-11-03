@@ -300,7 +300,8 @@ def render_waiver_digest(week: int, bundles: Sequence[WaiverBundle],
     # the default config (FF_ANALYSTS unset) let last week's open issue
     # suppress every report after it.
     from ..season import season_year
-    lines += [board_marker(season_year(), week, bundles_read(bundles)), ""]
+    from .board import run_mode
+    lines += [board_marker(season_year(), week, bundles_read(bundles), run_mode(bundles)), ""]
     return "\n".join(lines)
 
 
@@ -371,5 +372,6 @@ def render_values_digest(week: int, sheets, generated_on: Optional[str] = None) 
     if sources:
         lines += ["**Sources**: " + ", ".join(f"[{a}]({u})" for a, u in sources), ""]
     from ..season import season_year
-    lines += [board_marker(season_year(), week, sheets_read(sheets)), ""]
+    from .board import run_mode
+    lines += [board_marker(season_year(), week, sheets_read(sheets), run_mode(sheets)), ""]
     return "\n".join(lines)

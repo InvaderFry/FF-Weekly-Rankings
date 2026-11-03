@@ -130,11 +130,26 @@ def read_sources(boards: Sequence[ExpertBoard],
 # recorded in the digest itself, as an HTML comment the issue keeps, so the
 # retry can compare against exactly what was published.
 
-_MARKER = re.compile(r"<!-- ff-board season=(\d+) week=(\d+) read=([\w,:]*) -->")
+_MARKER = re.compile(r"<!-- ff-board season=(\d+) week=(\d+)(?: mode=(\w+))? read=([\w,:]*) -->")
+
+#: Run kinds, weakest first. A marker written before modes existed reads as live.
+MODES = ("preseason", "rehearsal", "live")
 
 
-def board_marker(season: int, week: int, read: Iterable[str]) -> str:
-    return f"<!-- ff-board season={season} week={week} read={','.join(sorted(set(read)))} -->"
+def board_marker(season: int, week: int, read: Iterable[str], mode: str = "live") -> str:
+    return (f"<!-- ff-board season={season} week={week} mode={mode} "
+            f"read={','.join(sorted(set(read)))} -->")
+
+
+def run_mode(items) -> str:
+    """The strongest mode among a run's bundles (or sheets carrying one).
+
+    One live league makes the report live: that is the one carrying real
+    advice. Anything without a ``mode`` counts as live.
+    """
+    modes = [getattr(i, "mode", None) or getattr(getattr(i, "bundle", None), "mode", None)
+             or "live" for i in items]
+    return max(modes, key=MODES.index) if modes else "live"
 
 
 def bundles_read(bundles) -> list[str]:
@@ -145,17 +160,21 @@ def bundles_read(bundles) -> list[str]:
     return sorted(seen)
 
 
-def has_news(read: Iterable[str], previous_text: Optional[str], season: int, week: int) -> bool:
+def has_news(read: Iterable[str], previous_text: Optional[str], season: int, week: int,
+             mode: str = "live") -> bool:
     """Whether this run is worth publishing over what was already published.
 
-    True when nothing was published for this season and week yet, or when this
-    run read a writer the published report didn't. Equal or fewer is not news:
+    True when nothing was published for this season, week and mode yet, or
+    when this run read a writer the published report didn't. Mode matters
+    because a preseason refusal, a dress rehearsal and the live report can
+    all be "Week 1" with nothing read: the live one is never a repeat of
+    either. Equal or fewer is not news:
     a retry that found the same articles would only post a duplicate, and one
     that found fewer (a page went down) would replace a better report.
     """
     published: Optional[set[str]] = None
-    for s_, w_, ids in _MARKER.findall(previous_text or ""):
-        if int(s_) == season and int(w_) == week:
+    for s_, w_, m_, ids in _MARKER.findall(previous_text or ""):
+        if int(s_) == season and int(w_) == week and (m_ or "live") == mode:
             got = {i for i in ids.split(",") if i}
             published = got if published is None else published | got
     if published is None:
@@ -174,5 +193,6 @@ def report_has_news(current_text: str, previous_text: Optional[str]) -> bool:
     match = _MARKER.search(current_text or "")
     if match is None:
         return not (previous_text or "").strip()
-    season, week, ids = int(match[1]), int(match[2]), [i for i in match[3].split(",") if i]
-    return has_news(ids, previous_text, season, week)
+    season, week, mode = int(match[1]), int(match[2]), match[3] or "live"
+    ids = [i for i in match[4].split(",") if i]
+    return has_news(ids, previous_text, season, week, mode)

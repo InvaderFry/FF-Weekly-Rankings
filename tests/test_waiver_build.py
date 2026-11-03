@@ -287,6 +287,7 @@ def test_a_rehearsal_scores_live_data_instead_of_refusing(tmp_path):
     b = _build(tmp_path, preseason=True, rehearse=True)
     assert b.adds and b.drops                       # the provider was read
     assert b.banner and "DRESS REHEARSAL" in b.banner
+    assert b.mode == "rehearsal"                    # the retry marker tells it from live
 
 
 def test_a_rehearsal_reports_what_the_live_signals_reached(tmp_path):
@@ -324,13 +325,14 @@ def test_the_window_is_detected_when_the_flag_is_not_passed(monkeypatch, tmp_pat
 
 def test_rehearsing_in_season_is_a_no_op_not_a_banner(tmp_path):
     b = _build(tmp_path, preseason=False, rehearse=True)
-    assert b.banner is None and b.adds
+    assert b.banner is None and b.adds and b.mode == "live"
 
 
 def test_outside_the_window_preseason_still_refuses(tmp_path):
     b = _build(tmp_path, provider=_ExplodingProvider(),
                preseason=True, rehearse=False)
     assert b.adds == [] and "PRESEASON" in b.banner
+    assert b.mode == "preseason"
 
 
 # --- the drafted roster under the refusal ----------------------------------

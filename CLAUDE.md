@@ -492,10 +492,16 @@ nothing in `results_log.jsonl`.
   chunked by characters as well as fields: one embed of 25 long fields can
   exceed the 6000-character message limit by itself.
 - **The retry gate.** The digest ends with an invisible
-  `<!-- ff-board season week read=... -->` marker. Scheduled runs pass the
-  newest open waiver issue's text as `--since`, and publish (Discord, issue,
-  Pages) only when nothing is published for that week yet or this run read a
-  writer the published report didn't. Manual runs always publish. The decision
+  `<!-- ff-board season week mode read=... -->` marker, written on every
+  digest, boards on or off (`read=` when nothing was read). Scheduled runs
+  pass the newest open waiver issue's text as `--since`, and publish (Discord,
+  issue, Pages) only when nothing is published for that season, week and
+  **mode** yet or this run read a writer the published report didn't. Mode
+  (`WaiverBundle.mode`: `preseason`, `rehearsal`, `live`) is in the identity
+  because with nothing read all three are "Week 1" with the same read list,
+  and a refusal or rehearsal already posted would suppress the live report.
+  The values sheet records `read` per chart position (`boone_trade_values:TE`),
+  since Boone's charts post one at a time. Manual runs always publish. The decision
   is `waivers.board.report_has_news`, shared by `cmd_waivers` and
   `workflow.py news`.
 
@@ -1025,8 +1031,10 @@ table stays. The interactive `render_table` keeps its table too — someone who
 typed `rank TE` asked for it.
 
 An `unranked` table's note names its **cause** (`render.unranked_note`):
-one player, one *playable* player beside ruled-out ones, or no signal reading
-at all. It used to say "Only one candidate here" for all three, so a run where
+one player, one *playable* player beside ruled-out ones, one *scored* player
+beside others with missing readings, or no signal reading at all. "Ruled out"
+is claimed only when every unscored player carries `blend.RULED_OUT_FLAG`; an
+unmatched player is missing data, not out for the week. It used to say "Only one candidate here" for all three, so a run where
 every source failed told the owner of four running backs that he had one —
 the distinguishable-failures-rendering-identically bug again.
 

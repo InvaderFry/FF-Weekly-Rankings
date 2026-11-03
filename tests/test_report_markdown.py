@@ -827,5 +827,15 @@ def test_unranked_note_names_the_actual_cause():
     assert unranked_note(outage) == NO_SIGNAL_NOTE
     assert NO_SIGNAL_NOTE in render_markdown(outage) and "Only one candidate" not in render_markdown(outage)
     assert "No signal could score" in _position_table(outage)
-    ruled_out = _rec(_ps('1', 'Alpha', 'RB', 90), PlayerScore(player=_ps('2', 'Bravo', 'RB', 0).player))
+    from ff_startsit.engine.blend import RULED_OUT_FLAG
+    from ff_startsit.output.render import ONE_SCORED_NOTE
+    out = PlayerScore(player=_ps('2', 'Bravo', 'RB', 0).player, flags=[RULED_OUT_FLAG])
+    ruled_out = _rec(_ps('1', 'Alpha', 'RB', 90), out)
     assert unranked_note(ruled_out) == ONE_PLAYABLE_NOTE
+    # Found in review: an unmatched player (no ECR reading, not injured) is
+    # missing data, and the note used to call him ruled out.
+    unmatched = PlayerScore(player=_ps('3', 'Charlie', 'RB', 0).player, flags=["ecr: unmatched"])
+    missing = _rec(_ps('1', 'Alpha', 'RB', 90), unmatched)
+    assert unranked_note(missing) == ONE_SCORED_NOTE
+    assert "ruled out" not in render_markdown(missing)
+    assert unranked_note(_rec(_ps('1', 'Alpha', 'RB', 90), out, unmatched)) == ONE_SCORED_NOTE

@@ -177,7 +177,8 @@ def build_bundle(settings: Settings, label: str, provider: LeagueViewProvider,
         # refusal can say — that the draft landed and this is the team. Still no
         # scores or ranks, because there are none.
         return WaiverBundle(label=label, scoring=settings.scoring, week=week,
-                            banner=WAIVER_BANNER, roster=list(my_players))
+                            banner=WAIVER_BANNER, roster=list(my_players),
+                            mode="preseason")
 
     rules = _rules(provider)
     teams = _teams(provider)
@@ -241,6 +242,7 @@ def build_bundle(settings: Settings, label: str, provider: LeagueViewProvider,
 
     if rehearsing:
         bundle.banner = _rehearsal_banner(index, pool)
+        bundle.mode = "rehearsal"
 
     my_scores = [index[p.key] for p in my_players if p.key in index]
     protected = _lineup_keys(my_scores, rules)

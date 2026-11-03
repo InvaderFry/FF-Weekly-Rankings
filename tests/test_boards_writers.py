@@ -294,9 +294,41 @@ def test_a_digest_with_the_boards_off_still_tells_weeks_apart():
     from ff_startsit.waivers.render import render_waiver_digest
     week8 = render_waiver_digest(8, [WaiverBundle(label="a", scoring="ppr", week=8)])
     week9 = render_waiver_digest(9, [WaiverBundle(label="a", scoring="ppr", week=9)])
-    assert "week=9 read= -->" in week9
+    assert "week=9 mode=live read= -->" in week9
     assert report_has_news(week9, week8)
     assert not report_has_news(week9, week9)              # the retry is still quiet
+
+
+def test_live_week_one_is_news_after_a_preseason_refusal_or_rehearsal():
+    """Found in review: with no board read, the refusal, the rehearsal and the
+    live Week 1 report all wrote the same marker, so the live one was
+    suppressed as a repeat."""
+    from ff_startsit.waivers.models import WaiverBundle
+    from ff_startsit.waivers.render import render_waiver_digest
+
+    def digest(mode):
+        return render_waiver_digest(1, [WaiverBundle(label="a", scoring="ppr", week=1, mode=mode)])
+    refusal, rehearsal, live = digest("preseason"), digest("rehearsal"), digest("live")
+    assert "mode=preseason" in refusal and "mode=live" in live
+    assert report_has_news(rehearsal, refusal)
+    assert report_has_news(live, refusal)
+    assert report_has_news(live, rehearsal)
+    assert report_has_news(live, refusal + "\n" + rehearsal)
+    assert not report_has_news(live, live)
+    assert not report_has_news(rehearsal, rehearsal)
+    # A marker written before modes existed reads as a live report.
+    legacy = "<!-- ff-board season=2026 week=9 read=boone_waivers -->"
+    assert not has_news(["boone_waivers"], legacy, 2026, 9)
+    assert has_news(["boone_waivers"], legacy, 2026, 9, mode="rehearsal")
+
+
+def test_one_live_league_makes_the_run_live():
+    from ff_startsit.waivers.board import run_mode
+    from ff_startsit.waivers.models import WaiverBundle
+    assert run_mode([WaiverBundle(label="a", scoring="ppr", week=1, mode="preseason"),
+                     WaiverBundle(label="b", scoring="ppr", week=1)]) == "live"
+    assert run_mode([WaiverBundle(label="a", scoring="ppr", week=1, mode="preseason"),
+                     WaiverBundle(label="b", scoring="ppr", week=1, mode="rehearsal")]) == "rehearsal"
 
 
 def test_publish_news_writes_the_step_output(tmp_path):
@@ -333,7 +365,7 @@ def test_markdown_board_and_marker():
     assert "| Player | Pos | Team | Boone | Eisenberg | Richard | FP ROS | This tool |" in md
     assert "| D'Andre 1 | RB | LV | RB1 · $9 | — | — | — | add (drop My Rb3) |" in md
     assert "Eisenberg's Week 9 waiver column not posted yet" in md
-    assert "<!-- ff-board season=" in md and "week=9 read=boone_waivers,richard_chart -->" in md
+    assert "<!-- ff-board season=" in md and "week=9 mode=live read=boone_waivers,richard_chart -->" in md
 
 
 def test_html_board():
@@ -373,7 +405,7 @@ def test_no_board_section_when_the_board_is_off():
     from ff_startsit.waivers.render import render_waiver_digest
     md = render_waiver_digest(9, [WaiverBundle(label="x", scoring="ppr", week=9)])
     assert "What the writers say" not in md
-    assert "week=9 read= -->" in md        # the retry gate still needs the week
+    assert "week=9 mode=live read= -->" in md        # the retry gate still needs the week
 
 
 # --- quotes come from the board's own articles (Phase 5) -----------------------
