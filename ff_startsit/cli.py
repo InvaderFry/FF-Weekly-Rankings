@@ -483,14 +483,13 @@ def cmd_report(args, settings: Settings) -> int:
 
 def cmd_journalists(args, settings: Settings) -> int:
     """Print the preferred-journalists section on its own (quick id sanity check)."""
-    if not settings.preferred_experts and settings.analysts != "boone":
-        # The analyst transport serves this section without any expert id, so
-        # the demand for one only stands when that is off too. Requiring it
-        # regardless sent the user to configure a FantasyPros key that cannot
-        # work -- per-expert ranks there are a paid product.
-        print("FF_PREFERRED_EXPERTS is not set and FF_ANALYSTS is off — see "
-              ".env.example for the id:Name format and how to find "
-              "FantasyPros expert ids.", file=sys.stderr)
+    if not settings.preferred_experts:
+        # Boone's (and CBS's) ranks are columns in every position table now
+        # (FF_ANALYSTS); this section is only the paid FantasyPros per-expert view.
+        print("FF_PREFERRED_EXPERTS is not set. This section needs FantasyPros "
+              "expert ids and a paid FANTASYPROS_API_KEY; for Boone and CBS, set "
+              "FF_ANALYSTS=boone,cbs and read their columns in `rank` / `report`.",
+              file=sys.stderr)
         return 1
     settings, profile = _league_context(args, settings)
     players = _get_roster(args, settings, profile)
@@ -498,9 +497,10 @@ def cmd_journalists(args, settings: Settings) -> int:
     view = report.build_journalist_view(settings, players, week)
     if view is None:
         print("No preferred-journalist rankings available (bad expert ids, "
-              "offline, or no data for this week). Note per-expert FantasyPros "
-              "ranks need a paid API key — run `ffstartsit experts --verify` "
-              "— while FF_ANALYSTS=boone serves this section without one.",
+              "offline, or no data for this week). Per-expert FantasyPros ranks "
+              "need a paid API key — run `ffstartsit experts --verify`. Boone's "
+              "and CBS's ranks don't need one: they're columns in every position "
+              "table with FF_ANALYSTS=boone,cbs.",
               file=sys.stderr)
         return 1
     print(report.render_journalists_markdown(view))

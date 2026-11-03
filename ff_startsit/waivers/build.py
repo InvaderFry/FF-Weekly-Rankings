@@ -258,7 +258,19 @@ def build_bundle(settings: Settings, label: str, provider: LeagueViewProvider,
     ranks = journalist_ranks(settings, dedupe_players(pool_players(pool), my_players), week)
 
     mentions: dict[str, list] = {}
-    if include_columns:
+    quoting = [s for s in writer_sources if getattr(s, "kind", "") == "waiver"
+               and hasattr(s, "mentions")]
+    if include_columns and quoting:
+        # The board's own sources already hold the columns: quote from those,
+        # rather than fetch the same articles again through ColumnFetcher.
+        found = []
+        for source in quoting:
+            try:
+                found += source.mentions(week, pool_players(pool))
+            except Exception as exc:     # quotes are decoration; never sink the report
+                print(f"warning: {source.label} quotes unavailable: {exc}", file=sys.stderr)
+        mentions = index_mentions(found)
+    elif include_columns:
         fetcher = column_fetcher or ColumnFetcher()
         mentions = index_mentions(fetcher.fetch(week, pool_players(pool)))
         bundle.sources.extend(fetcher.read)
@@ -289,7 +301,7 @@ def build_bundle(settings: Settings, label: str, provider: LeagueViewProvider,
 
     if writer_sources:
         _attach_expert_board(bundle, writer_sources, pool_players(pool), week,
-                             settings.scoring, rules, season_ranks)
+                             settings.scoring, rules, season_ranks, mentions)
 
     schedule = schedule or ScheduleProvider(cache_dir=settings.data_dir)
     playing = _weeks_playing(schedule, week)
@@ -319,7 +331,7 @@ def build_bundle(settings: Settings, label: str, provider: LeagueViewProvider,
 
 def _attach_expert_board(bundle: WaiverBundle, sources: Sequence, free_agents: Sequence[Player],
                          week: int, scoring: str, rules: LeagueRules,
-                         season_ranks: dict) -> None:
+                         season_ranks: dict, mentions: Optional[dict] = None) -> None:
     """Each writer's reading of this league's wire, side by side (display only).
 
     A source never raises for I/O, but one that does anyway costs its own
@@ -338,7 +350,8 @@ def _attach_expert_board(bundle: WaiverBundle, sources: Sequence, free_agents: S
                                       unavailable={ALL_POSITIONS: f"{source.label}: {exc}"}))
     boards.append(fp_ros_board(season_ranks))
     bundle.expert_boards = boards
-    bundle.expert_rows = build_board(free_agents, boards, bundle.adds, bundle.alternates)
+    bundle.expert_rows = build_board(free_agents, boards, bundle.adds, bundle.alternates,
+                                     mentions)
     for board in boards:
         if board.url:
             bundle.sources.append((board.label, board.url))

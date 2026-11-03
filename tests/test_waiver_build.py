@@ -532,3 +532,25 @@ def test_superflex_reaches_the_chart(tmp_path):
     _build(tmp_path, provider=_Provider(rules=replace(RULES, flex_slots={"SUPER_FLEX": 1})),
            writer_sources=[src])
     assert src.seen[3] is True
+
+
+def test_board_sources_supply_the_quotes_and_columnfetcher_is_not_used(tmp_path, monkeypatch):
+    """One download per column: with the board on, quotes come from its sources."""
+    from ff_startsit.boards.models import BoardEntry
+    from ff_startsit.waivers.models import ColumnMention
+
+    def unexpected(*a, **k):
+        raise AssertionError("ColumnFetcher fetched the columns a second time")
+    monkeypatch.setattr("ff_startsit.waivers.build.ColumnFetcher", unexpected)
+
+    class Quoting(_WriterSource):
+        kind = "waiver"
+
+        def mentions(self, week, players):
+            return [ColumnMention("Justin Boone", "https://y/a", "f1", "Add Free Wr now.")]
+    src = Quoting("boone_waivers", "Boone", {"f1": BoardEntry(pos_rank=1)})
+    bundle = _build(tmp_path, include_columns=True, writer_sources=[src])
+    assert bundle.expert_rows[0].quotes[0].snippet == "Add Free Wr now."
+    add = next((t for t in bundle.adds if t.score.player.key == "f1"), None)
+    if add is not None:
+        assert add.mentions[0].author == "Justin Boone"

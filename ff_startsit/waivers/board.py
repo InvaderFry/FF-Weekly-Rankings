@@ -34,6 +34,8 @@ class BoardRow:
     listed_by: int = 0
     #: What this tool's own pass made of him: "add (drop X)", "also consider".
     tool: Optional[str] = None
+    #: The writers' own words about him (``ColumnMention``), one per writer.
+    quotes: list = field(default_factory=list)
 
 
 def cell_position(board: ExpertBoard, player: Player) -> Optional[str]:
@@ -50,7 +52,7 @@ def fp_ros_board(season_ranks: dict[str, float]) -> ExpertBoard:
 
 
 def build_board(free_agents: Sequence[Player], boards: Sequence[ExpertBoard],
-                adds=(), alternates=()) -> list[BoardRow]:
+                adds=(), alternates=(), mentions=None) -> list[BoardRow]:
     """Rows for every free agent a writer named, best-supported first.
 
     Sorted by how many writers recommend him, then the best (lowest) rank
@@ -69,6 +71,11 @@ def build_board(free_agents: Sequence[Player], boards: Sequence[ExpertBoard],
         if not any(player.key in b.entries for b in selecting):
             continue
         row = BoardRow(player=player, tool=tool.get(player.key))
+        seen_authors: set[str] = set()
+        for quote in (mentions or {}).get(player.key, ()):
+            if quote.author not in seen_authors and quote.snippet:
+                seen_authors.add(quote.author)
+                row.quotes.append(quote)
         for board in boards:
             entry = board.entries.get(player.key)
             if entry is not None:

@@ -438,6 +438,16 @@ the verified shape of every source page live in `docs/EXPERT_BOARD_PLAN.md`.
   `FF_ANALYSTS` includes `cbs` (it takes a comma list: `boone,cbs`). One
   `CbsFetcher` is shared across leagues and caches each page for an hour. See
   the CBS paragraph above for why this page is attributable.
+- **Waiver-column quotes come from the board's own sources** when the board is
+  on: `ArticleBoardSource.mentions` runs `columns.extract_mentions` on the
+  article the board already fetched, so a column is downloaded once, and the
+  quotes render under the board ("Why, in their words") instead of a separate
+  "What the writers said" section. Each source defines its own `body_region`,
+  and that matters: on Yahoo the first `<article>` is only the page header, so
+  the old `ColumnFetcher` path (still used when the board is off) found almost
+  nothing of Boone's, and the rest of the page carries "Recommended Stories"
+  headlines that name players. Boone's region is his first section heading
+  through his drop list; Eisenberg's is CBS's `<article id="Article-body">`.
 - Discord carries only FP, Boone and the CBS average, as one comparison line
   per close call (`close_call_comparison`); every other renderer shows every
   board.
@@ -537,12 +547,16 @@ every candidate shares a position**: Boone's lists are per-position, so "his
 RB11 beats his WR6" compares two different rankings, the identical
 non-comparability `rank_pooled` exists to solve for ECR.
 
-The transport doubles as the **Preferred journalists** section's data source.
-`report._analyst_journalist_view` builds a `JournalistView` from these ranks
-when FantasyPros yields nothing, which is always without a paid key — that
-section otherwise never rendered at all. The expert is labelled `Justin Boone
-(Yahoo)` rather than borrowing a FantasyPros expert id, so a column can always
-say where it came from.
+How it renders changed with the boards: Boone's ranks are a column
+(`boards/boone.py`), so a **material** conflict marks his rank on the player he
+would start (`render.ANALYST_MARK`, ▲) and keeps one plain line under the table
+(`render.conflict_lines`), and a minor inversion gets no sentence at all,
+because the column already shows both ranks. It used to be a callout box above
+the table plus a "within N spots" note below, which repeated the numbers now in
+the column. And this transport **no longer feeds the Preferred journalists
+section**: it used to (`_analyst_journalist_view`, removed), which printed
+Boone's same ranks a second time beside his column. That section is now only
+the paid FantasyPros per-expert view.
 
 ### Game context (schedule)
 
@@ -598,13 +612,14 @@ precisely.
 The odds payload is the one fetch here that is **disk-cached** (`ODDS_CACHE_TTL`,
 30 minutes) rather than memoized per instance, because it is the one that varies
 by neither week nor league. `cli._league_bundles` builds a fresh signal set per
-league and every scheduled workflow scores each league *twice* — once for its own
-pass and once for the sibling page rebuild that keeps a Pages deploy from
-dropping the other page — so three leagues meant six identical calls per run. The
-Odds API bills **two credits per call**, one per market, against a 500/month free
-tier: the duplication, not the feed, was the running cost. The TTL is short on
-purpose; the only duplication it has to absorb happens minutes apart inside one
-run.
+league, and every scheduled workflow used to score each league *twice* — once
+for its own pass and once for the sibling page rebuild that kept a Pages deploy
+from dropping the other page — so three leagues meant six identical calls per
+run. The Odds API bills **two credits per call**, one per market, against a
+500/month free tier: the duplication, not the feed, was the running cost. The
+sibling rebuilds are gone now (pages are carried by `workflow.py restore`, see
+below), so each run scores each league once; the cache still absorbs any
+repeat inside one run.
 
 ### The lineup builder and the FLEX slot
 
@@ -935,12 +950,13 @@ last of those is not a failure at all, which is why it stopped being reported as
 All three scheduled workflows publish the **whole** `./site` (index.html,
 waivers.html, values.html) and share `concurrency: group: ff-startsit-pages`. A
 Pages deploy replaces the site wholesale, so a workflow deploying only its own
-page would silently delete the others. The start/sit and waiver workflows still
-rebuild each other's page (the sibling rebuild, `continue-on-error`); the
-values page is carried differently: `workflow.py restore` copies the *live*
-copy of a page the run didn't build into `./site`, which costs no Odds API
-credits. `values.yml` restores index.html and waivers.html that way and
-re-scores neither. A restore that 404s means "never published"; any other
+page would silently delete the others. Each workflow builds only its own page
+and carries the others with `workflow.py restore`, which copies the *live* copy
+of a page into `./site` and costs no Odds API credits. That replaced the old
+sibling rebuild, where the start/sit and waiver workflows re-scored each other's
+page every run: the same pages for twice the credits. One consequence worth
+knowing: Tuesday no longer refreshes the start/sit page, so between Tuesday and
+Thursday it still shows Sunday's lineup. A restore that 404s means "never published"; any other
 failure leaves a `.restore-failed-<page>` marker that `verify_site` reads as a
 missing page, so the deploy is skipped and the live site stands. The
 start/sit and waiver workflows restore values.html with `--optional` instead:

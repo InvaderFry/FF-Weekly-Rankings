@@ -183,7 +183,13 @@ def _with_team(player) -> str:
 
 
 def _mentions_section(bundle: WaiverBundle) -> list[str]:
-    """Quotes from the writers, attributed and linked back to their columns."""
+    """Quotes from the writers, attributed and linked back to their columns.
+
+    Only when the writers' board is off: with it on, the quotes sit under the
+    board beside the writers' own numbers (``_expert_board_section``).
+    """
+    if bundle.expert_boards:
+        return []
     quoted = [(t, m) for t in bundle.adds for m in t.mentions]
     if not quoted:
         return []
@@ -220,6 +226,13 @@ def _expert_board_section(bundle: WaiverBundle) -> list[str]:
     for reason in board_reasons(boards):
         lines.append(f"- {md_cell(reason)}")
     lines.append("")
+    quoted = [(row, q) for row in bundle.expert_rows for q in row.quotes]
+    if quoted:
+        lines += ["**Why, in their words**", ""]
+        for row, q in quoted:
+            lines.append(f"- **{md_cell(row.player.name)}** — [{md_cell(q.author)}]({q.url}): "
+                         f"“{md_cell(q.snippet)}”")
+        lines.append("")
     return lines
 
 

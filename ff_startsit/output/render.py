@@ -71,7 +71,7 @@ def render_table(rec: Recommendation, title: str = "") -> None:
     for i, s in enumerate(rec.scores, start=1):
         verdict = "—" if s.final is None else f"{s.final:.1f}"
         row = [str(i), s.player.name, s.player.position, s.player.team or "BYE", verdict]
-        row.extend(board_cell(b, s.player.key) for b in boards)
+        row.extend(section_cell(rec, b, s) for b in boards)
         for name in signal_names:
             n = s.normalized.get(name)
             row.append("—" if n is None or rec.unranked else f"{n:.0f}")
@@ -83,6 +83,8 @@ def render_table(rec: Recommendation, title: str = "") -> None:
 
     if boards:
         _console.print(f"[dim]{boards_legend(boards)}[/dim]")
+    for line in conflict_lines(rec):
+        _console.print(line, markup=False, highlight=False)
     if rec.unranked and rec.scores:
         _console.print(f"[dim]{UNRANKED_NOTE}[/dim]")
 
@@ -165,6 +167,32 @@ def analyst_conflict_text(conflict: AnalystConflict) -> str:
             f"edge to {conflict.preferred}.")
 
 
+#: Marks Boone's rank on the player he would start instead of this tool's pick.
+ANALYST_MARK = "▲"
+
+
+def conflict_lines(rec: Recommendation) -> list[str]:
+    """The analyst disagreements worth a line under the table: material ones only.
+
+    Boone's rank sits in its own column beside the blend now, so a minor
+    inversion ("within 2 spots") is already readable in the table and its
+    sentence was the same numbers twice. A material one keeps its sentence,
+    as a plain note rather than a callout, and marks his rank with
+    ``ANALYST_MARK`` so the row it is about is visible in the table.
+    """
+    return [f"{ANALYST_MARK} {analyst_conflict_text(c)}"
+            for c in rec.analyst_conflicts if c.material]
+
+
+def section_cell(rec: Recommendation, board, score) -> str:
+    """A board's cell in a position table, with the analyst mark where it applies."""
+    cell = board_cell(board, score.player.key)
+    if (board.source_id == "boone_weekly" and cell != "—"
+            and any(c.material and c.preferred == score.player.name for c in rec.analyst_conflicts)):
+        cell += f" {ANALYST_MARK}"
+    return cell
+
+
 def render_markdown(rec: Recommendation, title: str = "") -> str:
     """Render a Recommendation as GitHub-flavored markdown (for issues/ChatOps)."""
     signal_names = sorted({name for s in rec.scores for name in s.normalized})
@@ -187,7 +215,7 @@ def render_markdown(rec: Recommendation, title: str = "") -> str:
         verdict = "—" if s.final is None else f"{s.final:.1f}"
         cells = [str(i), md_cell(s.player.name), md_cell(s.player.position),
                  md_cell(s.player.team or "BYE"), verdict]
-        cells.extend(board_cell(b, s.player.key) for b in boards)
+        cells.extend(md_cell(section_cell(rec, b, s)) for b in boards)
         for name in signal_names:
             n = s.normalized.get(name)
             cells.append("—" if n is None or rec.unranked else f"{n:.0f}")
@@ -205,9 +233,8 @@ def render_markdown(rec: Recommendation, title: str = "") -> str:
     if flat:
         lines.append(f"_{flat}_")
         lines.append("")
-    for conflict in rec.analyst_conflicts:
-        text = md_cell(analyst_conflict_text(conflict))
-        lines.append(f"> ⚠️ {text}" if conflict.material else text)
+    for line in conflict_lines(rec):
+        lines.append(f"_{md_cell(line)}_")
         lines.append("")
     if rec.analyst_note:
         lines.append(f"_{md_cell(rec.analyst_note)}_")

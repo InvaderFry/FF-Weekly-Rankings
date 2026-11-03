@@ -149,19 +149,6 @@ jobs:
             echo "news=true" >> "$GITHUB_OUTPUT"
           fi
 
-      # A Pages deploy replaces the entire site, so this run has to rebuild the
-      # start/sit page too or deploying would delete it. No --log and no
-      # --discord: Thursday/Sunday own the start/sit decisions and the ping.
-      - name: Rebuild start/sit page (so the deploy doesn't drop it)
-        if: steps.news.outputs.news == 'true'
-        continue-on-error: true
-        run: |
-          WEEK_ARGS=()
-          if [ -n "$INPUT_WEEK" ]; then WEEK_ARGS=(--week "$INPUT_WEEK"); fi
-          python -m ff_startsit.workflow run publish "${WEEK_ARGS[@]}" --all-leagues \
-            --report report.md --dashboard ./site/index.html
-          cat report.md >> "$GITHUB_STEP_SUMMARY"
-
       # `identity` refuses a report whose season/week it cannot read, which is
       # the right answer for *which issue to post into* and the wrong one for
       # the run: this step sits before the Pages verify/deploy, has no output
@@ -198,20 +185,23 @@ jobs:
             echo "rather than guess at. The digest below is complete."
           } >> "$GITHUB_STEP_SUMMARY"
 
-      # The Wednesday values page is built by values.yml only. Carry the live
-      # copy so this deploy doesn't delete it; if it can't be fetched, deploy
-      # without it rather than hold back this page (workflow.restore_pages).
-      - name: Keep the published trade-values page
+      # Carry the pages this run didn't build by copying their live copies
+      # (workflow.restore_pages) instead of re-scoring the start/sit page. The
+      # start/sit page is required, as it was when this step re-scored it;
+      # values.html is optional, since Wednesday rebuilds it.
+      - name: Keep the published start/sit and trade-values pages
         if: steps.news.outputs.news == 'true'
         run: |
           OWNER="${GITHUB_REPOSITORY%%/*}"; REPO="${GITHUB_REPOSITORY##*/}"
-          python -m ff_startsit.workflow restore "https://${OWNER,,}.github.io/${REPO}" --optional values.html
+          BASE="https://${OWNER,,}.github.io/${REPO}"
+          python -m ff_startsit.workflow restore "$BASE" index.html
+          python -m ff_startsit.workflow restore "$BASE" --optional values.html
 
       # A Pages deploy replaces the whole site, so uploading a directory that is
-      # missing a page silently deletes that page from the live site. The sibling
-      # rebuild above is `continue-on-error`, which is exactly how ./site ends up
-      # incomplete. Skipping the deploy leaves the current site — both pages —
-      # standing, which is strictly better than replacing it with half of one.
+      # missing a page silently deletes that page from the live site. A failed
+      # restore above is exactly how ./site ends up incomplete. Skipping the
+      # deploy leaves the current site standing, which is strictly better than
+      # replacing it with part of one.
       - name: Verify the site is complete
         id: site
         if: steps.news.outputs.news == 'true'
@@ -236,7 +226,6 @@ jobs:
           name: publishing-test
           path: |
             site/
-            report.md
             waivers.md
           retention-days: 7
 

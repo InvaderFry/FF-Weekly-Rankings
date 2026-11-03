@@ -162,7 +162,11 @@ CBS average. These columns never change the score, the pick or the close-call
 flag; they're there so you can see where the people you trust disagree. See
 [docs/EXPERT_BOARD_PLAN.md](docs/EXPERT_BOARD_PLAN.md) for what's coming.
 
-### Preferred journalists (optional view)
+### Preferred journalists (optional view, paid FantasyPros key)
+
+> You probably want the **expert columns** above instead: Boone, CBS, Eisenberg
+> and Richard need no key. This older section only serves FantasyPros' paid
+> per-expert ranks.
 
 If you trust a few specific rankers — say Justin Boone, Jamey Eisenberg, and
 Dave Richard — you can add a **"Preferred journalists"** section to the report
@@ -277,13 +281,11 @@ Each league's section gives you:
   where both starting lineups improve — and shows the gain on each side.
 - **Stash watch and bye-week holes**, including ranked players who are only on
   the wire because their team is on bye this week.
-- **What the writers said** — quotes from Justin Boone's, Jamey Eisenberg's and
-  Dave Richard's weekly waiver columns, matched against your free-agent pool and
-  linked back to each piece. The two halves fail independently: if a column
-  can't be read, the quotes vanish and nothing else does. Note the *ranks* half
-  needs `FANTASYPROS_API_KEY` and an analyst FantasyPros actually ranks — of
-  those three, only Boone qualifies, so the columns are what the CBS pair
-  contribute. `ffstartsit experts --verify` says which of yours are usable.
+- **What the writers say** — with `FF_ANALYSTS=boone,cbs`, the board described
+  above, with each writer's own words quoted under it and linked to the column
+  ("Why, in their words"). Without the board, quotes from the writers' columns
+  still appear for the suggested adds. If a column can't be read, its quotes
+  vanish and nothing else does.
 
 Two things it deliberately does not do. It adds **no blend signal**, so no
 start/sit ranking changes. And it is **never written to the results log** — a
@@ -470,9 +472,9 @@ For the **dashboard + Discord** delivery:
   Source = GitHub Actions*. After the next weekly run your dashboard lives at
   `https://<owner>.github.io/<repo>/`, with the waiver report at
   `/waivers.html` and the trade values at `/values.html` (the pages link to each
-  other). Each deploy replaces the whole site, so every workflow carries the
-  other pages (rebuilding them, or copying the live copy) and they share a
-  `concurrency` group to keep their deploys from racing.
+  other). Each deploy replaces the whole site, so every workflow copies the
+  live versions of the pages it didn't build, and they share a `concurrency`
+  group to keep their deploys from racing.
 - **Discord (optional):** create an incoming webhook (Discord → *Server Settings →
   Integrations → Webhooks → New Webhook → Copy URL*) and add it as the
   `DISCORD_WEBHOOK_URL` repository secret. Leave it unset to skip Discord.

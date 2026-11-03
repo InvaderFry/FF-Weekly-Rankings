@@ -194,3 +194,19 @@ def test_rank_command_adds_boone_when_enabled(tmp_path, monkeypatch):
                     exclude_unavailable=True)
     cli._annotate_analyst(settings, rec, roster()[:3], 9, "WR")
     assert [b.short for b in rec.expert_boards] == ["FP", "Boone"]
+
+
+def test_boone_mark_sits_on_the_player_he_would_start(tmp_path):
+    """The disagreement block became a mark in the table plus one plain note."""
+    from ff_startsit.engine.analyst import AnalystConflict
+    recs = ranked(Settings(data_dir=tmp_path, analysts="boone"), fetcher=Boone())
+    wr = recs["WR"]
+    wr.analyst_conflicts = [AnalystConflict("Justin Boone", "WR", "Alpha O'Neil", "Charlie",
+                                            3, 1, False, True)]
+    md = render.render_markdown(wr, title="WR")
+    charlie = next(line for line in md.splitlines() if line.startswith("| ") and "Charlie" in line)
+    alpha = next(line for line in md.splitlines() if line.startswith("| ") and "Alpha" in line)
+    assert "| 1 ▲ |" in charlie and "▲" not in alpha
+    assert "_▲ Justin Boone disagrees: he starts Charlie (his WR1) over Alpha O'Neil (his WR3)._" in md
+    page = html._position_table(wr)
+    assert "1 ▲" in page

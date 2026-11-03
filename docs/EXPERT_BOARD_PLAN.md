@@ -1,6 +1,6 @@
 # Expert board plan
 
-Status: **Phases 0–4 done; Phase 5 (cleanup) next.**
+Status: **All five phases done.**
 Site findings below were verified against live pages on 2026-11-02.
 
 ## Goal
@@ -243,6 +243,12 @@ because code-block tables wrap badly on a phone.
   line under each board row).
 - Correct the CBS section of `CLAUDE.md` with the finding above. Remove
   `docs/ANALYST_COMPARE_*` once this plan supersedes them.
+- As built: the sibling rebuilds became live-page restores; quotes come from
+  the board's own article fetch (Boone's quotes needed their own body region:
+  Yahoo's first `<article>` is only the header); minor Boone inversions lost
+  their sentence since the column shows them; `ANALYST_COMPARE_PLAN.md` and
+  `_PROGRESS.md` were removed, but `_TRANSPORT.md` stays, because it documents
+  the Yahoo transport `sources/analysts.py` still uses every week.
 
 ## Schedule (UTC crons; Central Standard Time shown)
 

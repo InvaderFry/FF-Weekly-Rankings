@@ -37,6 +37,32 @@ def _text(fragment: str) -> str:
     return re.sub(r"\s+", " ", htmllib.unescape(re.sub(r"<[^>]+>", " ", fragment))).strip()
 
 
+#: Shorter paragraphs are list items, table cells and labels, not sentences.
+MIN_PROSE = 50   # Boone: "Tyler Allgeier is 52% rostered but would be the No. 1 RB add" is 78
+WORD_JOINER = "\u2060"
+
+
+def prose(region: str) -> str:
+    """The writer's sentences only: each ``<p>`` long enough to be prose, kept
+    as its own sentence.
+
+    Quotes are matched by sentence, and stripping all tags runs headings, list
+    items and player-card headers together into one "sentence" with no full
+    stop — so the first sentence naming a player was a heading block ("Key
+    injuries to consider Lamar Jackson (thumb…") or a card ("Seth McGowan RB
+    IND Indianapolis • #20"), found live on 2026-11-02.
+    """
+    out = []
+    for para in re.findall(r"<p\b[^>]*>(.*?)</p>", region, re.S):
+        # "No. 3 QB add" is not a full stop. The sentence splitter needs
+        # whitespace right after the dot, so an invisible word joiner there
+        # keeps it whole; ``mentions`` strips the joiner back out.
+        text = re.sub(r"\b(No|Nos|vs|Jr|Sr)\. ", "\\1.\u2060 ", _text(para))
+        if len(text) >= MIN_PROSE:
+            out.append(text if text[-1] in ".!?\"”" else text + ".")
+    return " ".join(out)
+
+
 @dataclass
 class Listed:
     """One player as an article lists him, before matching to a roster."""
@@ -270,6 +296,7 @@ class ArticleBoardSource(ExpertSource):
         self.fetcher = fetcher or ArticleFetcher()
         self.season = season
         self._weeks: dict[int, tuple] = {}
+        self._bodies: dict[int, tuple[str, str]] = {}
 
     def parse(self, body: str) -> list[Listed]:
         raise NotImplementedError
@@ -289,7 +316,31 @@ class ArticleBoardSource(ExpertSource):
                 self.index_url, self.base_url, self.author, season, week, self.article_kind,
                 self.link_must, self.headline_must, self.never, accept=self._accepts)
             self._weeks[week] = (self.parse(body), url, None) if body else ([], None, reason)
+            if body:
+                self._bodies[week] = (url, body)
         return self._weeks[week]
+
+    def body_region(self, body: str) -> str:
+        """The part of the page that is the writer's own text, for quotes.
+        Default: the first ``<article>`` element."""
+        m = re.search(r"<article\b[^>]*>(.*?)</article>", body, re.S | re.I)
+        return m.group(1) if m else ""
+
+    def mentions(self, week: int, players: Sequence[Player]) -> list:
+        """Quotes naming ``players``, from the article this board already read.
+
+        The same name-matching inversion ``waivers/columns.py`` uses (only names
+        already in the pool can match), run on the page this source fetched for
+        its board, so the column is downloaded once rather than twice.
+        """
+        self.article(week)
+        if week not in self._bodies:
+            return []
+        url, body = self._bodies[week]
+        from dataclasses import replace
+        from ..waivers.columns import extract_mentions
+        found = extract_mentions(prose(self.body_region(body)), self.author, url, players)
+        return [replace(m, snippet=m.snippet.replace(WORD_JOINER, "")) for m in found]
 
     def entry(self, item: Listed, position_list: Sequence[Listed], index: int,
               scoring: str, superflex: bool) -> Optional[BoardEntry]:
@@ -331,6 +382,12 @@ class EisenbergWaivers(ArticleBoardSource):
     def parse(self, body):
         return parse_eisenberg(body)
 
+    def body_region(self, body):
+        # CBS: the column is <article id="Article-body">; later <article>s are
+        # the related-stories feed.
+        m = re.search(r'<article id="Article-body"[^>]*>(.*?)</article>', body, re.S)
+        return m.group(1) if m else super().body_region(body)
+
 
 class BooneWaivers(ArticleBoardSource):
     id, short, kind = "boone_waivers", "Boone", "waiver"
@@ -345,6 +402,18 @@ class BooneWaivers(ArticleBoardSource):
 
     def parse(self, body):
         return parse_boone_waivers(body)
+
+    def body_region(self, body):
+        # Yahoo's first <article> is only the header (no body text), and the
+        # rest of the page carries "Recommended Stories" headlines that name
+        # players too. His column runs from the first section heading through
+        # the drop-candidates list.
+        start = body.find('<h3 class="heading"')
+        if start < 0:
+            return ""
+        drops = body.find("Drop candidates", start)
+        end = body.find("</ul>", drops) if drops >= 0 else -1
+        return body[start:end + 5] if end >= 0 else body[start:]
 
 
 class ChartSource(ArticleBoardSource):

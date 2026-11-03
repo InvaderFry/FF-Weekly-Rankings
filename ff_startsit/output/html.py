@@ -18,7 +18,7 @@ from ..models import PlayerScore, Recommendation
 from .board import (board_cell, boards_legend, section_boards, waiver_cell,
                     waiver_legend)
 from .render import (DEPTH_LEGEND, LINEUP_UNSCORED_NOTE, UNRANKED_NOTE,
-                     flat_signal_note, lineup_unscored_keys, analyst_conflict_text)
+                     flat_signal_note, lineup_unscored_keys, conflict_lines, section_cell)
 from ..sources.journalists import JournalistView
 
 if TYPE_CHECKING:                    # the duck-typed bundle, named for the reader
@@ -134,7 +134,7 @@ def _position_table(rec: Recommendation) -> str:
                f"<td>{escape(s.player.position)}</td>",
                f"<td>{escape(s.player.team or 'BYE')}</td>",
                f"<td class='num'>{escape(verdict)}</td>"]
-        tds += [f"<td class='num expert'>{escape(board_cell(b, s.player.key))}</td>"
+        tds += [f"<td class='num expert'>{escape(section_cell(rec, b, s))}</td>"
                 for b in boards]
         for name in signal_names:
             n = s.normalized.get(name)
@@ -166,13 +166,9 @@ def _position_section(pos: str, rec: Recommendation) -> str:
         parts.append(f"<div class='callout'>⚠️ <strong>Close call</strong>{notes}</div>")
     elif rec.scores and rec.scores[0].final is not None:
         parts.append(f"<div class='start'>✅ Start: {escape(rec.scores[0].player.name)}</div>")
-    for conflict in rec.analyst_conflicts:
-        if conflict.material:
-            parts.append(f"<div class='callout analyst'>⚠️ {escape(analyst_conflict_text(conflict))}</div>")
     parts.append(_position_table(rec))
-    for conflict in rec.analyst_conflicts:
-        if not conflict.material:
-            parts.append(f"<div class='analyst-note'>{escape(analyst_conflict_text(conflict))}</div>")
+    for line in conflict_lines(rec):
+        parts.append(f"<div class='analyst-note'>{escape(line)}</div>")
     if rec.analyst_note:
         parts.append(f"<div class='analyst-note'>{escape(rec.analyst_note)}</div>")
     return "".join(parts)
@@ -446,7 +442,9 @@ def _waiver_lists(bundle) -> str:
             out.append(f"<li>Week {escape(str(gap.week))}: only {gap.available} "
                        f"healthy {escape(gap.position)} for {gap.needed} slot(s)</li>")
         out.append("</ul>")
-    quoted = [(t, m) for t in bundle.adds for m in t.mentions]
+    # With the writers' board on, quotes sit under the board instead.
+    quoted = [] if getattr(bundle, "expert_boards", None) else \
+        [(t, m) for t in bundle.adds for m in t.mentions]
     if quoted:
         out.append("<h3>What the writers said</h3>")
         for target, mention in quoted:
@@ -487,6 +485,12 @@ def _waiver_expert_board(bundle) -> str:
     from ..waivers.board import board_reasons
     for reason in board_reasons(boards):
         out.append(f"<p class='note'>{escape(reason)}</p>")
+    quoted = [(row, q) for row in bundle.expert_rows for q in row.quotes]
+    if quoted:
+        out.append("<h4>Why, in their words</h4>")
+        for row, q in quoted:
+            out.append(f"<blockquote class='quote'><strong>{escape(row.player.name)}</strong> — "
+                       f"<a href='{escape(q.url)}'>{escape(q.author)}</a>: {escape(q.snippet)}</blockquote>")
     return "".join(out)
 
 

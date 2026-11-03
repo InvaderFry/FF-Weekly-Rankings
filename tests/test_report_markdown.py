@@ -751,11 +751,11 @@ def test_analyst_markdown_warning_note_and_silence():
     assert 'Justin Boone' not in render_markdown(rec)
     conflict = AnalystConflict('Justin Boone', 'RB', 'Alpha', 'Bravo', 19, 6, False, True)
     rec.analyst_conflicts = [conflict]
-    assert '> ⚠️ Justin Boone disagrees: he starts Bravo (his RB6) over Alpha (his RB19).' in render_markdown(rec)
+    assert '_▲ Justin Boone disagrees: he starts Bravo (his RB6) over Alpha (his RB19)._' in render_markdown(rec)
     rec.analyst_conflicts = [replace(conflict, leader_rank=8, material=False)]
     md = render_markdown(rec)
-    assert 'within 2 spots (Alpha RB8, Bravo RB6), edge to Bravo.' in md
-    assert '> ⚠️ Justin Boone' not in md
+    # Minor inversions are readable in the Boone column; no sentence for them.
+    assert 'within 2 spots' not in md and 'Justin Boone' not in md
     rec.analyst_conflicts = [replace(conflict, boundary=True)]
     assert 'would flip your last starting spot: Bravo (his RB6)' in render_markdown(rec)
 
@@ -789,10 +789,10 @@ def test_analyst_markdown_keeps_apostrophes_unescaped():
     assert '&#x27;' not in md and '&amp;' not in md
     assert "he starts Ja'Marr Chase (his RB6) over D'Andre Swift (his RB19)." in md
 
+    # A minor inversion no longer gets a sentence (the Boone column shows it).
     rec.analyst_conflicts = [replace(conflict, leader_rank=8, material=False)]
     md = render_markdown(rec)
-    assert '&#x27;' not in md
-    assert "(D'Andre Swift RB8, Ja'Marr Chase RB6), edge to Ja'Marr Chase." in md
+    assert '&#x27;' not in md and 'edge to' not in md
 
     rec.analyst_conflicts = []
     rec.analyst_note = "Justin Boone has not posted D'Andre Swift's position yet."

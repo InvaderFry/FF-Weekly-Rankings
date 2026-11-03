@@ -360,3 +360,71 @@ def test_no_board_section_when_the_board_is_off():
     from ff_startsit.waivers.render import render_waiver_digest
     md = render_waiver_digest(9, [WaiverBundle(label="x", scoring="ppr", week=9)])
     assert "What the writers say" not in md and "ff-board" not in md
+
+
+# --- quotes come from the board's own articles (Phase 5) -----------------------
+
+def test_boone_quotes_come_from_his_column_not_the_sidebar():
+    """Yahoo's first <article> is only the header, and the page carries
+    "Recommended Stories" headlines naming players. Quotes come from his own
+    section headings through his drop list, nothing after."""
+    body = page("boone_waiver_column.html") + (
+        "<div><h3>Recommended Stories</h3><p>Zeke Sidebar storms the wire.</p></div>")
+    site = Site({"/author/justin-boone/": page("yahoo_index_boone.html"),
+                 "week-9-fantasy-football-waiver-wire": body})
+    src = BooneWaivers(ArticleFetcher(session=site), season=2026)
+    pool = [Player("k", "Kirk Cousins", "LV", "QB"), Player("c", "Zeke Sidebar", "DEN", "RB")]
+    quotes = src.mentions(9, pool)
+    assert [q.player_key for q in quotes] == ["k"]
+    assert quotes[0].author == "Justin Boone" and "yahoo.com" in quotes[0].url
+    # Whole sentence: "No. 3" is not a full stop, and no invisible joiner leaks out.
+    assert quotes[0].snippet.startswith("Kirk Cousins is 56% rostered but would be the No. 3 QB add")
+    assert "\u2060" not in quotes[0].snippet
+    fetches = len(site.calls)
+    src.fetch(pool, 9, "ppr")
+    assert len(site.calls) == fetches          # the board reuses the same download
+
+
+def test_quotes_are_empty_when_the_article_is_not_up():
+    src = EisenbergWaivers(ArticleFetcher(session=Site({})), season=2026)
+    assert src.mentions(9, [Player("w", "Mike Washington Jr.", "LV", "RB")]) == []
+
+
+def test_board_rows_carry_one_quote_per_writer():
+    from ff_startsit.waivers.models import ColumnMention
+    fas = [Player("a", "Alpha Back", "KC", "RB")]
+    boards = [_board("boone_waivers", {"a": BoardEntry(pos_rank=1)})]
+    mentions = {"a": [ColumnMention("Justin Boone", "u1", "a", "first"),
+                      ColumnMention("Justin Boone", "u1", "a", "second"),
+                      ColumnMention("Jamey Eisenberg", "u2", "a", "third"),
+                      ColumnMention("Jamey Eisenberg", "u2", "a", "")]}
+    row = build_board(fas, boards, mentions=mentions)[0]
+    assert [(q.author, q.snippet) for q in row.quotes] == [("Justin Boone", "first"),
+                                                           ("Jamey Eisenberg", "third")]
+
+
+def test_quotes_render_under_the_board_and_the_old_section_steps_aside():
+    from ff_startsit.output.html import build_waivers_html
+    from ff_startsit.waivers.models import ColumnMention
+    from ff_startsit.waivers.render import render_waiver_digest
+    b = bundle_with_board(1)
+    b.expert_rows[0].quotes = [ColumnMention("Justin Boone", "https://y/a", "1", "He's the add.")]
+    md = render_waiver_digest(9, [b], generated_on="2026-11-03")
+    assert "**Why, in their words**" in md
+    assert "- **D'Andre 1** — [Justin Boone](https://y/a): “He's the add.”" in md
+    assert "What the writers said" not in md
+    page_ = build_waivers_html(9, [b], generated_on="2026-11-03")
+    assert "Why, in their words" in page_ and "What the writers said" not in page_
+
+
+def test_prose_keeps_sentences_and_drops_headings_lists_and_cards():
+    """Found live: stripping every tag ran headings and list items into one
+    "sentence", so every quote read "Key injuries to consider Lamar Jackson…"."""
+    from ff_startsit.boards.writers import prose
+    region = ("<h3>Key injuries to consider</h3><ul><li><div><p>Lamar Jackson (thumb)</p></div></li></ul>"
+              "<div class='card'>Seth McGowan RB IND Indianapolis</div>"
+              "<p>Seth McGowan took over the backfield and should be added in every league this week</p>"
+              "<p>He's the No. 2 RB add behind Washington in my rankings, and worth a real bid.</p>")
+    text = prose(region)
+    assert "Lamar Jackson" not in text and "Indianapolis" not in text
+    assert text.startswith("Seth McGowan took over the backfield and should be added in every league this week.")
