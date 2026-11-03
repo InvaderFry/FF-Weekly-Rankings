@@ -16,6 +16,7 @@ import requests
 from ..data.matching import match_rows
 from ..models import Player
 from ..season import season_year
+from ..net import HEADERS
 from ..sources.ecr import parse_api_response
 
 _DATA = re.compile(r"var\s+ecrData\s*=\s*(\{.*?\})\s*;", re.DOTALL)
@@ -52,7 +53,7 @@ class SeasonValueProvider:
 
     def fetch(self, players: Sequence[Player], scoring: str) -> dict[str, float]:
         response = self.session.get(URLS[scoring], timeout=self.timeout,
-                                    headers={"User-Agent": "Mozilla/5.0 (ff-startsit)"})
+                                    headers=HEADERS)
         response.raise_for_status()
         rows = parse_season_rows(response.text, scoring, datetime.now(timezone.utc))
         matches = match_rows(players, rows)

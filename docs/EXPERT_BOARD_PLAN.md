@@ -1,6 +1,6 @@
 # Expert board plan
 
-Status: **agreed in discussion, not started.** Open questions are at the end.
+Status: **agreed; Phases 0–1 in progress.**
 Site findings below were verified against live pages on 2026-11-02.
 
 ## Goal
@@ -165,19 +165,25 @@ because code-block tables wrap badly on a phone.
 
 ## Phases
 
-### 0. Fixtures and request hygiene
-- Capture one example of each page type into `tests/fixtures/boards/`, trimmed to
-  the tables, headings, bylines and JSON-LD the parsers read. No full articles go
-  in the repo.
-- Add the shared honest User-Agent and switch `analysts.py` and `columns.py` to it.
+### 0. Request hygiene
+- One honest User-Agent in `ff_startsit/net.py`, used by every outbound request,
+  replacing the spoofed desktop-Chrome strings in `analysts.py` and `columns.py`.
+- Fixtures land **with the phase whose parser reads them**, in
+  `tests/fixtures/boards/`, trimmed to the few rows, headings, bylines and
+  JSON-LD each parser needs. No full articles go in the repo.
 
 ### 1. The `boards` package, wrapping what exists
 - `ExpertBoard`, `ExpertSource`, and the matching helpers.
-- Sources: `fantasypros_weekly` (from `ECRSignal` raw values), `fantasypros_ros`
-  (from `waivers/season_values.py`), and `boone_weekly` (wraps `AnalystFetcher`).
-- `output/board.py` with Markdown, HTML and Discord renderers.
-- Done when the digest and dashboard show FP | Boone beside the blend for every
-  position, with the existing tests still passing.
+- Sources: `fantasypros_weekly` (built from the ECR signal's raw positional
+  ranks, so it costs no extra request) and `boone_weekly` (wraps
+  `AnalystFetcher`; still enabled by `FF_ANALYSTS=boone`). `fantasypros_ros`
+  moves to Phase 3, where it is first used.
+- `output/board.py` holds the shared column helpers. Markdown and HTML position
+  tables gain one column per board; Discord gets its compact form in Phase 2.
+- Sample (preseason fill) runs show no expert columns, because sample ranks
+  aren't anyone's real opinion.
+- Done when the digest, dashboard, `rank` and ChatOps `/rank` show FP | Boone
+  beside the blend for every position, with the existing tests still passing.
 
 ### 2. Start/sit with CBS (Thu, Sat, Sun)
 - `cbs_consensus` source: per-position pages, average plus per-analyst columns,
@@ -256,13 +262,12 @@ shift together at daylight saving, so the gaps hold year-round.
 - In redraft, ROS value and trade value are treated as the same thing.
 - "CBS average" means the staff consensus on `/fantasy/football/rankings/`.
 
-## Open questions
+## Answered questions
 
-1. **Start/sit columns.** CBS also gives Eisenberg's and Richard's individual
-   weekly ranks. Show them as well (FP | Boone | CBS | Eisenberg | Richard), or
-   only the CBS average? Proposal: average only on Discord, all five on Pages.
-2. **Half-PPR leagues.** CBS has no half-PPR weekly list. For a half-PPR league,
-   show CBS's PPR list labelled "(PPR)", or leave the column blank? Which of the
-   owner's leagues are half-PPR?
-3. **Retry runs.** OK for the Tuesday and Wednesday retries to post a second
-   Discord message when they find something the first run missed?
+1. **Start/sit columns.** Discord shows the CBS average only; Pages shows all
+   five (FP | Boone | CBS | Eisenberg | Richard).
+2. **Half-PPR leagues.** CBS has no half-PPR weekly list, so those leagues show
+   CBS's PPR list with the column labelled **"CBS (PPR)"**. It's never blank and
+   never passed off as half-PPR.
+3. **Retry runs.** Yes: the Tuesday and Wednesday retries post a second Discord
+   message when they find something the first run missed.
