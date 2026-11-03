@@ -161,10 +161,11 @@ def build_sheet(bundle, my_players: Sequence[Player], sources: Sequence, week: i
 
 
 def sheets_read(sheets) -> list[str]:
-    """Chart sources read in any league (for the retry marker)."""
+    """Chart sources and positions read in any league (for the retry marker)."""
+    from .board import read_sources
     seen: set[str] = set()
     for sheet in sheets:
-        for board in sheet.boards:
-            if board.source_id != "fantasypros_ros" and ALL_POSITIONS not in board.unavailable:
-                seen.add(board.source_id)
+        # Per position: Boone's charts post one at a time, so "read Boone" is
+        # the same claim before and after the TE chart lands.
+        seen.update(read_sources(sheet.boards, positions=SKILL))
     return sorted(seen)

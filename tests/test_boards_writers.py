@@ -286,6 +286,19 @@ def test_report_has_news_without_a_marker_only_posts_once():
     assert not report_has_news("# digest", "an earlier post this week")
 
 
+def test_a_digest_with_the_boards_off_still_tells_weeks_apart():
+    """FF_ANALYSTS unset is the default: no writer board, so the digest used
+    to carry no marker, and any earlier open issue (last week's) suppressed
+    Discord, the issue and the deploy for every week after it."""
+    from ff_startsit.waivers.models import WaiverBundle
+    from ff_startsit.waivers.render import render_waiver_digest
+    week8 = render_waiver_digest(8, [WaiverBundle(label="a", scoring="ppr", week=8)])
+    week9 = render_waiver_digest(9, [WaiverBundle(label="a", scoring="ppr", week=9)])
+    assert "week=9 read= -->" in week9
+    assert report_has_news(week9, week8)
+    assert not report_has_news(week9, week9)              # the retry is still quiet
+
+
 def test_publish_news_writes_the_step_output(tmp_path):
     from ff_startsit.workflow import publish_news
     current = tmp_path / "waivers.md"
@@ -359,7 +372,8 @@ def test_no_board_section_when_the_board_is_off():
     from ff_startsit.waivers.models import WaiverBundle
     from ff_startsit.waivers.render import render_waiver_digest
     md = render_waiver_digest(9, [WaiverBundle(label="x", scoring="ppr", week=9)])
-    assert "What the writers say" not in md and "ff-board" not in md
+    assert "What the writers say" not in md
+    assert "week=9 read= -->" in md        # the retry gate still needs the week
 
 
 # --- quotes come from the board's own articles (Phase 5) -----------------------

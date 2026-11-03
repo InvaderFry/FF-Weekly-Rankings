@@ -223,7 +223,9 @@ def test_markdown_sheet_verdicts_and_marker():
     assert "| Player | Pos | Team | Richard | Boone | FP ROS | Charts |" in md
     assert "| My Qb | QB | KC | 10 · QB14 | 30 · QB4 | #40 | Boone much higher (QB4 vs QB14) |" in md
     assert "Send Gibbs to Rival FC for Their Wr — Richard −16 · Boone −14" in md
-    assert "read=boone_trade_values,richard_chart -->" in md
+    assert ("read=boone_trade_values:QB,boone_trade_values:RB,boone_trade_values:TE,"
+            "boone_trade_values:WR,richard_chart:QB,richard_chart:RB,richard_chart:TE,"
+            "richard_chart:WR -->") in md
 
 
 def test_html_values_page_is_in_the_shared_nav():
@@ -302,3 +304,51 @@ def test_optional_and_never_published_pages_do_not_block(tmp_path, monkeypatch):
     out = restore_pages("https://x", site, ["values.html"], optional=True,
                         session=PagesSite({"values.html": ConnectionError("down")}))
     assert out["values.html"] == "skipped" and verify_site(site)
+
+
+def test_a_fresh_site_takes_its_first_deploy(tmp_path, monkeypatch):
+    """Each workflow requires the page only the other builds; on a site that
+    has never deployed both answer 404, and neither could ever go first."""
+    from ff_startsit.workflow import restore_pages, verify_site
+    monkeypatch.setenv("GITHUB_OUTPUT", str(tmp_path / "out"))
+    monkeypatch.setenv("GITHUB_STEP_SUMMARY", str(tmp_path / "sum"))
+    site = tmp_path / "site"
+    site.mkdir()
+    (site / "index.html").write_text("built this run")
+    assert restore_pages("https://x", site, ["waivers.html"], session=PagesSite({}))["waivers.html"] == "absent"
+    restore_pages("https://x", site, ["values.html"], optional=True, session=PagesSite({}))
+    assert verify_site(site)
+    assert sorted(p.name for p in site.iterdir()) == ["index.html"]   # no marker uploaded
+
+
+def test_an_absent_page_never_excuses_an_empty_site(tmp_path, monkeypatch):
+    from ff_startsit.workflow import restore_pages, verify_site
+    monkeypatch.setenv("GITHUB_OUTPUT", str(tmp_path / "out"))
+    monkeypatch.setenv("GITHUB_STEP_SUMMARY", str(tmp_path / "sum"))
+    site = tmp_path / "site"
+    site.mkdir()
+    restore_pages("https://x", site, ["index.html", "waivers.html"], session=PagesSite({}))
+    assert not verify_site(site)
+
+
+def test_a_retry_that_finds_a_missing_boone_chart_is_news():
+    """Boone's charts post one at a time: a first run missing TE and a retry
+    that found it used to record the same marker, suppressing the retry."""
+    from ff_startsit.boards.models import ALL_POSITIONS, ExpertBoard
+    from ff_startsit.waivers.board import board_marker, report_has_news
+    from ff_startsit.waivers.values import sheets_read
+
+    class Sheet:
+        def __init__(self, boards):
+            self.boards = boards
+
+    partial = ExpertBoard("boone_values", "Boone", "Boone", unavailable={"TE": "not found"})
+    full = ExpertBoard("boone_values", "Boone", "Boone")
+    first = board_marker(2026, 9, sheets_read([Sheet([partial])]))
+    retry = board_marker(2026, 9, sheets_read([Sheet([full])]))
+    assert first != retry
+    assert report_has_news(retry, first)
+    assert not report_has_news(first, retry)             # fewer: keep the better post
+    assert not report_has_news(retry, retry)
+    gone = ExpertBoard("boone_values", "Boone", "Boone", unavailable={ALL_POSITIONS: "down"})
+    assert sheets_read([Sheet([gone])]) == []

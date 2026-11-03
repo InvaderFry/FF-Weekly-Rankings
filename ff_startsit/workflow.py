@@ -51,6 +51,12 @@ REQUIRED_PAGES = ("index.html", "waivers.html")
 #: Left in the site directory when a page couldn't be restored. Read by
 #: ``verify_site`` as a missing page, so the deploy is skipped.
 RESTORE_FAILED = ".restore-failed-"
+#: Left in the site directory when the live site answered 404 for a page:
+#: it was never published, so a deploy without it deletes nothing. Read by
+#: ``verify_site`` as excusing that required page — otherwise a brand-new
+#: site could never take its first deploy, since each workflow requires the
+#: page only the other one builds.
+RESTORE_ABSENT = ".restore-absent-"
 
 
 def restore_pages(base_url, directory, pages, session=None, optional=False):
@@ -95,6 +101,7 @@ def restore_pages(base_url, directory, pages, session=None, optional=False):
             target.write_text(resp.text, encoding="utf-8")
             outcome[page] = "restored"
         elif status == 404:
+            (directory / f"{RESTORE_ABSENT}{page}").write_text("404")
             outcome[page] = "absent"
         elif optional:
             outcome[page] = "skipped"
@@ -109,8 +116,18 @@ def restore_pages(base_url, directory, pages, session=None, optional=False):
 
 def verify_site(directory):
     directory = Path(directory)
-    missing = [name for name in REQUIRED_PAGES
-               if not (directory / name).is_file() or not (directory / name).stat().st_size]
+    absent = set()
+    for marker in directory.glob(RESTORE_ABSENT + "*"):
+        absent.add(marker.name[len(RESTORE_ABSENT):])
+        marker.unlink()                     # never uploaded with the site
+    built = [name for name in SITE_PAGES
+             if (directory / name).is_file() and (directory / name).stat().st_size]
+    # A required page the live site confirmed it has never served is excused:
+    # deploying without it deletes nothing. Something must still have been
+    # built, so an empty directory never replaces a live site.
+    missing = [name for name in REQUIRED_PAGES if name not in built and name not in absent]
+    if not built:
+        missing = missing or list(REQUIRED_PAGES)
     missing += [m.name[len(RESTORE_FAILED):] for m in sorted(directory.glob(RESTORE_FAILED + "*"))]
     complete = not missing
     with open(os.environ["GITHUB_OUTPUT"], "a") as output:

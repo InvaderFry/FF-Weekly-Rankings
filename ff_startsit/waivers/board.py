@@ -101,10 +101,25 @@ def board_reasons(boards: Sequence[ExpertBoard]) -> list[str]:
     return [b.unavailable[ALL_POSITIONS] for b in boards if ALL_POSITIONS in b.unavailable]
 
 
-def read_sources(boards: Sequence[ExpertBoard]) -> list[str]:
-    """Writer boards whose article was found and read this run."""
-    return [b.source_id for b in boards
-            if b.source_id != FP_ROS_ID and ALL_POSITIONS not in b.unavailable]
+def read_sources(boards: Sequence[ExpertBoard],
+                 positions: Optional[Sequence[str]] = None) -> list[str]:
+    """Writer boards read this run, as retry-marker ids.
+
+    Without ``positions`` a board is one id, read or not: right for the
+    Tuesday articles, which arrive whole. With ``positions`` (a source that
+    serves one chart per position, like Boone's values) the id is per position
+    read, ``source:POS`` — otherwise a run missing TE and the retry that found
+    it record the same id, and the gate suppresses the complete report.
+    """
+    ids: list[str] = []
+    for b in boards:
+        if b.source_id == FP_ROS_ID or ALL_POSITIONS in b.unavailable:
+            continue
+        if positions is None:
+            ids.append(b.source_id)
+        else:
+            ids += [f"{b.source_id}:{pos}" for pos in positions if pos not in b.unavailable]
+    return ids
 
 
 # --- the retry gate ------------------------------------------------------------
@@ -115,7 +130,7 @@ def read_sources(boards: Sequence[ExpertBoard]) -> list[str]:
 # recorded in the digest itself, as an HTML comment the issue keeps, so the
 # retry can compare against exactly what was published.
 
-_MARKER = re.compile(r"<!-- ff-board season=(\d+) week=(\d+) read=([\w,]*) -->")
+_MARKER = re.compile(r"<!-- ff-board season=(\d+) week=(\d+) read=([\w,:]*) -->")
 
 
 def board_marker(season: int, week: int, read: Iterable[str]) -> str:
@@ -151,9 +166,10 @@ def has_news(read: Iterable[str], previous_text: Optional[str], season: int, wee
 def report_has_news(current_text: str, previous_text: Optional[str]) -> bool:
     """``has_news`` read straight off two rendered digests.
 
-    A digest with no board marker (the board is switched off) is news only
-    when nothing has been published yet, so a retry with the board off never
-    reposts the same report.
+    Every digest carries a marker, boards on or off: with them off it reads
+    ``read=`` (nothing), so a retry is not news but next week's report is. A
+    digest with no marker at all (rendered before the marker was universal) is
+    news only when nothing has been published yet.
     """
     match = _MARKER.search(current_text or "")
     if match is None:

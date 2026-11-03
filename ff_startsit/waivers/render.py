@@ -294,10 +294,13 @@ def render_waiver_digest(week: int, bundles: Sequence[WaiverBundle],
                 sources.append(source)
     if sources:
         lines += ["**Sources**: " + ", ".join(f"[{a}]({u})" for a, u in sources), ""]
-    if any(b.expert_boards for b in bundles):
-        # Invisible in the rendered issue; read back by the Tuesday retry gate.
-        from ..season import season_year
-        lines += [board_marker(season_year(), week, bundles_read(bundles)), ""]
+    # Invisible in the rendered issue; read back by the Tuesday retry gate.
+    # Written even with every board off (``read=``): the season/week it carries
+    # is what tells next week's report from a retry of this one, and without it
+    # the default config (FF_ANALYSTS unset) let last week's open issue
+    # suppress every report after it.
+    from ..season import season_year
+    lines += [board_marker(season_year(), week, bundles_read(bundles)), ""]
     return "\n".join(lines)
 
 
