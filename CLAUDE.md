@@ -393,6 +393,20 @@ name is real — it is the attribution that is false. If CBS ranks are ever
 wanted, the only honest route is a data endpoint that names the analyst in its
 response, so the fetcher can fail closed the way both ECR transports do.
 
+**That route exists, and `boards/cbs.py` uses it** (found 2026-11-02). The
+*consensus* page, `/rankings/<ppr|standard>/<POS>/weekly/` with no slug, is one
+server-rendered table carrying every analyst's rank in its own column, and its
+header **names** each analyst in column order (Eisenberg, Richard, Cummings).
+`RK` is their average, sorted. So that page is attributable where the slug pages
+are not, and the parser fails closed: no named analysts, a row whose analyst
+cells don't match the header count, a title naming another position, or (for
+PPR) a title without "PPR" refuses the page. The page never states its week,
+so `week_mismatch` checks its matchups against the schedule. CBS has no
+half-PPR list; its `half-ppr` URL serves an analyst-less table, so half-PPR
+leagues read the PPR list under a "(PPR)" header. The slug pages above are still
+a trap, and the FantasyPros statement stands: no CBS analyst is in *that*
+directory.
+
 `ecr._matches_filters` is the guard underneath all of that, and it **fails
 closed on both transports**, including when the response names no `filters` at
 all. A response that doesn't say which experts it covers is not evidence that it
@@ -420,6 +434,13 @@ the verified shape of every source page live in `docs/EXPERT_BOARD_PLAN.md`.
 - `fantasypros_weekly` costs no request: the `ecr` signal's raw value already
   *is* the FantasyPros positional rank. It's built from per-position recs only,
   never the pooled FLEX pass, whose raw value is a cross-position rank.
+- `cbs.py` adds three boards (CBS consensus, Eisenberg, Richard) when
+  `FF_ANALYSTS` includes `cbs` (it takes a comma list: `boone,cbs`). One
+  `CbsFetcher` is shared across leagues and caches each page for an hour. See
+  the CBS paragraph above for why this page is attributable.
+- Discord carries only FP, Boone and the CBS average, as one comparison line
+  per close call (`close_call_comparison`); every other renderer shows every
+  board.
 - Sample (preseason fill) runs get no boards (`Recommendation.sample_data`).
 - `section_boards` drops a column that reads nobody in that section, so a
   missing list doesn't print a column of dashes in every table.

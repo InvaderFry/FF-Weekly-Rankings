@@ -125,7 +125,8 @@ class LeagueBundle:
 def rank_each_position(settings: Settings, players: Sequence[Player], week: int,
                        log: bool = False,
                        signals: Optional[Sequence] = None,
-                       analyst_fetcher: Optional[AnalystFetcher] = None) -> dict[str, Recommendation]:
+                       analyst_fetcher: Optional[AnalystFetcher] = None,
+                       cbs_fetcher=None) -> dict[str, Recommendation]:
     """Rank each position group once. One scoring pass = one set of API calls.
 
     The signal instances are built once and reused across positions so each
@@ -180,20 +181,72 @@ def rank_each_position(settings: Settings, players: Sequence[Player], week: int,
                     f"{'full' if settings.scoring == 'ppr' else 'half'}-PPR "
                     f"{'DST' if pos in {'DEF', 'DST'} else pos} rankings yet.")
             rec.source_status.append(status)
-    attach_boards(recs.values(), boone_ranks)
+    cbs_boards = []
+    if settings.cbs_rankings and not sample:
+        cbs_boards = cbs_boards_for(settings, players, week, cbs_fetcher,
+                                    schedule=_signal_schedule(signals))
+        line = cbs_status(settings, cbs_boards, cbs_fetcher)
+        for rec in recs.values():
+            rec.source_status.append(line)
+    attach_boards(recs.values(), boone_ranks, cbs_boards)
     return recs
 
 
-def attach_boards(recs, boone_ranks=None) -> None:
+def _signal_schedule(signals):
+    """The week's schedule the signals already share, so CBS's matchup check
+    reads the same games Vegas and weather do (and costs no extra request)."""
+    for signal in signals or ():
+        schedule = getattr(signal, "schedule", None)
+        if schedule is not None:
+            return schedule
+    return None
+
+
+def cbs_boards_for(settings: Settings, players: Sequence[Player], week: int,
+                   fetcher=None, schedule=None) -> list:
+    """CBS consensus + Eisenberg + Richard boards. Never raises: an annotation
+    must not sink the start/sit run beside it."""
+    from .boards.cbs import CbsFetcher
+    try:
+        fetcher = fetcher or CbsFetcher(settings.data_dir, schedule=schedule)
+        return fetcher.fetch(players, week, settings.scoring)
+    except Exception as exc:  # pragma: no cover - fetch already degrades per position
+        print(f"warning: CBS rankings unavailable: {exc}", file=sys.stderr)
+        return []
+
+
+def cbs_status(settings: Settings, boards, fetcher=None) -> tuple[tuple, str]:
+    """One Data status line for the CBS columns in this league."""
+    label = settings.league_label or "This league"
+    which = "PPR list (CBS has no half-PPR list)" if settings.scoring == "half" else \
+        ("standard list" if settings.scoring == "std" else "PPR list")
+    consensus = boards[0] if boards else None
+    if consensus is None:
+        return ("board", "cbs", settings.league_label), f"{label}: CBS rankings unavailable"
+    line = f"{label}: CBS staff consensus, {which}"
+    if consensus.fetched_at:
+        line += (f", read {consensus.fetched_at:%Y-%m-%d %H:%M} UTC "
+                 "(fetch time, not CBS's update time)")
+    reasons = sorted(set(consensus.unavailable.values()))
+    if reasons:
+        line += "; " + "; ".join(reasons)
+    if fetcher is not None:
+        line += "".join(f"; {note}" for note in sorted(set(fetcher.status.values())))
+    return ("board", "cbs", settings.league_label), line
+
+
+def attach_boards(recs, boone_ranks=None, extra_boards=()) -> None:
     """Hang the expert boards on every recommendation in one run.
 
     Display-only: the boards sit beside the blend and never feed it (see
     ``ff_startsit/boards``). One board object per source is shared across the
     run's sections; each renderer reads only the players in front of it.
+    Column order is FP, Boone, then CBS consensus, Eisenberg, Richard.
     """
     recs = list(recs)
     boards = [b for b in (fantasypros_weekly(recs), boone_board_or_none(boone_ranks))
               if b is not None]
+    boards += [b for b in extra_boards if b is not None]
     for rec in recs:
         rec.expert_boards = list(boards)
 
@@ -259,7 +312,8 @@ def rank_flex_pool(settings: Settings, players: Sequence[Player], week: int,
 def score_week(settings: Settings, players: Sequence[Player], week: int,
                log: bool = False,
                slots: Optional[Sequence[str]] = None,
-               analyst_fetcher: Optional[AnalystFetcher] = None) -> WeekScores:
+               analyst_fetcher: Optional[AnalystFetcher] = None,
+               cbs_fetcher=None) -> WeekScores:
     """One signal set, one per-position pass, one pooled FLEX pass.
 
     ``log`` appends the per-position decisions to the results log, so the
@@ -284,7 +338,9 @@ def score_week(settings: Settings, players: Sequence[Player], week: int,
     signals = build_signals(settings)
     recs = rank_each_position(settings, players, week, log=log, signals=signals,
                               **({"analyst_fetcher": analyst_fetcher}
-                                 if analyst_fetcher is not None else {}))
+                                 if analyst_fetcher is not None else {}),
+                              **({"cbs_fetcher": cbs_fetcher}
+                                 if cbs_fetcher is not None else {}))
     flex, note = rank_flex_pool(settings, players, week, signals=signals)
     ws = WeekScores(recs=recs, flex=flex, flex_note=note)
     flag_starter_boundaries(settings, recs, build_lineup(

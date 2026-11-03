@@ -9,6 +9,8 @@ what stops that.
 
 from __future__ import annotations
 
+from typing import Optional
+
 from ..boards.models import BoardEntry, ExpertBoard
 from ..models import Recommendation
 
@@ -46,3 +48,36 @@ def boards_legend(boards: list[ExpertBoard]) -> str:
     """
     parts = [f"{b.header}: {b.label}" for b in boards]
     return "Ranks by position — " + "; ".join(parts) + "."
+
+
+#: The columns Discord carries, in order. Discord is read on a phone, so it
+#: gets the three consensus-level views only; Pages and the digest carry every
+#: board, Eisenberg's and Richard's own columns included.
+DISCORD_BOARD_IDS = ("fantasypros_weekly", "boone_weekly", "cbs_consensus")
+
+
+def close_call_comparison(rec: Recommendation,
+                          board_ids=DISCORD_BOARD_IDS) -> Optional[str]:
+    """One line putting the top two side by side in each source's ranks, e.g.
+    "Gibbs vs Robinson — FP 1–2 · Boone 2–1 · CBS 1–3".
+
+    Only for the top two scored players, the pair the close-call flag is about.
+    A source that ranked neither is left out; None when no source ranked either.
+    """
+    top = [s for s in rec.scores if s.final is not None][:2]
+    if len(top) < 2:
+        return None
+    a, b = top
+    parts = []
+    by_id = {board.source_id: board for board in rec.expert_boards}
+    for board_id in board_ids:
+        board = by_id.get(board_id)
+        if board is None:
+            continue
+        ra, rb = board_cell(board, a.player.key), board_cell(board, b.player.key)
+        if ra == BLANK and rb == BLANK:
+            continue
+        parts.append(f"{board.header} {ra}–{rb}")
+    if not parts:
+        return None
+    return f"{a.player.name} vs {b.player.name} — " + " · ".join(parts)

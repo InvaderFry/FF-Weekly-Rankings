@@ -2,8 +2,9 @@ name: Weekly start/sit report
 
 # Posts your lineup + rankings as a GitHub Issue, publishes an HTML dashboard to
 # GitHub Pages, and (if configured) pings Discord with the summary + dashboard link.
-# Runs Thursday morning (before TNF) and twice Sunday (before the early games),
-# and can be triggered manually from the GitHub mobile app (Actions -> Run workflow).
+# Runs Thursday morning (before TNF), Saturday (for a Saturday-night read), and
+# twice Sunday (before the early games), and can be triggered manually from the
+# GitHub mobile app (Actions -> Run workflow).
 #
 # Every cron here is set by its WORST-CASE arrival, not its nominal time. GitHub
 # runs a schedule when the queue allows: measured delays on this repo range from
@@ -26,6 +27,7 @@ name: Weekly start/sit report
 on:
   schedule:
     - cron: "0 15 * * 4"   # Thursday ~15:00 UTC (≈10am CT) -- TNF is ~7:15pm CT
+    - cron: "0 16 * * 6"   # Saturday ~16:00 UTC (≈10am CST) -- worst case ~6pm, read Sat night
     - cron: "0 11 * * 0"   # Sunday   ~11:00 UTC (≈6am CT)  -- the floor
     - cron: "0 13 * * 0"   # Sunday   ~13:00 UTC (≈8am CT)  -- fresher if it lands
   workflow_dispatch:

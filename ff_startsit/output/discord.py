@@ -16,6 +16,7 @@ from typing import TYPE_CHECKING, Optional, Sequence
 import requests
 
 from ..models import PlayerScore, Recommendation
+from .board import close_call_comparison
 from .render import LINEUP_UNSCORED_NOTE, lineup_unscored_keys
 
 if TYPE_CHECKING:                    # the duck-typed bundle, named for the reader
@@ -75,6 +76,9 @@ def _alerts(lineup: Sequence[tuple[str, Optional[PlayerScore]]],
         if rec.close_call:
             for note in rec.notes:
                 alerts.append(f"[{pos}] {note}")
+            comparison = close_call_comparison(rec)
+            if comparison:
+                alerts.append(f"[{pos}] {comparison}")
     return alerts
 
 

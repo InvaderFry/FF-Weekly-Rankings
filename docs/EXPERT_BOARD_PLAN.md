@@ -1,6 +1,6 @@
 # Expert board plan
 
-Status: **Phases 0–1 done; Phase 2 next.**
+Status: **Phases 0–2 done; Phase 3 next.**
 Site findings below were verified against live pages on 2026-11-02.
 
 ## Goal
@@ -187,10 +187,13 @@ because code-block tables wrap badly on a phone.
 
 ### 2. Start/sit with CBS (Thu, Sat, Sun)
 - `cbs_consensus` source: per-position pages, average plus per-analyst columns,
-  and a header check that fails closed. `half` scoring gives `unavailable`, or a
-  labelled PPR fallback depending on the open question below.
-- Position sections show **FP | Boone | CBS | Blend | Pick**. The Boone
-  "disagreement" block becomes a marker in that table.
+  and a header check that fails closed. Half-PPR reads the PPR list, labelled.
+  Enabled by `FF_ANALYSTS=boone,cbs` (the variable now takes a list).
+- The page never states its week, so its matchups are checked against the
+  schedule and a different week's page is refused.
+- Position sections show **FP | Boone | CBS | Eisenberg | Richard** beside the
+  blend. Turning the Boone "disagreement" block into a marker moved to Phase 5,
+  with the other retirements.
 - Discord shows the lineup, plus a one-line three-source comparison for each
   close call. Pages shows the full tables.
 - Add a Saturday cron to `weekly-report.yml`.

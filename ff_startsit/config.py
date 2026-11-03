@@ -128,6 +128,9 @@ class Settings:
     # Display-only Boone disagreements, never blend weights.
     analysts: str = ""
     analyst_min_gap: float = 5.0
+    # Display-only CBS columns (staff consensus, Eisenberg, Richard) beside the
+    # blend. Enabled by "cbs" in FF_ANALYSTS; never blend weights.
+    cbs_rankings: bool = False
     # Before Week 1 there is no live data; fill runs with bundled sample data
     # (clearly labeled) instead of an empty lineup. FF_PRESEASON_FILL=0 disables.
     preseason_fill: bool = True
@@ -475,13 +478,26 @@ def _apply_scoring_overrides(leagues: list[LeagueProfile], spec: str) -> None:
         profile.scoring = value
 
 
-def _analyst_settings() -> tuple[str, float]:
-    analysts = os.getenv("FF_ANALYSTS", "").strip().lower()
-    if analysts in {"", "0", "false", "no", "off"}:
-        analysts = ""
-    elif analysts != "boone":
-        _warn("Unknown FF_ANALYSTS value; supported analyst is boone. Disabling comparison.")
-        analysts = ""
+#: Sources FF_ANALYSTS may name, comma-separated: "boone", "cbs", "boone,cbs".
+KNOWN_ANALYSTS = ("boone", "cbs")
+
+
+def _analyst_settings() -> tuple[str, bool, float]:
+    """Parse FF_ANALYSTS into (boone-or-empty, cbs enabled, min gap).
+
+    Entries are independent, the same rule ``FF_LEAGUE_SCORING`` follows: an
+    unknown one warns and is dropped, and the rest still apply. A typo in one
+    name should cost that name, not every column.
+    """
+    raw = os.getenv("FF_ANALYSTS", "").strip().lower()
+    tokens = [] if raw in {"", "0", "false", "no", "off"} else \
+        [t.strip() for t in raw.split(",") if t.strip()]
+    unknown = [t for t in tokens if t not in KNOWN_ANALYSTS]
+    if unknown:
+        _warn(f"Unknown FF_ANALYSTS value(s) {', '.join(unknown)}; supported are "
+              f"{', '.join(KNOWN_ANALYSTS)} (comma-separated). Ignoring those.")
+    analysts = "boone" if "boone" in tokens else ""
+    cbs = "cbs" in tokens
     raw_gap = os.getenv("FF_ANALYST_MIN_GAP", "").strip()
     try:
         gap = float(raw_gap) if raw_gap else 5.0
@@ -490,7 +506,7 @@ def _analyst_settings() -> tuple[str, float]:
     except ValueError:
         _warn("FF_ANALYST_MIN_GAP must be a finite non-negative number; using 5.0.")
         gap = 5.0
-    return analysts, gap
+    return analysts, cbs, gap
 
 
 def load_settings(env_file: str | os.PathLike | None = None) -> Settings:
@@ -522,7 +538,7 @@ def load_settings(env_file: str | os.PathLike | None = None) -> Settings:
         default_weights,
     )
 
-    analysts, analyst_min_gap = _analyst_settings()
+    analysts, cbs_rankings, analyst_min_gap = _analyst_settings()
 
     threshold = _f("FF_CLOSE_CALL_THRESHOLD", 5.0)
     if threshold < 0:
@@ -593,6 +609,7 @@ def load_settings(env_file: str | os.PathLike | None = None) -> Settings:
         preferred_experts=os.getenv("FF_PREFERRED_EXPERTS", "").strip(),
         analysts=analysts,
         analyst_min_gap=analyst_min_gap,
+        cbs_rankings=cbs_rankings,
         injury_enabled=_b("FF_INJURY", True),
         weather_enabled=_b("FF_WEATHER", True),
         roster_ttl=roster_ttl,

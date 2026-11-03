@@ -107,3 +107,5 @@ def test_analyst_status_deduplicates_per_league_across_positions():
     md = render_multi_digest(1, bundles)
     assert md.count('Half: Justin Boone Week 1 half rankings') == 1
     assert md.count('Full: Justin Boone Week 1 ppr rankings') == 1
+    # A line that already names its league isn't prefixed a second time.
+    assert 'Half: Half:' not in md and 'Full: Full:' not in md

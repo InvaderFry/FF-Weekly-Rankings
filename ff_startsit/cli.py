@@ -268,8 +268,10 @@ def _annotate_analyst(settings: Settings, rec, players, week: int, pos: str) -> 
     non-comparability `rank_pooled` exists to solve for ECR -- so the caller
     passes a single position or nothing happens.
     """
+    cbs = (report.cbs_boards_for(settings, players, week)
+           if settings.cbs_rankings and pos and not rec.sample_data else [])
     if settings.analysts != "boone" or not pos:
-        report.attach_boards([rec])
+        report.attach_boards([rec], extra_boards=cbs)
         return
     from .engine.analyst import detect_conflicts
     from .sources.analysts import AnalystFetcher, not_published_yet
@@ -278,9 +280,9 @@ def _annotate_analyst(settings: Settings, rec, players, week: int, pos: str) -> 
             players, week, settings.scoring)
     except Exception as exc:  # never sink a ranking over an annotation
         print(f"warning: analyst comparison unavailable: {exc}", file=sys.stderr)
-        report.attach_boards([rec])
+        report.attach_boards([rec], extra_boards=cbs)
         return
-    report.attach_boards([rec], ranks if not rec.sample_data else None)
+    report.attach_boards([rec], ranks if not rec.sample_data else None, cbs)
     rec.analyst_ranks = dict(ranks.by_position.get(pos, {}))
     rec.analyst_name = ranks.analyst
     rec.analyst_conflicts = detect_conflicts(rec, rec.analyst_ranks, ranks.analyst,
@@ -780,6 +782,9 @@ def _league_bundles(args, settings: Settings, week: int) -> list:
     from .sources.analysts import AnalystFetcher
     analyst_fetcher = (AnalystFetcher(season.season_year(), settings.data_dir)
                        if settings.analysts == "boone" else None)
+    # One CBS fetcher for every league, so each page is read once per run.
+    from .boards.cbs import CbsFetcher
+    cbs_fetcher = CbsFetcher(settings.data_dir) if settings.cbs_rankings else None
     bundles: list = []
     for profile in settings.leagues:
         # Unconditional copy — see `_league_context`. Same-scoring leagues used to
@@ -792,7 +797,9 @@ def _league_bundles(args, settings: Settings, week: int) -> list:
             ws = report.score_week(lsettings, players, week,
                                    log=getattr(args, "log", False),
                                    **({"analyst_fetcher": analyst_fetcher}
-                                      if analyst_fetcher is not None else {}))
+                                      if analyst_fetcher is not None else {}),
+                                   **({"cbs_fetcher": cbs_fetcher}
+                                      if cbs_fetcher is not None else {}))
             recs = ws.recs
             lineup = report.lineup_from(ws)
             journalists = report.build_journalist_view(lsettings, players, week)

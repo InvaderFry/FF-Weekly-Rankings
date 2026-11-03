@@ -64,7 +64,10 @@ def finish_status(status, bundles):
                     if value is None or not value.available or value.raw is None:
                         missing[(name, (value.note or "unavailable") if value else "no reading")] += 1
         for detail in seen.values():
-            line = f"{bundle.label}: {detail}"
+            # Some sources already lead with the league (Boone's and CBS's lines
+            # do, so they read right on their own); don't print it twice.
+            prefix = f"{bundle.label}: "
+            line = detail if detail.startswith(prefix) else prefix + detail
             if line not in status.details:
                 status.details.append(line)
         for (name, reason), count in sorted(missing.items()):

@@ -146,10 +146,20 @@ ffstartsit publish --report report.md --dashboard site/index.html --discord --ur
 ### Expert columns (side by side)
 
 Every position table shows each trusted source's own positional rank beside
-the blended score: **FP** (FantasyPros consensus, always) and **Boone** (Justin
-Boone's Yahoo ranks, with `FF_ANALYSTS=boone`). CBS staff consensus is next.
-These columns never change the score, the pick or the close-call flag; they're
-there so you can see where the people you trust disagree. See
+the blended score:
+
+| Column | Source | Enabled by |
+|---|---|---|
+| **FP** | FantasyPros consensus | always |
+| **Boone** | Justin Boone's Yahoo ranks | `FF_ANALYSTS=boone` |
+| **CBS** | CBS staff consensus (average of CBS's analysts) | `FF_ANALYSTS=cbs` |
+| **Eisenberg**, **Richard** | each analyst's own column on that CBS page | `FF_ANALYSTS=cbs` |
+
+Use `FF_ANALYSTS=boone,cbs` for all of them. CBS publishes no half-PPR list, so
+half-PPR leagues show its PPR list with "(PPR)" in the column header. Discord
+gets the short form: for each close call, one line comparing FP, Boone and the
+CBS average. These columns never change the score, the pick or the close-call
+flag; they're there so you can see where the people you trust disagree. See
 [docs/EXPERT_BOARD_PLAN.md](docs/EXPERT_BOARD_PLAN.md) for what's coming.
 
 ### Preferred journalists (optional view)
