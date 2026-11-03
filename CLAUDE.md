@@ -1024,6 +1024,12 @@ ruled out this week", which is exactly what a roster owner needs to see, so that
 table stays. The interactive `render_table` keeps its table too — someone who
 typed `rank TE` asked for it.
 
+An `unranked` table's note names its **cause** (`render.unranked_note`):
+one player, one *playable* player beside ruled-out ones, or no signal reading
+at all. It used to say "Only one candidate here" for all three, so a run where
+every source failed told the owner of four running backs that he had one —
+the distinguishable-failures-rendering-identically bug again.
+
 That collapse fixed the position table; it did not reach the lineup table one
 level up, which is `render.lineup_unscored_keys`' fix. `report.build_lineup`
 fills a slot from `PlayerScore.final` alone, with no `Recommendation` in hand to

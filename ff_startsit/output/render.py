@@ -18,6 +18,29 @@ _console = Console()
 
 #: Shown under a table with a single candidate. See ``Recommendation.unranked``.
 UNRANKED_NOTE = ("Only one candidate here, so there is nothing to rank against — the per-signal columns are blank rather than showing a midpoint placeholder.")
+ONE_PLAYABLE_NOTE = ("Only one of these players can play this week (the rest are ruled out), "
+                     "so there is nothing to rank him against — the per-signal columns are "
+                     "blank rather than showing a midpoint placeholder.")
+NO_SIGNAL_NOTE = ("No signal could score these players this run — every reading is missing "
+                  "(each player's flags say why), so there is no ranking here. That is a "
+                  "data problem, not a tie.")
+
+
+def unranked_note(rec: Recommendation) -> str:
+    """Why an ``unranked`` table has nothing to rank, in terms of its actual cause.
+
+    ``unranked`` means fewer than two players were scored, which has three
+    causes that call for different things: one player (nothing to do), one
+    playable player beside ruled-out ones (nothing to decide), or no signal
+    reading at all (an outage). The note used to say "only one candidate" for
+    all three, so a run where every source failed told the owner of four
+    running backs that he had one.
+    """
+    if len(rec.scores) <= 1:
+        return UNRANKED_NOTE
+    if not any(s.final is not None for s in rec.scores):
+        return NO_SIGNAL_NOTE
+    return ONE_PLAYABLE_NOTE
 
 #: Shown under the suggested-lineup table when a pick's score is a fabricated
 #: midpoint rather than a real reading. See ``lineup_unscored_keys``.
@@ -86,7 +109,7 @@ def render_table(rec: Recommendation, title: str = "") -> None:
     for line in conflict_lines(rec):
         _console.print(line, markup=False, highlight=False)
     if rec.unranked and rec.scores:
-        _console.print(f"[dim]{UNRANKED_NOTE}[/dim]")
+        _console.print(f"[dim]{unranked_note(rec)}[/dim]")
 
     if rec.close_call:
         _console.print("[bold yellow]⚠ Close call[/bold yellow] — lean, don't bank on it:")
@@ -227,7 +250,7 @@ def render_markdown(rec: Recommendation, title: str = "") -> str:
         lines.append(f"_{md_cell(boards_legend(boards))}_")
         lines.append("")
     if rec.unranked and rec.scores:
-        lines.append(f"_{UNRANKED_NOTE}_")
+        lines.append(f"_{unranked_note(rec)}_")
         lines.append("")
     flat = flat_signal_note(rec)
     if flat:

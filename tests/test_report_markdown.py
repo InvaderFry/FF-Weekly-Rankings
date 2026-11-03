@@ -811,3 +811,21 @@ def test_analyst_markdown_still_escapes_table_breaking_pipes():
                                              19, 6, False, True)]
     md = render_markdown(rec)
     assert 'A\\|pha' in md and 'Br\\|vo' in md
+
+
+def test_unranked_note_names_the_actual_cause():
+    """Found in review: with every source down, a four-back table said "Only
+    one candidate here". Three causes, three sentences."""
+    from ff_startsit.models import PlayerScore
+    from ff_startsit.output.render import (NO_SIGNAL_NOTE, ONE_PLAYABLE_NOTE,
+                                           UNRANKED_NOTE, unranked_note)
+    from ff_startsit.output.html import _position_table
+    lone = _rec(_ps('1', 'Alpha', 'RB', 90))
+    assert unranked_note(lone) == UNRANKED_NOTE
+    outage = _rec(*[PlayerScore(player=_ps(k, n, 'RB', 0).player)
+                    for k, n in (('1', 'Alpha'), ('2', 'Bravo'), ('3', 'Charlie'))])
+    assert unranked_note(outage) == NO_SIGNAL_NOTE
+    assert NO_SIGNAL_NOTE in render_markdown(outage) and "Only one candidate" not in render_markdown(outage)
+    assert "No signal could score" in _position_table(outage)
+    ruled_out = _rec(_ps('1', 'Alpha', 'RB', 90), PlayerScore(player=_ps('2', 'Bravo', 'RB', 0).player))
+    assert unranked_note(ruled_out) == ONE_PLAYABLE_NOTE

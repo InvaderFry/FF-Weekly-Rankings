@@ -17,7 +17,7 @@ from typing import TYPE_CHECKING, Optional, Sequence
 from ..models import PlayerScore, Recommendation
 from .board import (board_cell, boards_legend, section_boards, waiver_cell,
                     waiver_legend)
-from .render import (DEPTH_LEGEND, LINEUP_UNSCORED_NOTE, UNRANKED_NOTE,
+from .render import (DEPTH_LEGEND, LINEUP_UNSCORED_NOTE, unranked_note,
                      flat_signal_note, lineup_unscored_keys, conflict_lines, section_cell)
 from ..sources.journalists import JournalistView
 
@@ -155,7 +155,7 @@ def _position_table(rec: Recommendation) -> str:
     if rec.unranked and rec.scores:
         # Same note the digest and the terminal table carry — a lone candidate
         # has no range to normalize against, so the columns are blanked.
-        table += f"<p class='note'>{escape(UNRANKED_NOTE)}</p>"
+        table += f"<p class='note'>{escape(unranked_note(rec))}</p>"
     return table
 
 
