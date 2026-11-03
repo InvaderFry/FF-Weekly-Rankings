@@ -16,7 +16,7 @@ from typing import TYPE_CHECKING, Optional, Sequence
 import requests
 
 from ..models import PlayerScore, Recommendation
-from .board import close_call_comparison
+from .board import close_call_comparison, waiver_cell
 from .render import LINEUP_UNSCORED_NOTE, lineup_unscored_keys
 
 if TYPE_CHECKING:                    # the duck-typed bundle, named for the reader
@@ -419,3 +419,73 @@ def build_waiver_payload(week: int, bundles: Sequence,
     _commands_field(last, commands_url)
     _fit_message_budget(embeds)
     return {"embeds": embeds}
+
+
+# --- the Tuesday expert board ------------------------------------------------
+#: Discord caps an embed at 25 fields; one player per field reads better on a
+#: phone than a monospace table, which wraps.
+_FIELDS_PER_EMBED = 25
+
+
+def _board_field(index: int, row, boards) -> dict:
+    p = row.player
+    name = _clip(f"{index}. {p.name} ({p.position}, {p.team or 'FA'})", _TITLE_MAX)
+    from ..waivers.board import cell_position
+    parts = [f"{b.short} {waiver_cell(row.entries.get(b.source_id), cell_position(b, p))}"
+             for b in boards]
+    value = " | ".join(parts)
+    if row.tool:
+        value += f"\nThis tool: {row.tool}"
+    return {"name": name, "value": _clip(value, _FIELD_VALUE_MAX), "inline": False}
+
+
+def build_waiver_board_payloads(week: int, bundles: Sequence) -> list[dict]:
+    """The full Tuesday board, one Discord message (or more) per league.
+
+    Separate from ``build_waiver_payload``'s summary because a full table
+    outgrows one message: every league gets its own, split into 25-field
+    embeds and, past Discord's 10-embed / 6000-character message limits, into
+    further messages. Nothing is trimmed -- the owner asked for the full table.
+    """
+    payloads: list[dict] = []
+    for bundle in bundles:
+        boards = getattr(bundle, "expert_boards", None)
+        if not boards:
+            continue
+        label = f" · {bundle.label}" if bundle.label else ""
+        title = _clip(f"📋 Week {week} — what the writers say{label}", _TITLE_MAX)
+        from ..waivers.board import board_reasons
+        notes = board_reasons(boards)
+        description = "\n".join(f"-# {r}" for r in notes)
+        if not bundle.expert_rows:
+            description = ("No free agent in this league was named by a writer this week.\n"
+                           + description).strip()
+        fields = [_board_field(i, row, boards) for i, row in enumerate(bundle.expert_rows, start=1)]
+        # Chunk by field count *and* characters: one embed of 25 long fields can
+        # exceed the 6000-character message limit on its own, and no amount of
+        # splitting into messages fixes an embed that is itself too big.
+        first = {"title": title, "color": _WAIVER_COLOR, "fields": []}
+        if description:
+            first["description"] = _clip(description, 4096)
+        embeds: list[dict] = [first]
+        for f in fields:
+            current = embeds[-1]
+            size = len(f["name"]) + len(f["value"])
+            if current["fields"] and (len(current["fields"]) >= _FIELDS_PER_EMBED
+                                      or _embed_chars(current) + size > _TOTAL_CHARS_MAX):
+                current = {"title": _clip(f"{title} (cont.)", _TITLE_MAX),
+                           "color": _WAIVER_COLOR, "fields": []}
+                embeds.append(current)
+            current["fields"].append(f)
+        message: list[dict] = []
+        used = 0
+        for embed in embeds:
+            cost = _embed_chars(embed)
+            if message and (len(message) >= _MAX_EMBEDS or used + cost > _TOTAL_CHARS_MAX):
+                payloads.append({"embeds": message})
+                message, used = [], 0
+            message.append(embed)
+            used += cost
+        if message:
+            payloads.append({"embeds": message})
+    return payloads

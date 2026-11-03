@@ -106,6 +106,26 @@ def issue_title(report, kind):
     return f"{match[1]} Week {match[2]} {kind}"
 
 
+def publish_news(report_path, previous_path, output=None):
+    """Whether a scheduled waiver run should publish (issue, Pages, Discord).
+
+    The decision is ``waivers.board.report_has_news``; this only reads the two
+    files and writes ``news=true|false`` to ``$GITHUB_OUTPUT``. A missing
+    previous file means nothing was found to compare against.
+    """
+    from .waivers.board import report_has_news
+    previous = Path(previous_path)
+    news = report_has_news(Path(report_path).read_text(encoding="utf-8"),
+                           previous.read_text(encoding="utf-8") if previous.exists() else "")
+    line = f"news={'true' if news else 'false'}"
+    print(line)
+    output = output or os.environ.get("GITHUB_OUTPUT")
+    if output:
+        with open(output, "a") as handle:
+            handle.write(line + "\n")
+    return news
+
+
 def main():
     if sys.argv[1] == "chatops":
         reply = chatops_reply(os.environ.get("COMMENT_BODY", ""))
@@ -117,6 +137,8 @@ def main():
         raise SystemExit(run_cli(sys.argv[2:]))
     elif sys.argv[1] == "site":
         verify_site(Path("site"))
+    elif sys.argv[1] == "news":
+        publish_news(sys.argv[2], sys.argv[3])
 
 
 if __name__ == "__main__":

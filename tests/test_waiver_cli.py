@@ -269,3 +269,65 @@ def test_rehearse_flag_reaches_the_builder_and_names_the_situation(
     captured = capsys.readouterr()
     assert "DRESS REHEARSAL" in captured.err     # not the refusal notice
     assert "Free Wr" in captured.out             # and it really scored the pool
+
+
+def test_waiver_writer_sources_follow_ff_analysts(tmp_path):
+    from dataclasses import replace
+    s = _settings(tmp_path)
+    assert cli.waiver_writer_sources(s) == []
+    assert [x.id for x in cli.waiver_writer_sources(replace(s, analysts="boone"))] == ["boone_waivers"]
+    both = cli.waiver_writer_sources(replace(s, analysts="boone", cbs_rankings=True))
+    assert [x.id for x in both] == ["boone_waivers", "eisenberg_waivers", "richard_chart"]
+    assert len({id(x.fetcher) for x in both}) == 1         # one fetcher, each article once
+
+
+def _board_on(monkeypatch, read):
+    """Turn the board on with fake writers that read ``read``."""
+    from ff_startsit.boards.models import ALL_POSITIONS, ExpertBoard
+
+    class Src:
+        def __init__(self, sid):
+            self.id, self.short, self.label = sid, sid, sid
+
+        def fetch(self, players, week, scoring, superflex=False):
+            board = ExpertBoard(self.id, self.short, self.label)
+            if self.id not in read:
+                board.unavailable[ALL_POSITIONS] = "not posted yet"
+            return board
+    monkeypatch.setattr(cli, "waiver_writer_sources",
+                        lambda s: [Src("boone_waivers"), Src("eisenberg_waivers")])
+
+
+def _sent(monkeypatch):
+    sent = []
+    monkeypatch.setattr("ff_startsit.output.discord.send_discord",
+                        lambda url, payload, **k: sent.append(payload))
+    return sent
+
+
+def test_retry_with_nothing_new_sends_nothing(monkeypatch, tmp_path, capsys):
+    monkeypatch.setattr(cli, "build_roster_provider", lambda *a, **k: _FakeProvider())
+    _board_on(monkeypatch, {"boone_waivers"})
+    sent = _sent(monkeypatch)
+    settings = _settings(tmp_path)
+    settings.discord_webhook_url = "https://discord.test/hook"
+    first = tmp_path / "first.md"
+    assert cli.cmd_waivers(_Args(discord=True, report=first,
+                                 since=tmp_path / "none.md"), settings) == 0
+    assert len(sent) == 2                       # the summary, then the board
+    sent.clear()
+    assert cli.cmd_waivers(_Args(discord=True, since=first), settings) == 0
+    assert sent == [] and "skipping Discord" in capsys.readouterr().err
+
+
+def test_retry_that_read_another_writer_posts(monkeypatch, tmp_path):
+    monkeypatch.setattr(cli, "build_roster_provider", lambda *a, **k: _FakeProvider())
+    _board_on(monkeypatch, {"boone_waivers"})
+    settings = _settings(tmp_path)
+    settings.discord_webhook_url = "https://discord.test/hook"
+    first = tmp_path / "first.md"
+    cli.cmd_waivers(_Args(report=first), settings)
+    _board_on(monkeypatch, {"boone_waivers", "eisenberg_waivers"})
+    sent = _sent(monkeypatch)
+    assert cli.cmd_waivers(_Args(discord=True, since=first), settings) == 0
+    assert len(sent) == 2

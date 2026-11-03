@@ -206,6 +206,9 @@ def _build_parser() -> argparse.ArgumentParser:
     p_wai.add_argument("--rehearse", action="store_true",
                        help="preseason dress rehearsal: score live data instead "
                             "of refusing (no-op once the season starts)")
+    p_wai.add_argument("--since", type=Path, default=None,
+                       help="the report already published this week; send Discord "
+                            "only if this run read a writer it didn't (retry runs)")
     # Deliberately no --log: see cmd_waivers.
     p_wai.set_defaults(func=cmd_waivers)
 
@@ -879,6 +882,7 @@ def _waiver_bundles(args, settings: Settings, week: int) -> list:
     # one per league, so re-fetching per league would be three needless requests
     # each and three copies of the same credits line.
     fetcher = ColumnFetcher() if include_columns else None
+    writers = waiver_writer_sources(settings)
 
     from .data_status import DataStatus, finish_status
     status = DataStatus(season.season_year(), week, [p.name for p in profiles])
@@ -908,12 +912,31 @@ def _waiver_bundles(args, settings: Settings, week: int) -> list:
                 # None, not False, so an unset flag still lets build_bundle
                 # detect the pre-kickoff window on its own.
                 rehearse=getattr(args, "rehearse", False) or None,
+                **({"writer_sources": writers} if writers else {}),
             ))
         except (RosterError, SleeperError) as exc:
             status.skipped[profile.name] = str(exc)
             print(f"warning: skipping league {profile.name!r}: {exc}", file=sys.stderr)
             continue
     return finish_status(status, bundles)
+
+
+def waiver_writer_sources(settings: Settings) -> list:
+    """The Tuesday expert-board sources ``FF_ANALYSTS`` asks for, sharing one
+    article fetcher so each article is read once per run whatever the league
+    count: ``boone`` -> Boone's waiver column; ``cbs`` -> Eisenberg's waiver
+    column and Richard's trade chart."""
+    if settings.analysts != "boone" and not settings.cbs_rankings:
+        return []
+    from .boards.articles import ArticleFetcher
+    from .boards.writers import BooneWaivers, EisenbergWaivers, RichardChart
+    fetcher = ArticleFetcher(settings.data_dir)
+    sources: list = []
+    if settings.analysts == "boone":
+        sources.append(BooneWaivers(fetcher))
+    if settings.cbs_rankings:
+        sources += [EisenbergWaivers(fetcher), RichardChart(fetcher)]
+    return sources
 
 
 def cmd_waivers(args, settings: Settings) -> int:
@@ -955,6 +978,14 @@ def cmd_waivers(args, settings: Settings) -> int:
         args.dashboard.write_text(html)
         print(f"Wrote waivers page ({len(bundles)} league(s)) to {args.dashboard}")
 
+    since = getattr(args, "since", None)
+    if args.discord and since is not None:
+        from .waivers.board import report_has_news
+        previous = since.read_text(encoding="utf-8") if since.exists() else ""
+        if not report_has_news(digest, previous):
+            print("Nothing new since this week's published report (same writers read); "
+                  "skipping Discord.", file=sys.stderr)
+            return 0
     if args.discord:
         if not settings.discord_webhook_url:
             print("DISCORD_WEBHOOK_URL is not set — skipping Discord.", file=sys.stderr)
@@ -970,6 +1001,13 @@ def cmd_waivers(args, settings: Settings) -> int:
                 # Same contract as publish: a Discord hiccup never sinks the
                 # digest and dashboard the rest of the workflow depends on.
                 print(f"warning: Discord notification failed: {exc}", file=sys.stderr)
+            # The full expert board, one message (or more) per league.
+            from .output.discord import build_waiver_board_payloads
+            for board_payload in build_waiver_board_payloads(week, bundles):
+                try:
+                    send_discord(settings.discord_webhook_url, board_payload)
+                except Exception as exc:
+                    print(f"warning: Discord expert board failed: {exc}", file=sys.stderr)
     return 0
 
 

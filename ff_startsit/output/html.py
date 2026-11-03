@@ -15,7 +15,8 @@ from html import escape
 from typing import TYPE_CHECKING, Optional, Sequence
 
 from ..models import PlayerScore, Recommendation
-from .board import board_cell, boards_legend, section_boards
+from .board import (board_cell, boards_legend, section_boards, waiver_cell,
+                    waiver_legend)
 from .render import (DEPTH_LEGEND, LINEUP_UNSCORED_NOTE, UNRANKED_NOTE,
                      flat_signal_note, lineup_unscored_keys, analyst_conflict_text)
 from ..sources.journalists import JournalistView
@@ -458,6 +459,36 @@ def _waiver_lists(bundle) -> str:
     return "\n".join(out)
 
 
+def _waiver_expert_board(bundle) -> str:
+    """The Tuesday board: every free agent a writer named, side by side."""
+    boards = getattr(bundle, "expert_boards", None)
+    if not boards:
+        return ""
+    out = ["<h3>What the writers say</h3>"]
+    if bundle.expert_rows:
+        head = "".join(f"<th title='{escape(b.label)}'>{escape(b.short)}</th>" for b in boards)
+        out.append(f"<table><thead><tr><th>Player</th><th>Pos</th><th>Team</th>{head}"
+                   "<th>This tool</th></tr></thead><tbody>")
+        for row in bundle.expert_rows:
+            cls = " class='top'" if row.listed_by >= 2 else ""
+            from ..waivers.board import cell_position
+            cells = "".join(f"<td class='expert'>"
+                            f"{escape(waiver_cell(row.entries.get(b.source_id), cell_position(b, row.player)))}</td>"
+                            for b in boards)
+            out.append(f"<tr{cls}><td>{escape(row.player.name)}</td>"
+                       f"<td>{escape(row.player.position)}</td>"
+                       f"<td>{escape(row.player.team or 'FA')}</td>{cells}"
+                       f"<td>{escape(row.tool or '—')}</td></tr>")
+        out.append("</tbody></table>")
+    else:
+        out.append("<p class='note'>No free agent in this league was named by a writer this week.</p>")
+    out.append(f"<p class='note'>{escape(waiver_legend(boards))}</p>")
+    from ..waivers.board import board_reasons
+    for reason in board_reasons(boards):
+        out.append(f"<p class='note'>{escape(reason)}</p>")
+    return "".join(out)
+
+
 def _waiver_body(bundle) -> list[str]:
     body: list[str] = []
     if bundle.banner:
@@ -465,6 +496,7 @@ def _waiver_body(bundle) -> list[str]:
                     f"</strong></div>")
     if bundle.caveat:
         body.append(f"<div class='callout'>⚠️ {escape(bundle.caveat)}</div>")
+    body.append(_waiver_expert_board(bundle))
     body.append(_waiver_adds_table(bundle))
     body.append(_waiver_alternates_table(bundle))
     body.append(_waiver_drops_table(bundle))

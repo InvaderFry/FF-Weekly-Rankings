@@ -448,6 +448,47 @@ the verified shape of every source page live in `docs/EXPERT_BOARD_PLAN.md`.
   reintroduce a browser User-Agent (`tests/test_net.py`), and don't add
   "compatible;" to it: CBS answers 406 to that token.
 
+### The Tuesday expert board (`boards/writers.py`, `waivers/board.py`)
+
+`waivers` adds a **"What the writers say"** table per league: every free agent
+that Boone's waiver column, Eisenberg's waiver column or Richard's trade chart
+names, with each writer's reading side by side (Boone's positional rank, tier
+and FAB bid; Eisenberg's priority and FAAB %; Richard's value and rank by
+value), FantasyPros' overall ROS rank, and what this tool's own pass decided
+("add (drop X)", "also consider"). `FF_ANALYSTS=boone` enables Boone's column
+and `cbs` enables Eisenberg's and Richard's. It is a board, so the rules above
+hold: display only, no add/drop/bid changes (`test_board_changes_no_add_or_drop`),
+nothing in `results_log.jsonl`.
+
+- **Discovery and attribution** go through `boards/articles.py`: a link must
+  name the week, and the article's JSON-LD byline, week, season and kind
+  ("waiver wire", "trade chart") must all verify. Boone also writes a *college*
+  waiver column titled by week, which is why `never=("college",)` exists.
+- **Parsing fails closed.** Each parser raises on a page it doesn't recognise
+  ("layout not recognised"), and the page shapes are pinned by trimmed live
+  fixtures in `tests/fixtures/boards/` (prose removed). Specific shapes worth not
+  rediscovering: Eisenberg's per-card position label can be off-offense (Travis
+  Hunter is "CB"), so it falls back to the section's majority; Boone puts two
+  players under one heading with one table ("$9/$4"), split in heading order;
+  Richard's QB column depends on passing-TD points and superflex, and the other
+  positions have non/0.5/PPR columns, so half-PPR is covered.
+- **Rows are this league's free agents only.** Sources are handed the pool, so a
+  rostered player never appears as a pickup. Ranks print with their position
+  ("RB1") because the table mixes positions; FP ROS is overall ("#88").
+- **"Not posted yet" stays distinct from "broke"**, and since an author page
+  lists only recent pieces, a missing link says both possibilities ("not posted
+  yet, or too old to be listed").
+- **Discord gets the full table**, one message per league in 25-field embeds,
+  chunked by characters as well as fields: one embed of 25 long fields can
+  exceed the 6000-character message limit by itself.
+- **The retry gate.** The digest ends with an invisible
+  `<!-- ff-board season week read=... -->` marker. Scheduled runs pass the
+  newest open waiver issue's text as `--since`, and publish (Discord, issue,
+  Pages) only when nothing is published for that week yet or this run read a
+  writer the published report didn't. Manual runs always publish. The decision
+  is `waivers.board.report_has_news`, shared by `cmd_waivers` and
+  `workflow.py news`.
+
 ### The analyst comparison (`sources/analysts.py`)
 
 `FF_ANALYSTS=boone` annotates the start/sit report with where **Justin Boone**
@@ -801,15 +842,19 @@ reason a piece of it is shaped the way it is.
   and a run proves the least. The window is exactly one week wide so precisely
   one of `waivers.yml`'s weekly crons lands in it: one rehearsal a season, with
   no arithmetic tying the window to the schedule. That property has a second,
-  quieter requirement: `is_rehearsal_window` reads `date.today()`, which on a
-  runner is the **UTC** date, so the cron must land on the same UTC weekday
-  every week. GitHub starts a scheduled run when its queue allows — delays from
-  18 minutes to 8h01 are measured on this repo — so a slot close enough to UTC
-  midnight to straddle it under load resolves to one weekday some weeks and the
-  next on others, which can hand one preseason two rehearsals and the following
-  one none. `0 15 * * 2` leaves 9 hours of headroom (worst case 23:01 UTC); the
-  old `0 0 * * 3` had the same property by sitting just *after* midnight. Any
-  future move of this cron has to keep it. Nothing is invented if the data
+  quieter requirement: the first cron must land on the same weekday every week,
+  as `is_rehearsal_window` reads it. GitHub starts a scheduled run when its
+  queue allows — delays from 18 minutes to 8h01 are measured on this repo — so
+  a slot that can straddle midnight under load resolves to one weekday some
+  weeks and the next on others, which can hand one preseason two rehearsals and
+  the following one none. `is_rehearsal_window` therefore reads the **Central**
+  date (`season.central_today`), not the runner's UTC date: the Tuesday cron
+  moved to `30 20 * * 2` (after the writers' Tuesday articles), whose worst case
+  is 04:31 UTC — Wednesday in UTC, but 11:31pm Tuesday CDT. Any future move of
+  this cron has to keep its worst case inside Central Tuesday. The `30 1 * * 3`
+  retry is deliberately exempt: it publishes only when it read a writer the
+  first pass didn't (`waivers.board.has_news`), so its own preseason firing
+  cannot post a second rehearsal that adds nothing. Nothing is invented if the data
   isn't there yet — `score.has_ecr` already empties the report — so the banner
   carries `score.signal_coverage` counts, because an empty rehearsal must not
   read the same as a broken one. Those counts ride in the *banner*, not `notes`:

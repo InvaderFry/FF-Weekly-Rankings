@@ -1,6 +1,6 @@
 # Expert board plan
 
-Status: **Phases 0–2 done; Phase 3 next.**
+Status: **Phases 0–3 done; Phase 4 next.**
 Site findings below were verified against live pages on 2026-11-02.
 
 ## Goal
@@ -210,6 +210,10 @@ because code-block tables wrap badly on a phone.
   The existing add/drop and bid logic stays as its own section.
 - Discord: the full board, one message per league.
 - Move `waivers.yml` to Tuesday afternoon, plus a retry slot (schedule below).
+  Done with the rehearsal fix from Phase 5 (Central date), which the move needed.
+- As built: rank cells carry the position ("RB1"); a missing article says "not
+  posted yet, or too old to be listed"; the waiver-column quotes stay as they
+  were until Phase 5 folds them into the board.
 
 ### 4. Wednesday values pass
 - `boone_trade_values` source: discovered through the rankings hub, with a
@@ -248,8 +252,8 @@ than the first run did.
 | Thu start/sit | `0 15 * * 4` (existing) | 9:00 am | before Thursday night's game |
 | **Sat start/sit** | `0 16 * * 6` | 10:00 am | worst case ~6 pm Sat (owner OK with that) |
 | Sun start/sit ×2 | `0 11 * * 0`, `0 13 * * 0` (existing) | 5:00 / 7:00 am | before kickoff |
-| **Tue waivers** | `30 21 * * 2` | 3:30 pm | after Richard (~19:00 UTC) and Eisenberg (~20:40 UTC) |
-| Tue retry | `30 1 * * 3` | 7:30 pm Tue | if a column was late |
+| **Tue waivers** | `30 20 * * 2` | 2:30 pm | after Richard (~19:00 UTC) and Eisenberg (~20:40 UTC) in practice, since runs start hours late; worst case stays on Central Tuesday even in CDT |
+| Tue retry | `30 1 * * 3` | 7:30 pm Tue | posts only if it read a writer the first pass didn't |
 | **Wed values** | `30 22 * * 3` | 4:30 pm | after Boone's charts (~21:15 UTC) |
 | Wed retry | `30 2 * * 4` | 8:30 pm Wed | if the charts were late or the hub lagged |
 

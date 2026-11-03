@@ -469,3 +469,66 @@ def test_an_ecr_outage_is_reported_as_one_rather_than_as_a_quiet_wire(tmp_path):
     assert b.adds == []
     assert b.coverage.get("ecr", 0) == 0
     assert "data outage" in b.no_adds_reason()
+
+
+# --- the Tuesday expert board ------------------------------------------------
+
+class _WriterSource:
+    """A writer board without the network: lists one free agent and one of mine."""
+    def __init__(self, sid, short, entries, reason=None):
+        self.id, self.short, self.label = sid, short, f"{short} test column"
+        self.entries, self.reason = entries, reason
+        self.seen = None
+
+    def fetch(self, players, week, scoring, superflex=False):
+        from ff_startsit.boards.models import ALL_POSITIONS, ExpertBoard
+        self.seen = (sorted(p.key for p in players), week, scoring, superflex)
+        board = ExpertBoard(self.id, self.short, self.label, url="https://example.test/a")
+        if self.reason:
+            board.unavailable[ALL_POSITIONS] = self.reason
+            return board
+        board.entries = {k: v for k, v in self.entries.items() if k in {p.key for p in players}}
+        return board
+
+
+def test_board_lists_only_this_leagues_free_agents(tmp_path):
+    from ff_startsit.boards.models import BoardEntry
+    boone = _WriterSource("boone_waivers", "Boone",
+                          {"f1": BoardEntry(pos_rank=1, bid="$12"), "m4": BoardEntry(pos_rank=2)})
+    eisen = _WriterSource("eisenberg_waivers", "Eisenberg", {}, reason="not posted yet")
+    bundle = _build(tmp_path, writer_sources=[boone, eisen])
+    # Sources are handed the pool only: a rostered player is not a pickup.
+    assert boone.seen[0] == ["f1", "f2"] and boone.seen[1:] == (9, "ppr", False)
+    assert [r.player.key for r in bundle.expert_rows] == ["f1"]
+    row = bundle.expert_rows[0]
+    assert row.entries["boone_waivers"].bid == "$12"
+    assert row.entries["fantasypros_ros"].pos_rank == 120     # FP ROS beside them
+    assert [b.short for b in bundle.expert_boards] == ["Boone", "Eisenberg", "FP ROS"]
+    assert ("Boone test column", "https://example.test/a") in bundle.sources
+
+
+def test_board_changes_no_add_or_drop(tmp_path):
+    from ff_startsit.boards.models import BoardEntry
+    plain = _build(tmp_path)
+    with_board = _build(tmp_path, writer_sources=[
+        _WriterSource("boone_waivers", "Boone", {"f1": BoardEntry(pos_rank=1)})])
+    key = lambda b: ([(t.score.player.key, t.drop.player.key if t.drop else None, t.bid)
+                      for t in b.adds], [d.score.player.key for d in b.drops])
+    assert key(plain) == key(with_board)
+
+
+def test_a_source_that_raises_costs_only_its_column(tmp_path):
+    class Broken(_WriterSource):
+        def fetch(self, *a, **k):
+            raise RuntimeError("boom")
+    bundle = _build(tmp_path, writer_sources=[Broken("boone_waivers", "Boone", {})])
+    assert bundle.adds is not None
+    assert "boom" in bundle.expert_boards[0].unavailable["*"]
+
+
+def test_superflex_reaches_the_chart(tmp_path):
+    from dataclasses import replace
+    src = _WriterSource("richard_chart", "Richard", {})
+    _build(tmp_path, provider=_Provider(rules=replace(RULES, flex_slots={"SUPER_FLEX": 1})),
+           writer_sources=[src])
+    assert src.seen[3] is True

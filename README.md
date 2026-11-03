@@ -188,6 +188,20 @@ worth setting even if you never look at the journalists section itself.
 
 ### Waiver wire & trades (`waivers`)
 
+**What the writers say.** With `FF_ANALYSTS=boone,cbs`, each league's report
+opens with a table of every free agent named by Justin Boone's waiver column,
+Jamey Eisenberg's waiver column or Dave Richard's trade chart, side by side
+(an illustrative row):
+
+| Player | Pos | Boone | Eisenberg | Richard | FP ROS | This tool |
+|---|---|---|---|---|---|---|
+| Mike Washington Jr. | RB | RB1 · $29 · top-10 #1 | RB2 · 10%+ FAAB | 9 · RB34 | #88 | add (drop …) |
+
+Boone's bids are FAB dollars, Eisenberg's are a share of remaining FAAB, and
+Richard's number is his trade/rest-of-season value for your scoring. A writer
+whose article isn't up yet is named under the table rather than silently left
+out. Only free agents in *that* league are listed.
+
 The Tuesday-evening companion to the Sunday lineup. Where the rest of the app
 asks *who do I start?*, this asks *who do I acquire?* — and it can see your whole
 league, not just your team:
@@ -356,12 +370,14 @@ the GitHub mobile app. Three workflows ship in `.github/workflows/`:
     rankings, with injury/close-call rows highlighted), and
   - **pings Discord** with the lineup, alerts, and a link to the dashboard — if a
     `DISCORD_WEBHOOK_URL` secret is set.
-- **Tuesday waivers** (`waivers.yml`) — runs Tuesday mid-morning, after Monday
-  night football and well before Wednesday's waiver run. Posts a `Week N waiver
-  wire` issue with adds, drops, bids, trade ideas and bye holes for every
-  league, publishes them to `waivers.html` on the same Pages site, and pings
-  Discord in a different colour so it's distinguishable at a glance from the
-  start/sit post.
+- **Tuesday waivers** (`waivers.yml`) — runs Tuesday afternoon Central, after
+  the writers' Tuesday articles and well before Wednesday's waiver run, with an
+  evening retry that posts only if it found an article the first pass couldn't.
+  Posts a `Week N waiver wire` issue with the writers' board, adds, drops, bids,
+  trade ideas and bye holes for every league, publishes them to `waivers.html`
+  on the same Pages site, and pings Discord in a different colour so it's
+  distinguishable at a glance from the start/sit post. The full writers' board
+  goes to Discord too, one message per league.
 - **ChatOps** (`chatops.yml`) — comment a slash command on any issue and the bot
   reply-comments the answer:
 

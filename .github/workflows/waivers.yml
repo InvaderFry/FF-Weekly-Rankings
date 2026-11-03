@@ -6,30 +6,26 @@ name: Tuesday waiver wire & trades
 # CT Wednesday. Can also be run on demand (Actions -> Run workflow) from the phone.
 on:
   schedule:
-    # 15:00 UTC Tuesday = 10:00am CDT / 9:00am CST. Two constraints fix this
-    # slot, and both are about the WORST case rather than the nominal time --
-    # GitHub starts a scheduled run when its queue allows, and this repo has
-    # measured delays from 18 minutes to 8h01.
+    # Two Tuesday slots, placed by their WORST-CASE arrival: GitHub starts a
+    # scheduled run when its queue allows, and this repo has measured delays
+    # from 18 minutes to 8h01.
     #
-    # 1. It must still be Tuesday *in CT* when it lands, with room before the
-    #    3:00am Wednesday waiver run. Worst case here is 23:01 UTC = 6:01pm CT
-    #    Tuesday, roughly nine hours clear. The old 00:00 UTC Wednesday slot
-    #    (7:00pm Tuesday CT) had already drifted to 10:57pm CT on +3h57, and an
-    #    8h01 delay would have landed it at 3:01am CT -- at the waiver run.
+    # 20:30 UTC = 3:30pm CDT / 2:30pm CST, after the writers' Tuesday pieces
+    # (Richard's trade chart ~19:00 UTC, Eisenberg's waiver column ~20:40 UTC;
+    # Boone's column is up Monday). Worst case 04:31 UTC = 11:31pm CDT, so it
+    # still lands on Tuesday *in Central time* -- which is the date
+    # season.is_rehearsal_window reads (season.central_today), and so the date
+    # that decides the one preseason rehearsal. It also clears the 3:00am CT
+    # Wednesday waiver run.
     #
-    # 2. It must still be Tuesday *in UTC* when it lands, because the runner's
-    #    date.today() is UTC and season.is_rehearsal_window reads it. The
-    #    rehearsal window is exactly 7 days wide so that precisely one weekly
-    #    cron falls inside it (tests/test_preseason.py). A slot that straddles
-    #    UTC midnight under load resolves to Tuesday some weeks and Wednesday
-    #    others, which can hand one preseason two rehearsals and the next none.
-    #    15:00 + 8h01 = 23:01 UTC keeps every firing on one UTC weekday, the
-    #    same property the old 00:00 UTC slot had.
-    #
-    # Landing midday rather than evening is also fine for waivers/columns.py:
-    # the Tuesday columns post in the morning, and a column that is not up yet
-    # degrades through ColumnFetcher.unavailable -- it costs quotes, not picks.
-    - cron: "0 15 * * 2"
+    # 01:30 UTC Wednesday = Tuesday evening Central: the retry, for an article
+    # that was not up yet at the first pass. It publishes only when it read a
+    # writer the already-posted report didn't (workflow.py `news`, below), so a
+    # normal week still produces exactly one post. Its worst case lands after
+    # the waiver run, where it is merely late; and because it is gated on news,
+    # its preseason firing cannot post a second rehearsal that adds nothing.
+    - cron: "30 20 * * 2"
+    - cron: "30 1 * * 3"
   workflow_dispatch:
     inputs:
       artifact_only:
@@ -102,6 +98,23 @@ jobs:
       - name: Install
         run: pip install -e .
 
+      # Scheduled runs compare against what is already published this week, so
+      # the Tuesday retry posts only when it read a writer the first pass
+      # couldn't. The newest open waiver issue is enough: the report carries a
+      # season/week marker, and an older week's issue simply isn't compared.
+      - name: Fetch this week's published report (scheduled runs)
+        if: ${{ github.event_name == 'schedule' && !inputs.artifact_only }}
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          NUM=$(gh issue list --state open --search 'in:title "waiver wire"' \
+                --json number --jq '.[0].number // empty')
+          if [ -n "$NUM" ]; then
+            gh issue view "$NUM" --json body,comments \
+              --jq '.body, (.comments[].body)' > previous.md
+          fi
+
       # Note what is *not* here: the calibration-data restore/persist steps from
       # weekly-report.yml. The waiver pass is never written to the #7 results log
       # (see cli.cmd_waivers), so there is no log for this workflow to carry.
@@ -114,19 +127,33 @@ jobs:
           # one cron a season rehearses and the rest stay refusals.
           REHEARSE_ARGS=()
           if [ "$INPUT_REHEARSE" = "true" ]; then REHEARSE_ARGS=(--rehearse); fi
+          # Manual runs always publish; scheduled ones only with something new.
+          SINCE_ARGS=()
+          if [ "$GITHUB_EVENT_NAME" = "schedule" ]; then SINCE_ARGS=(--since previous.md); fi
           # Deterministic project Pages URL: Discord fires before the deploy step
           # below finishes, so the link can't come from the deploy's output.
           OWNER="${GITHUB_REPOSITORY%%/*}"; REPO="${GITHUB_REPOSITORY##*/}"
           WAIVERS_URL="https://${OWNER,,}.github.io/${REPO}/waivers.html"
-          python -m ff_startsit.workflow run waivers "${WEEK_ARGS[@]}" "${REHEARSE_ARGS[@]}" --all-leagues --discord \
+          python -m ff_startsit.workflow run waivers "${WEEK_ARGS[@]}" "${REHEARSE_ARGS[@]}" "${SINCE_ARGS[@]}" --all-leagues --discord \
             --report waivers.md --dashboard ./site/waivers.html \
             --url "$WAIVERS_URL"
           cat waivers.md >> "$GITHUB_STEP_SUMMARY"
+
+      # The same decision cmd_waivers made for Discord, for the steps below.
+      - name: Anything new to publish?
+        id: news
+        run: |
+          if [ "$GITHUB_EVENT_NAME" = "schedule" ]; then
+            python -m ff_startsit.workflow news waivers.md previous.md
+          else
+            echo "news=true" >> "$GITHUB_OUTPUT"
+          fi
 
       # A Pages deploy replaces the entire site, so this run has to rebuild the
       # start/sit page too or deploying would delete it. No --log and no
       # --discord: Thursday/Sunday own the start/sit decisions and the ping.
       - name: Rebuild start/sit page (so the deploy doesn't drop it)
+        if: steps.news.outputs.news == 'true'
         continue-on-error: true
         run: |
           WEEK_ARGS=()
@@ -143,7 +170,7 @@ jobs:
       # deploy. The start/sit workflow makes the same trade.
       - name: Post / update issue
         id: issue
-        if: ${{ !inputs.artifact_only }}
+        if: ${{ !inputs.artifact_only && steps.news.outputs.news == 'true' }}
         continue-on-error: true
         env:
           GH_TOKEN: ${{ github.token }}
@@ -178,6 +205,7 @@ jobs:
       # standing, which is strictly better than replacing it with half of one.
       - name: Verify the site is complete
         id: site
+        if: steps.news.outputs.news == 'true'
         run: |
           python -m ff_startsit.workflow site
 

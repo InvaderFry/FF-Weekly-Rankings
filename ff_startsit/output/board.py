@@ -81,3 +81,29 @@ def close_call_comparison(rec: Recommendation,
     if not parts:
         return None
     return f"{a.player.name} vs {b.player.name} — " + " · ".join(parts)
+
+
+def waiver_cell(entry: Optional[BoardEntry], position: Optional[str] = None) -> str:
+    """One writer's reading in the Tuesday board, in his own terms:
+    Boone "RB1 · $29 · top-10 #1", Eisenberg "RB2 · 10%+ FAAB",
+    Richard "12 · RB31" (value, then rank by value), FP ROS "#88".
+
+    ``position`` prefixes a positional rank, since the board mixes positions
+    and "#1" would not say #1 *of what*. Leave it out for an overall rank."""
+    if entry is None:
+        return BLANK
+    parts = []
+    if entry.value is not None:
+        parts.append(f"{entry.value:g}")
+    if entry.pos_rank is not None:
+        parts.append(f"{position or '#'}{format_rank(entry.pos_rank)}")
+    if entry.bid:
+        parts.append(entry.bid)
+    if entry.tier and entry.tier != "featured":
+        parts.append(entry.tier)
+    return " · ".join(parts) or BLANK
+
+
+def waiver_legend(boards) -> str:
+    """Where each Tuesday column came from."""
+    return "Columns — " + "; ".join(f"{b.short}: {b.label}" for b in boards) + "."

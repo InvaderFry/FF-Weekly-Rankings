@@ -10,7 +10,9 @@ from __future__ import annotations
 from datetime import date
 from typing import Optional, Sequence
 
+from ..output.board import waiver_cell, waiver_legend
 from ..output.render import DEPTH_LEGEND, md_cell
+from .board import board_marker, board_reasons, bundles_read, cell_position
 from .models import WaiverBundle, WaiverTarget
 
 
@@ -195,6 +197,32 @@ def _mentions_section(bundle: WaiverBundle) -> list[str]:
     return lines
 
 
+def _expert_board_section(bundle: WaiverBundle) -> list[str]:
+    """Every free agent a writer named, each writer's reading side by side."""
+    boards = bundle.expert_boards
+    if not boards:
+        return []
+    lines = ["### What the writers say", ""]
+    if bundle.expert_rows:
+        header = ["Player", "Pos", "Team", *[b.short for b in boards], "This tool"]
+        lines.append("| " + " | ".join(header) + " |")
+        lines.append("|" + "|".join("---" for _ in header) + "|")
+        for row in bundle.expert_rows:
+            cells = [md_cell(row.player.name), row.player.position, row.player.team or "FA",
+                     *[md_cell(waiver_cell(row.entries.get(b.source_id), cell_position(b, row.player)))
+                       for b in boards],
+                     md_cell(row.tool or "—")]
+            lines.append("| " + " | ".join(cells) + " |")
+        lines.append("")
+    else:
+        lines += ["_No free agent in this league was named by a writer this week._", ""]
+    lines.append(f"_{md_cell(waiver_legend(boards))}_")
+    for reason in board_reasons(boards):
+        lines.append(f"- {md_cell(reason)}")
+    lines.append("")
+    return lines
+
+
 def render_bundle(bundle: WaiverBundle, heading: str = "###") -> list[str]:
     """One league's section."""
     lines: list[str] = []
@@ -204,6 +232,7 @@ def render_bundle(bundle: WaiverBundle, heading: str = "###") -> list[str]:
         lines += [f"> **{bundle.banner}**", ""]
     if bundle.caveat:
         lines += [f"> ⚠️ {bundle.caveat}", ""]
+    lines += _expert_board_section(bundle)
     lines += _adds_table(bundle)
     lines += _alternates_table(bundle)
     lines += _drops_table(bundle)
@@ -252,4 +281,8 @@ def render_waiver_digest(week: int, bundles: Sequence[WaiverBundle],
                 sources.append(source)
     if sources:
         lines += ["**Sources**: " + ", ".join(f"[{a}]({u})" for a, u in sources), ""]
+    if any(b.expert_boards for b in bundles):
+        # Invisible in the rendered issue; read back by the Tuesday retry gate.
+        from ..season import season_year
+        lines += [board_marker(season_year(), week, bundles_read(bundles)), ""]
     return "\n".join(lines)
