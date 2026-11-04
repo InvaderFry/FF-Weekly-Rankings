@@ -161,11 +161,6 @@ jobs:
             --all-leagues --report waivers.md --dashboard ./site/waivers.html \
             --discord --adds-changed-since previous-waivers.md --url "$WAIVERS_URL"
 
-      # Recorded in the values report, so a retry knows the refresh is done.
-      - name: Mark the waivers refresh done
-        if: steps.refresh.outcome == 'success'
-        run: python -m ff_startsit.workflow refreshed-marker values.md
-
       # Same decision as the Discord gate above. When it fired, record the
       # update on the waiver issue, so the 02:30 UTC retry compares with it
       # rather than with Tuesday's post and doesn't send the update twice.
@@ -195,12 +190,22 @@ jobs:
       # The start/sit page (and waivers.html, if the refresh above failed) is
       # copied from the live site rather than re-scored; if a page can't be
       # fetched, the deploy below is skipped and the live site stays as it is
-      # (workflow.restore_pages / verify_site).
-      - name: Keep the published start/sit and waiver pages
+      # (workflow.restore_pages / verify_site). When only the waivers refresh
+      # justifies this deploy, the published values page is kept too: this
+      # run's values.html had nothing new, and may have read *fewer* charts
+      # (one briefly unreachable) than the page it would replace.
+      - name: Keep the published pages this run didn't refresh
         if: steps.deploy_gate.outputs.deploy == 'true'
+        env:
+          VALUES_NEWS: ${{ steps.news.outputs.news }}
         run: |
           OWNER="${GITHUB_REPOSITORY%%/*}"; REPO="${GITHUB_REPOSITORY##*/}"
-          python -m ff_startsit.workflow restore "https://${OWNER,,}.github.io/${REPO}" index.html waivers.html
+          PAGES=(index.html waivers.html)
+          if [ "$VALUES_NEWS" != "true" ]; then
+            rm -f site/values.html
+            PAGES+=(values.html)
+          fi
+          python -m ff_startsit.workflow restore "https://${OWNER,,}.github.io/${REPO}" "${PAGES[@]}"
 
       - name: Post / update issue
         id: issue
@@ -241,6 +246,25 @@ jobs:
         if: steps.site.outputs.complete == 'true' && !inputs.artifact_only
         id: deployment
         uses: actions/deploy-pages@v5
+
+      # Only now is this week's waivers refresh done: rebuilt *and* live. The
+      # marker goes on the values issue, where the retry's refresh-needed check
+      # reads it. Recorded any earlier, a failed restore or deploy left the
+      # retry believing the refresh had landed, and Tuesday's page stood.
+      - name: Record the waivers refresh
+        if: ${{ !inputs.artifact_only && steps.refresh.outcome == 'success' && steps.deployment.outcome == 'success' }}
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          MARKER=$(python -m ff_startsit.workflow refreshed-marker values.md)
+          TITLE=$(python -m ff_startsit.workflow identity values.md "trade values")
+          NUM=$(gh issue list --state open --search "in:title \"$TITLE\"" \
+                --json number,title --jq ".[] | select(.title==\"$TITLE\") | .number" | head -1)
+          if [ -n "$NUM" ] && [ -n "$MARKER" ]; then
+            printf 'Waivers page refreshed and deployed.\n\n%s\n' "$MARKER" > refreshed.md
+            gh issue comment "$NUM" --body-file refreshed.md
+          fi
 
       - name: Upload test artifacts
         if: inputs.artifact_only && steps.site.outputs.complete == 'true'

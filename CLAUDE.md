@@ -553,11 +553,16 @@ at the position, with blend score, FP, CBS and Boone side by side.
   compares with the update rather than sending it twice. `workflow.py
   adds-changed` is the same decision, for the comment step.
   The refresh is gated on **its own record**, not on the values report's news:
-  a successful refresh appends `<!-- ff-waivers-refreshed season week -->` to
-  the values report, and `workflow.py refresh-needed` runs it again on the retry
-  whenever the published report lacks it — that retry may find no new charts,
-  and gating on chart news left Tuesday's page standing after a failed first
-  refresh. The site deploys when either has something. A manual `boone_chart`
+  once a refresh is rebuilt *and deployed*, a comment on the values issue
+  carries `<!-- ff-waivers-refreshed season week -->`, and `workflow.py
+  refresh-needed` runs it again on the retry whenever the issue lacks it — that
+  retry may find no new charts, and gating on chart news left Tuesday's page
+  standing after a failed first refresh. The marker is posted only after the
+  Pages deploy succeeds: recorded before it, a failed restore or deploy left
+  the retry believing the refresh had landed. The site deploys when either has
+  something, and when only the refresh justifies it the **published**
+  values.html is restored rather than this run's, which had nothing new and may
+  have read fewer charts than the page it would replace. A manual `boone_chart`
   URL is passed to both passes (`waivers --boone-chart`), so the waiver page and
   its veto read the same charts the values page does. Manual runs always publish. The decision
   is `waivers.board.report_has_news`, shared by `cmd_waivers` and
