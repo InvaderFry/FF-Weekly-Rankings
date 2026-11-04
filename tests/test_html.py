@@ -133,7 +133,7 @@ def test_build_multi_dashboard_html_one_section_per_league():
     html = build_multi_dashboard_html(3, bundles, generated_on="2026-06-24")
 
     assert html.startswith("<!doctype html>")
-    assert html.count("<details class='league'") == 2
+    assert html.count("<section class='league-panel'") == 2
     assert "work — PPR" in html and "dynasty — HALF" in html
     assert "AlphaWork" in html and "BravoDyno" in html
     assert "2 league(s)" in html

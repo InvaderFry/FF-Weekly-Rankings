@@ -487,7 +487,7 @@ def test_league_notes_render_inside_their_own_league_section():
     assert out.index("Scores are normalized") > footer
 
 
-def test_html_league_notes_render_inside_their_own_details_block():
+def test_html_league_notes_render_inside_their_own_league_panel():
     a = _bundle(label="workTG")
     a.league_notes.append("Season-long ranks cover 270/278 players.")
     b = _bundle(label="AaronRun")
@@ -495,11 +495,13 @@ def test_html_league_notes_render_inside_their_own_details_block():
     b.notes.append("Shared methodology note.")
 
     html = build_waivers_html(1, [a, b], "2026-09-08")
-    # Each coverage line lands before its league's </details> closes...
-    assert html.index("270/278") < html.index("AaronRun")
-    assert html.index("314/330") < html.rindex("</details>")
+    first = html[html.index("id='league-0'"):html.index("id='league-1'")]
+    second = html[html.index("id='league-1'"):html.index("</div><script")]
+    # Each coverage line lands inside its own league's panel...
+    assert "270/278" in first and "314/330" not in first
+    assert "314/330" in second
     # ...and the run-wide note trails every league section.
-    assert html.index("Shared methodology note") > html.rindex("</details>")
+    assert html.index("Shared methodology note") > html.index("</div><script")
 
 
 # --- no_trades_reason ------------------------------------------------------

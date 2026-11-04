@@ -554,6 +554,90 @@ class WaiverBundle:
             players.sort(key=lambda p: p.name)
         return ordered
 
+    def moves(self) -> list[tuple[str, str]]:
+        """The league's report in a few plain sentences, as (action, detail) pairs.
+
+        The full report runs to dozens of rows per league, with the actual
+        instruction ("claim Coleman, drop Charbonnet") starting several screens
+        down. This repeats what the sections below already decided, in the
+        order a reader acts on it: claims, then what didn't fit, then what was
+        held back, trades, stashes and bye-week holes.
+
+        It is a **restatement, never a second decision**: every sentence is
+        templated from a field the tables render, so the summary cannot claim
+        anything the page beneath it doesn't show, and it stays testable
+        offline. An empty list means there is nothing to restate: the preseason
+        refusal (whose banner explains itself) or a report with no section
+        filled.
+        """
+        out: list[tuple[str, str]] = []
+        for t in self.adds:
+            p = t.score.player
+            action = (f"Claim {p.name} ({p.position}), drop {t.drop_label}."
+                      if t.drop is not None else f"Claim {p.name} ({p.position}).")
+            detail = []
+            if t.bid:
+                detail.append(_sentence(t.bid))
+            named = next((r for r in t.reasons if r.startswith("named this week by ")), None)
+            if named:
+                detail.append(_sentence(named))
+            out.append((action, " ".join(detail)))
+        if not self.adds:
+            reason = self.no_adds_reason()
+            if reason:
+                out.append(("No claims this week.", reason))
+        if self.alternates:
+            out.append(("Also worth adding if you free a spot:",
+                        _name_list([f"{t.score.player.name} ({t.score.player.position})"
+                                    for t in self.alternates]) + "."))
+        if self.held_back:
+            # "Name (POS): why" lines (build.py); one sentence per distinct why,
+            # so three kickers held back for the same reason read as one line.
+            by_reason: dict[str, list[str]] = {}
+            for line in self.held_back:
+                who, sep, why = line.partition(": ")
+                by_reason.setdefault(why if sep else "", []).append(who if sep else line)
+            for why, who in by_reason.items():
+                out.append(("Held back:", _name_list(who) + (f" — {why}." if why else ".")))
+        if self.trades:
+            idea = self.trades[0]
+            send = ", ".join(s.player.name for s in idea.you_send)
+            get = ", ".join(s.player.name for s in idea.you_get)
+            more = len(self.trades) - 1
+            out.append((f"Trade idea with {idea.partner}:",
+                        f"send {send}, get {get}." +
+                        (f" {more} more idea{'s' if more > 1 else ''} below." if more else "")))
+        if self.stashes:
+            out.append(("Stash:", _name_list(
+                [f"{s.score.player.name} ({s.score.player.position})"
+                 for s in self.stashes]) + "."))
+        if self.byes:
+            out.append(("Bye-week hole:", "; ".join(
+                f"Week {g.week} leaves you {g.available} healthy {g.position} "
+                f"for {g.needed} slot{'s' if g.needed != 1 else ''}"
+                for g in self.byes) + "."))
+        return out
+
+
+#: How many names a ``moves`` sentence lists before "and N more".
+MOVES_MAX_NAMES = 4
+
+
+def _sentence(text: str) -> str:
+    """Capitalize and terminate a reason fragment ("worth your top waiver claim")."""
+    text = text.strip()
+    if not text:
+        return text
+    text = text[0].upper() + text[1:]
+    return text if text.endswith((".", "!", "?")) else text + "."
+
+
+def _name_list(names: list[str]) -> str:
+    """A short comma list, capped at ``MOVES_MAX_NAMES`` with the rest counted."""
+    if len(names) <= MOVES_MAX_NAMES:
+        return ", ".join(names)
+    return f"{', '.join(names[:MOVES_MAX_NAMES])} and {len(names) - MOVES_MAX_NAMES} more"
+
 
 def _join(items: list[str]) -> str:
     """Oxford-comma join for the short position lists the reasons above build."""

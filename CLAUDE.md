@@ -1126,6 +1126,32 @@ multi-league message still fits Discord's 10-embed / 6000-char limits.
 `chatops.py` parses `/rank RB`-style issue comments into CLI argv for the Actions
 bot (`/waivers` and `/waivers all` included).
 
+**The waivers page opens each league with "Your moves"** (`WaiverBundle.moves`,
+rendered by `html._waiver_moves`), then the decision tables, then the research
+(the writers' board and roster chart values) that used to open the section and
+push the claims several screens down. `moves` is a **restatement, never a second
+decision**: every sentence is templated from a field a table below renders, so
+it cannot say what the page doesn't, and it stays testable offline. Don't
+"upgrade" it to model-written prose. On both dashboards `DataStatus.html` folds
+the per-source detail into a `<details>`, but a **skipped league and its reason
+stay visible**: a failed league vanishes from the page, so its absence is the one
+thing that must never be folded away. The markdown digest keeps the flat list.
+
+With more than one league **all three pages are tabbed** by one shared
+`html._league_tabs(bundles, body)`: CSS radio buttons, so the tabs work with
+scripting off, plus a small inline script for the `<page>.html#<league>` deep
+link (`league_slugs`) and remembering the viewer's last league in `localStorage`
+under one key for every page (wrapped in try/catch; a convenience, never state).
+"All leagues" shows every section. `_document` wraps every `<table>` in a
+sideways-scrolling `div.tablewrap` with a pinned first column
+(`_scrollable_tables`), because a table wider than a phone used to widen the
+whole page; anything that styles a table by sibling selector (the board's
+"Show all" toggle) must target `.tablewrap`, not `table`. The writers' board shows the top of its list
+(at least `BOARD_MIN_ROWS`, deep enough for everyone two writers named) plus
+every row the tool acted on (`board_visible_keys`), and folds the rest and their
+quotes behind a "Show all" checkbox. Both are display only: every league and
+every row stays in the page, and the markdown digest and Discord are untouched.
+
 **`Recommendation.lone_candidate` collapses a section that carries no reading.**
 A position with one rostered player rendered as a header, a table whose every
 signal column was blank, a note explaining why they were blank, and a verdict
