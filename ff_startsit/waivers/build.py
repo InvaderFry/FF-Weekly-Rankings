@@ -457,13 +457,18 @@ def _stream_rows(index: dict, pool: Sequence[PoolPlayer], my_scores: Sequence[Pl
         for s in my_scores:
             if s.player.position != pos:
                 continue
+            on_bye = s.player.team in bye_teams
             if s.player.key in dropped:
-                status = f"yours: swap for {dropped[s.player.key]}"
-            elif s.player.team in bye_teams:
+                status = (f"yours: on bye, swap for {dropped[s.player.key]}" if on_bye
+                          else f"yours: swap for {dropped[s.player.key]}")
+            elif on_bye:
                 status = "yours: on bye"
             else:
                 status = "yours: keep"
-            out.append(StreamRow(s.player, True, s.final, ecr(s), ranks(s.player), status))
+            # A player on bye has no ECR, so his blend is an artefact of what's
+            # left (Boswell read 100.0): show no score rather than a fake one.
+            final = None if on_bye else s.final
+            out.append(StreamRow(s.player, True, final, ecr(s), ranks(s.player), status))
         fas = [score for _, score in _add_candidates(index, pool, rules)
                if score.player.position == pos]
         fas.sort(key=lambda s: ecr(s) or 999)

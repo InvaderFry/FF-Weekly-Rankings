@@ -332,7 +332,7 @@ def _waiver_adds_table(bundle) -> str:
         "<th>Drop for him</th><th>Bid</th><th>Why</th></tr></thead><tbody>"
     ]
     for t in bundle.adds:
-        drop = t.drop.player.name if t.drop else "—"
+        drop = t.drop_label
         why = "; ".join(t.reasons[1:]) or "—"
         depth = "—" if t.depth_ratio is None else f"{t.depth_ratio:.2f}"
         rows.append(

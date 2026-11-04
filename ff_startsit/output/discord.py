@@ -256,7 +256,7 @@ _WAIVER_COLOR = 0x5865F2
 def _waiver_add_lines(bundle) -> list[str]:
     lines: list[str] = []
     for t in bundle.adds:
-        drop = f" — drop {t.drop.player.name}" if t.drop else ""
+        drop = f" — drop {t.drop_label}" if t.drop else ""
         bid = f" · {t.bid}" if t.bid else ""
         lines.append(f"**{t.score.player.name}** ({t.score.player.position})"
                      f"{drop}{bid}")

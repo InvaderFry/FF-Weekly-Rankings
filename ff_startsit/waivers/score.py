@@ -489,7 +489,11 @@ def _build_target(score: PlayerScore, ratio: float, drop: Optional[PlayerScore],
     genuinely absent — a roster spot.
     """
     margin = None
-    if (drop is not None and drop.player.position == score.player.position
+    # No margin for a bye-week stream: the player on bye has no ECR, so his
+    # score is an artefact of the signals that remain (Boswell read 100.0 and
+    # printed "+-13.5") and the difference measures nothing.
+    if (drop is not None and not bye_stream
+            and drop.player.position == score.player.position
             and score.final is not None and drop.final is not None):
         margin = score.final - drop.final
     target = WaiverTarget(

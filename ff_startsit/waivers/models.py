@@ -148,6 +148,15 @@ class WaiverTarget:
     #: ``DropCandidate.bye_stream``); ``add_reasons`` says so.
     bye_stream: bool = False
 
+    @property
+    def drop_label(self) -> str:
+        """The Drop column: the player's name, marked when he is on bye. The
+        adds table hides ``reasons[0]`` because it repeats this column, so the
+        bye has to be said here or it is said nowhere."""
+        if self.drop is None:
+            return "—"
+        return f"{self.drop.player.name} (on bye)" if self.bye_stream else self.drop.player.name
+
 
 @dataclass
 class DropCandidate:

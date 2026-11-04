@@ -37,7 +37,7 @@ def _adds_table(bundle: WaiverBundle) -> list[str]:
     lines = ["| Add | Pos | Depth | Drop for him | Bid | Why |",
              "|---|---|---:|---|---|---|"]
     for t in bundle.adds:
-        drop = t.drop.player.name if t.drop else "—"
+        drop = t.drop_label
         # A margin only exists when the add and his drop share a position; across
         # positions the two scores came from different candidate sets and their
         # difference is not a number to print.
