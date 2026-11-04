@@ -352,6 +352,9 @@ class WaiverBundle:
     stream_rows: dict[str, list[StreamRow]] = field(default_factory=dict)
     #: The expert column headers ``stream_rows`` carries, in order.
     stream_columns: list[str] = field(default_factory=list)
+    #: The weekly K/DEF boards behind ``stream_rows``, kept so the retry marker
+    #: can record which lists were read (``board.weekly_read``).
+    weekly_boards: list = field(default_factory=list)
     #: Players in an IR/reserve slot who could be cut. Never paired with an add:
     #: dropping one frees an IR slot, not the roster spot an add needs.
     ir_drops: list[DropCandidate] = field(default_factory=list)

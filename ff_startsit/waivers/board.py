@@ -153,11 +153,36 @@ def run_mode(items) -> str:
 
 
 def bundles_read(bundles) -> list[str]:
-    """Writer boards read in any league this run."""
+    """Writer boards read in any league this run, plus this week's K/DEF lists.
+
+    The K/DEF lists (CBS consensus, Boone's weekly) can veto a streaming swap,
+    and both tend to post Tuesday evening — after the first pass and before the
+    retry. Leaving them out of the marker made that retry read the lists and
+    then decide there was nothing new, so the published picks never saw them.
+    They are recorded per position (``cbs_consensus:K``), and only where the
+    list actually ranked one of the players in the table: a list that was
+    fetched but ranked nobody we asked about gave the report nothing.
+    """
     seen: set[str] = set()
     for bundle in bundles:
         seen.update(read_sources(getattr(bundle, "expert_boards", [])))
+        seen.update(weekly_read(bundle))
     return sorted(seen)
+
+
+def weekly_read(bundle) -> list[str]:
+    """``source:POS`` for each weekly K/DEF list that ranked someone in the table."""
+    ids: list[str] = []
+    rows = getattr(bundle, "stream_rows", None) or {}
+    for board in getattr(bundle, "weekly_boards", None) or []:
+        if ALL_POSITIONS in board.unavailable:
+            continue
+        for pos, pos_rows in rows.items():
+            if pos in board.unavailable:
+                continue
+            if any(r.player.key in board.entries for r in pos_rows):
+                ids.append(f"{board.source_id}:{pos}")
+    return ids
 
 
 def has_news(read: Iterable[str], previous_text: Optional[str], season: int, week: int,

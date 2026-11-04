@@ -192,3 +192,36 @@ def test_without_writers_nothing_changes(tmp_path):
     b = _bundle(tmp_path, pool, dict(RANKS, f4=3))
     assert b.held_back == [] and b.stream_rows == {}
     assert all("blend's call" not in r for t in b.adds for r in t.reasons)
+
+
+# --- the Tuesday retry gate -------------------------------------------------
+def _kicker_weekly(players, week, scoring):
+    return [_board("cbs_consensus", "CBS", [("f4", 14), ("m9", 2)]),
+            _board("boone_weekly", "Boone", unavailable={ALL_POSITIONS: "not posted yet"})]
+
+
+def test_the_marker_records_which_kdef_lists_were_read(tmp_path):
+    from ff_startsit.waivers.board import bundles_read
+    pool = [PoolPlayer(_p("f4", "Free K", "K"))]
+    b = _bundle(tmp_path, pool, dict(RANKS, f4=3), weekly_boards=_kicker_weekly)
+    read = bundles_read([b])
+    assert "cbs_consensus:K" in read
+    assert not any(r.startswith("boone_weekly") for r in read)   # not posted yet
+    assert "cbs_consensus:DEF" not in read                       # ranked none of ours
+
+
+def test_a_retry_that_finds_the_kdef_lists_republishes(tmp_path):
+    """The lists post Tuesday evening: after the 20:30 UTC pass, before the
+    01:30 UTC retry. The retry must count them as news, or the published picks
+    never see them."""
+    from ff_startsit.waivers.board import report_has_news
+    pool = [PoolPlayer(_p("f4", "Free K", "K"))]
+    ranks = dict(RANKS, f4=3)
+
+    def nothing_yet(players, week, scoring):
+        return [_board("cbs_consensus", "CBS", unavailable={ALL_POSITIONS: "page down"}),
+                _board("boone_weekly", "Boone", unavailable={ALL_POSITIONS: "not posted yet"})]
+    first = render_waiver_digest(9, [_bundle(tmp_path, pool, ranks, weekly_boards=nothing_yet)])
+    retry = render_waiver_digest(9, [_bundle(tmp_path, pool, ranks, weekly_boards=_kicker_weekly)])
+    assert report_has_news(retry, first)
+    assert not report_has_news(retry, retry)          # the same lists again is not news

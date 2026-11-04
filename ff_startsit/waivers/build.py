@@ -366,6 +366,7 @@ def build_bundle(settings: Settings, label: str, provider: LeagueViewProvider,
         bundle.held_back = [f"{s.player.name} ({s.player.position}): {why}" for s, why in held]
     if weekly:
         bundle.stream_columns = [b.short for b in weekly]
+        bundle.weekly_boards = list(weekly)
         bundle.stream_rows = _stream_rows(index, pool, my_scores, rules, bundle, weekly,
                                           bye_teams, held)
 

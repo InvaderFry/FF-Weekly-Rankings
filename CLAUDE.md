@@ -529,7 +529,11 @@ at the position, with blend score, FP, CBS and Boone side by side.
   because with nothing read all three are "Week 1" with the same read list,
   and a refusal or rehearsal already posted would suppress the live report.
   The values sheet records `read` per chart position (`boone_trade_values:TE`),
-  since Boone's charts post one at a time. Manual runs always publish. The decision
+  since Boone's charts post one at a time. The marker also records the weekly
+  K/DEF lists per position (`cbs_consensus:K`, `boone_weekly:DEF`,
+  `board.weekly_read`), counted only where the list ranked a player in the K/DEF
+  table: both post Tuesday evening, between the first pass and the retry, and
+  since they can veto a streaming swap, a retry that newly reads one is news. Manual runs always publish. The decision
   is `waivers.board.report_has_news`, shared by `cmd_waivers` and
   `workflow.py news`.
 
