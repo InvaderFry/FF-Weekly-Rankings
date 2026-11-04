@@ -334,7 +334,7 @@ def test_publish_all_leagues_combines_every_league(tmp_path, monkeypatch):
     assert "## work — PPR" in digest and "## dynasty — HALF" in digest
     assert "AlphaWork" in digest and "BravoDyno" in digest
     html = dash_path.read_text()
-    assert html.count("<details class='league'") == 2
+    assert html.count("<section class='league-panel'") == 2
     # One Discord message, one embed per league.
     assert len(sent["payload"]["embeds"]) == 2
 

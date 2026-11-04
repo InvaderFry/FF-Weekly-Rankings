@@ -1137,11 +1137,16 @@ the per-source detail into a `<details>`, but a **skipped league and its reason
 stay visible**: a failed league vanishes from the page, so its absence is the one
 thing that must never be folded away. The markdown digest keeps the flat list.
 
-With more than one league the page is **tabbed** (`html._league_tabs`): CSS radio
-buttons, so the tabs work with scripting off, plus a small inline script for the
-`waivers.html#<league>` deep link (`league_slugs`) and remembering the viewer's
-last tab in `localStorage` (wrapped in try/catch; a convenience, never state).
-"All leagues" shows every section. The writers' board shows the top of its list
+With more than one league **all three pages are tabbed** by one shared
+`html._league_tabs(bundles, body)`: CSS radio buttons, so the tabs work with
+scripting off, plus a small inline script for the `<page>.html#<league>` deep
+link (`league_slugs`) and remembering the viewer's last league in `localStorage`
+under one key for every page (wrapped in try/catch; a convenience, never state).
+"All leagues" shows every section. `_document` wraps every `<table>` in a
+sideways-scrolling `div.tablewrap` with a pinned first column
+(`_scrollable_tables`), because a table wider than a phone used to widen the
+whole page; anything that styles a table by sibling selector (the board's
+"Show all" toggle) must target `.tablewrap`, not `table`. The writers' board shows the top of its list
 (at least `BOARD_MIN_ROWS`, deep enough for everyone two writers named) plus
 every row the tool acted on (`board_visible_keys`), and folds the rest and their
 quotes behind a "Show all" checkbox. Both are display only: every league and

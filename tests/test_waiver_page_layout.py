@@ -90,3 +90,44 @@ def test_quotes_for_folded_rows_fold_with_them():
     assert "<h4>Why, in their words</h4>" in html
     assert "<blockquote class='quote'><strong>D&#x27;Andre 1</strong>" in html
     assert "<blockquote class='quote minor'><strong>D&#x27;Andre 16</strong>" in html
+
+
+# --- the same tabs on the start/sit and values pages ------------------------
+def test_start_sit_dashboard_uses_the_same_tabs():
+    from ff_startsit.output.html import build_multi_dashboard_html
+    from ff_startsit.report import LeagueBundle
+    bundles = [LeagueBundle("work", "ppr", {}, []), LeagueBundle("dynasty", "half", {}, [])]
+    html = build_multi_dashboard_html(3, bundles, generated_on="x")
+    assert "data-slug='work' checked>" in html and "data-slug='dynasty'>" in html
+    assert "<label for='lg-all'>All leagues</label>" in html
+    assert "<h2 class='league-title'>dynasty — HALF</h2>" in html
+    assert "<script data-tabs>" in html
+
+
+def test_the_pages_share_one_remembered_league():
+    from ff_startsit.output.html import _TABS_SCRIPT
+    assert _TABS_SCRIPT.count("'ff-league'") == 2
+
+
+# --- tables scroll inside their own box on a phone ---------------------------
+def test_every_table_is_wrapped_to_scroll_sideways():
+    html = build_waivers_html(9, [bundle_with_board(rows=20)], "x")
+    assert html.count("<table") == html.count("<div class='tablewrap'><table") > 0
+    assert html.count("</table>") == html.count("</table></div>")
+
+
+def test_the_board_toggle_still_reaches_rows_inside_the_wrapper():
+    html = build_waivers_html(9, [bundle_with_board(rows=20)], "x")
+    assert ".board > input.more:checked ~ .tablewrap tr.minor" in html
+    # The checkbox and the wrapper are siblings, which the ~ selector needs.
+    board = html[html.index("<div class='board'>"):]
+    assert board.index("class='more'") < board.index("<div class='tablewrap'>")
+
+
+def test_an_escaped_name_is_not_mistaken_for_a_table():
+    b = bundle_with_board(rows=3)
+    b.expert_rows[0].player = b.expert_rows[0].player.__class__(
+        "x", "<table>Guy", "LV", "RB")
+    html = build_waivers_html(9, [b], "x")
+    assert "&lt;table&gt;Guy" in html
+    assert html.count("<table") == html.count("<div class='tablewrap'><table")
