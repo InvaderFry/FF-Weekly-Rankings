@@ -1169,6 +1169,17 @@ card keeps its full trade field, which also carries `no_trades_reason`) and
 links its title to the league's tab (`discord._league_links`, using the page's
 own `league_slugs`).
 
+The **start/sit issue** gets the same short-update treatment. Four passes a week
+(Thursday, Saturday, two on Sunday) post into one issue; a later pass replaces
+the body with its digest and comments `workflow.startsit_update_note`: which
+starters changed in each league since the latest published lineup ("start X
+(FLEX); bench Y"), or that none did. It reads that off the `ff-lineup` marker
+`render_multi_digest` appends (`report.lineup_marker`, base64 JSON so no player
+name can break the HTML comment), and the note ends with this pass's marker so
+the next pass compares with it rather than with Thursday's. Moving the same
+players between slots (RB to FLEX) is deliberately not a change. Discord for
+start/sit is unchanged: every pass still posts its full summary.
+
 With more than one league **all three pages are tabbed** by one shared
 `html._league_tabs(bundles, body)`: CSS radio buttons, so the tabs work with
 scripting off, plus a small inline script for the `<page>.html#<league>` deep

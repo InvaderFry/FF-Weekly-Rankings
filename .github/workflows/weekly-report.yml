@@ -21,9 +21,9 @@ name: Weekly start/sit report
 # That is why Sunday fires twice rather than simply moving earlier: the 11:00
 # pass is the guaranteed-to-land floor, and the 13:00 pass supersedes it with
 # post-inactives data whenever it arrives in time. The issue step matches on
-# the season+week title and comments on the existing issue, so the second pass
-# appends rather than duplicating, and the shared Pages concurrency group makes
-# the two deploys queue instead of race.
+# the season+week title: a later pass replaces that issue's body with its digest
+# and comments only the lineup changes, rather than filing a duplicate, and the
+# shared Pages concurrency group makes the two deploys queue instead of race.
 on:
   schedule:
     - cron: "0 15 * * 4"   # Thursday ~15:00 UTC (≈10am CT) -- TNF is ~7:15pm CT
@@ -167,8 +167,18 @@ jobs:
           NUM=$(gh issue list --state open --search "in:title \"$TITLE\"" \
                 --json number,title --jq ".[] | select(.title==\"$TITLE\") | .number" | head -1)
           if [ -n "$NUM" ]; then
+            # A later pass replaces the body with its full digest (GitHub keeps
+            # the edit history) and comments only which starters changed
+            # (workflow.startsit_update_note), instead of the whole digest again.
             echo "Updating issue #$NUM"
-            gh issue comment "$NUM" --body-file report.md
+            OWNER="${GITHUB_REPOSITORY%%/*}"; REPO="${GITHUB_REPOSITORY##*/}"
+            DASH_URL="https://${OWNER,,}.github.io/${REPO}/"
+            gh issue view "$NUM" --json body,comments \
+              --jq '.body, (.comments[].body)' > published.md
+            python -m ff_startsit.workflow startsit-note report.md published.md \
+              "$DASH_URL" "Update" > update.md
+            gh issue edit "$NUM" --body-file report.md
+            gh issue comment "$NUM" --body-file update.md
           else
             echo "Creating issue: $TITLE"
             gh issue create --title "$TITLE" --body-file report.md

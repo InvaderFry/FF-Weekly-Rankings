@@ -392,6 +392,62 @@ def update_note(report: str, previous: str, url: str = "", headline: str = "Upda
     return "\n".join(lines + [""] + markers) + "\n"
 
 
+def lineup_changes(before: dict, after: dict) -> list[str]:
+    """One line per league whose starters changed: who came in (and the slot
+    he fills) and who went out. Reshuffling the same players between slots
+    (RB to FLEX) isn't a change anyone acts on, so it isn't reported."""
+    lines: list[str] = []
+    for league in list(after) + [lg for lg in before if lg not in after]:
+        if league not in after:
+            lines.append(f"- **{league}:** not in this run (see Data status).")
+            continue
+        if league not in before:
+            lines.append(f"- **{league}:** new in this run.")
+            continue
+        was = {name for _, name in before[league] if name}
+        now = [(slot, name) for slot, name in after[league] if name]
+        came = [f"{name} ({slot})" for slot, name in now if name not in was]
+        went = sorted(was - {name for _, name in now})
+        if came or went:
+            parts = []
+            if came:
+                parts.append("start " + ", ".join(came))
+            if went:
+                parts.append("bench " + ", ".join(went))
+            lines.append(f"- **{league}:** " + "; ".join(parts) + ".")
+    return lines
+
+
+def startsit_update_note(report: str, previous: str, url: str = "",
+                         headline: str = "Update") -> str:
+    """The start/sit counterpart of ``update_note``: the comment a later pass
+    (Saturday, Sunday) posts on the week's issue instead of the whole digest.
+
+    The workflow replaces the issue body with this pass's full digest and
+    comments this: which starters changed in each league since the latest
+    published lineup, or that none did, plus a page link. It ends with this
+    pass's ``ff-lineup`` marker, so the next pass compares against it.
+    """
+    from .report import _LINEUP_MARKER, lineup_markers
+    current = lineup_markers(report)
+    lines = [f"**{headline}:** the report above now holds this run's lineups "
+             "(the earlier version is in the issue body's edit history)."]
+    if current:
+        season, week, after = current[-1]
+        earlier = [data for s_, w_, data in lineup_markers(previous)
+                   if s_ == season and w_ == week]
+        if not earlier:
+            lines += ["", "No earlier lineup in this issue to compare with."]
+        else:
+            changes = lineup_changes(earlier[-1], after)
+            lines += ["", "**Lineup changes since the last post:**", "", *changes] if changes \
+                else ["", "No lineup changes since the last post."]
+    if url:
+        lines += ["", f"[Open the start/sit page]({url})"]
+    markers = [m[0] for m in _LINEUP_MARKER.finditer(report)][-1:]
+    return "\n".join(lines + [""] + markers) + "\n"
+
+
 def main():
     if sys.argv[1] == "chatops":
         reply = chatops_reply(os.environ.get("COMMENT_BODY", ""))
@@ -413,6 +469,12 @@ def main():
         print(update_note(Path(sys.argv[2]).read_text(encoding="utf-8"),
                           previous.read_text(encoding="utf-8") if previous.exists() else "",
                           *sys.argv[4:6]), end="")
+    elif sys.argv[1] == "startsit-note":
+        # startsit-note REPORT PREVIOUS [URL] [HEADLINE]
+        previous = Path(sys.argv[3])
+        print(startsit_update_note(Path(sys.argv[2]).read_text(encoding="utf-8"),
+                                   previous.read_text(encoding="utf-8") if previous.exists() else "",
+                                   *sys.argv[4:6]), end="")
     elif sys.argv[1] == "refresh-needed":
         refresh_needed(sys.argv[2], sys.argv[3])
     elif sys.argv[1] == "refreshed-marker":
