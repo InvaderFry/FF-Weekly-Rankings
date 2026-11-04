@@ -167,7 +167,54 @@ def bundles_read(bundles) -> list[str]:
     for bundle in bundles:
         seen.update(read_sources(getattr(bundle, "expert_boards", [])))
         seen.update(weekly_read(bundle))
+        # FantasyPros fills in through the week; a retry that finds its page on
+        # the right week, or its consensus past FF_ECR_MIN_EXPERTS, is news.
+        if getattr(bundle, "ecr_week_ok", None):
+            seen.add("fantasypros_week")
+        if getattr(bundle, "ecr_full", False):
+            seen.add("fantasypros_full")
     return sorted(seen)
+
+
+# --- the Wednesday "adds changed" gate -----------------------------------------
+#
+# Wednesday's values run rebuilds waivers.html with a fuller FantasyPros
+# consensus and Boone's charts. It posts to Discord only when the claims
+# themselves changed — which add, for which drop, in which league — so a
+# Wednesday that agrees with Tuesday stays quiet. The signature rides in every
+# digest as a second invisible marker, beside the retry marker above.
+
+_ADDS_MARKER = re.compile(r"<!-- ff-adds season=(\d+) week=(\d+) sig=(\w+) -->")
+
+
+def adds_signature(bundles) -> str:
+    """A short hash of every league's claims: (league, add, drop)."""
+    import hashlib
+    lines = sorted(
+        f"{b.label}|{t.score.player.key}|{t.drop.player.key if t.drop else ''}"
+        for b in bundles for t in getattr(b, "adds", ()) or ())
+    return hashlib.sha1("\n".join(lines).encode()).hexdigest()[:12]
+
+
+def adds_marker(season: int, week: int, bundles) -> str:
+    return f"<!-- ff-adds season={season} week={week} sig={adds_signature(bundles)} -->"
+
+
+def adds_changed(current_text: str, previous_text: Optional[str]) -> bool:
+    """Whether this digest's claims differ from the last ones published for its week.
+
+    Compares against the *latest* marker for the same season and week, so a
+    Wednesday update that was already posted (and commented on the issue) is
+    what a later retry compares with. Nothing published for this week yet, or a
+    current digest without a marker, counts as changed.
+    """
+    match = _ADDS_MARKER.search(current_text or "")
+    if match is None:
+        return True
+    season, week, sig = match[1], match[2], match[3]
+    published = [s for s_, w_, s in _ADDS_MARKER.findall(previous_text or "")
+                 if s_ == season and w_ == week]
+    return not published or published[-1] != sig
 
 
 def weekly_read(bundle) -> list[str]:

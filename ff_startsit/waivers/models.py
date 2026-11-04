@@ -148,6 +148,15 @@ class WaiverTarget:
     #: ``DropCandidate.bye_stream``); ``add_reasons`` says so.
     bye_stream: bool = False
 
+    @property
+    def drop_label(self) -> str:
+        """The Drop column: the player's name, marked when he is on bye. The
+        adds table hides ``reasons[0]`` because it repeats this column, so the
+        bye has to be said here or it is said nowhere."""
+        if self.drop is None:
+            return "—"
+        return f"{self.drop.player.name} (on bye)" if self.bye_stream else self.drop.player.name
+
 
 @dataclass
 class DropCandidate:
@@ -355,6 +364,17 @@ class WaiverBundle:
     #: The weekly K/DEF boards behind ``stream_rows``, kept so the retry marker
     #: can record which lists were read (``board.weekly_read``).
     weekly_boards: list = field(default_factory=list)
+    #: FantasyPros' own statement about the weekly consensus the pass ran on:
+    #: the fewest experts in any position's list, and whether every page said
+    #: it was the requested week (``None``: couldn't tell). See ``freshness``.
+    ecr_experts: Optional[int] = None
+    ecr_week_ok: Optional[bool] = None
+    #: True when ``ecr_experts`` reached ``FF_ECR_MIN_EXPERTS``; recorded in the
+    #: retry marker so a Tuesday retry that finds a fuller consensus republishes.
+    ecr_full: bool = False
+    #: A plain note (not ``caveat``, which suppresses the empty-section
+    #: explanations) saying FantasyPros' consensus is thin or on the wrong week.
+    freshness: Optional[str] = None
     #: Players in an IR/reserve slot who could be cut. Never paired with an add:
     #: dropping one frees an IR slot, not the roster spot an add needs.
     ir_drops: list[DropCandidate] = field(default_factory=list)

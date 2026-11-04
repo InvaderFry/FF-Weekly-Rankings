@@ -148,7 +148,8 @@ def test_scrape_warns_when_the_requested_week_cannot_be_served(capsys, monkeypat
     import ff_startsit.season as season_mod
     monkeypatch.setattr(season_mod, "date_week", lambda *a, **k: 9)
 
-    html = (FIXTURES / "ecr_scrape_rb.html").read_text()
+    # The current-week page, as the calendar says: Week 9.
+    html = (FIXTURES / "ecr_scrape_rb.html").read_text().replace('"week":3', '"week":9')
 
     class _HtmlResp:
         status_code = 200
@@ -173,7 +174,8 @@ def test_week_mismatch_warns_once_not_once_per_position(capsys, monkeypatch):
     import ff_startsit.season as season_mod
     monkeypatch.setattr(season_mod, "date_week", lambda *a, **k: 9)
 
-    html = (FIXTURES / "ecr_scrape_rb.html").read_text()
+    # The current-week page, as the calendar says: Week 9.
+    html = (FIXTURES / "ecr_scrape_rb.html").read_text().replace('"week":3', '"week":9')
 
     class _HtmlResp:
         status_code = 200
@@ -235,8 +237,8 @@ class _FakeScrapeSession:
         return _FakeScrapeResp(self._html)
 
 
-def _scrape_signal():
-    html = (FIXTURES / "ecr_scrape_rb.html").read_text()
+def _scrape_signal(html=None):
+    html = html or (FIXTURES / "ecr_scrape_rb.html").read_text()
     return ECRSignal(api_key="", scoring="ppr", season=2025,
                      session=_FakeScrapeSession(html))
 
@@ -460,3 +462,30 @@ def test_no_api_key_configured_stays_quiet(capsys, monkeypatch):
     err = capsys.readouterr().err
     assert "API key is set but" not in err
     assert sig.session.api_calls == 0  # and no pointless request was made
+
+
+def test_the_page_week_beats_the_calendar(monkeypatch, capsys):
+    """Tuesday rollover: the calendar still says Week 8 but FantasyPros already
+    serves Week 9. The page states its week, so a Week 9 request is verified
+    rather than flagged, and the expert count is kept for the waiver report."""
+    import ff_startsit.season as season_mod
+    monkeypatch.setattr(season_mod, "date_week", lambda *a, **k: 8)
+    html = ((FIXTURES / "ecr_scrape_rb.html").read_text()
+            .replace('"week":3', '"week":9,"total_experts":10'))
+    sig = _scrape_signal(html)
+    sig.fetch(9, [Player(key="1", name="Patrick Runner", team="KC", position="RB")])
+    assert sig.served_wrong_week is False
+    assert sig.week_verified(9) is True and sig.min_experts(9) == 10
+    assert "not week-9" not in capsys.readouterr().err
+    line = next(l for _, l in sig.source_status)
+    assert "page says Week 9" in line and "10 experts in the consensus so far" in line
+
+
+def test_a_page_still_on_last_week_is_caught(monkeypatch, capsys):
+    """Early Tuesday: the calendar says Week 9, the page is still Week 8."""
+    import ff_startsit.season as season_mod
+    monkeypatch.setattr(season_mod, "date_week", lambda *a, **k: 9)
+    html = (FIXTURES / "ecr_scrape_rb.html").read_text().replace('"week":3', '"week":8')
+    sig = _scrape_signal(html)
+    sig.fetch(9, [Player(key="1", name="Patrick Runner", team="KC", position="RB")])
+    assert sig.served_wrong_week is True and sig.week_verified(9) is False

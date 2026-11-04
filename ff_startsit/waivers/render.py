@@ -37,7 +37,7 @@ def _adds_table(bundle: WaiverBundle) -> list[str]:
     lines = ["| Add | Pos | Depth | Drop for him | Bid | Why |",
              "|---|---|---:|---|---|---|"]
     for t in bundle.adds:
-        drop = t.drop.player.name if t.drop else "—"
+        drop = t.drop_label
         # A margin only exists when the add and his drop share a position; across
         # positions the two scores came from different candidate sets and their
         # difference is not a number to print.
@@ -319,6 +319,8 @@ def render_bundle(bundle: WaiverBundle, heading: str = "###") -> list[str]:
         lines += [f"> **{bundle.banner}**", ""]
     if bundle.caveat:
         lines += [f"> ⚠️ {bundle.caveat}", ""]
+    if bundle.freshness:
+        lines += [f"> ⏳ {md_cell(bundle.freshness)}", ""]
     lines += _expert_board_section(bundle)
     lines += _adds_table(bundle)
     lines += _alternates_table(bundle)
@@ -379,6 +381,9 @@ def render_waiver_digest(week: int, bundles: Sequence[WaiverBundle],
     from ..season import season_year
     from .board import run_mode
     lines += [board_marker(season_year(), week, bundles_read(bundles), run_mode(bundles)), ""]
+    # Read back by Wednesday's rebuild, which posts to Discord only if these changed.
+    from .board import adds_marker
+    lines += [adds_marker(season_year(), week, bundles), ""]
     return "\n".join(lines)
 
 

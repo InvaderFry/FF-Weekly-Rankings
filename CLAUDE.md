@@ -533,7 +533,25 @@ at the position, with blend score, FP, CBS and Boone side by side.
   K/DEF lists per position (`cbs_consensus:K`, `boone_weekly:DEF`,
   `board.weekly_read`), counted only where the list ranked a player in the K/DEF
   table: both post Tuesday evening, between the first pass and the retry, and
-  since they can veto a streaming swap, a retry that newly reads one is news. Manual runs always publish. The decision
+  since they can veto a streaming swap, a retry that newly reads one is news.
+  **FantasyPros' freshness is in it too.** Most rankers publish Wednesday or
+  later, so the Tuesday consensus is thin (Week 9's page read 10 experts on
+  Tuesday evening) and early enough can still be last week's. The scraped page
+  states both (`ecrData` `week` and `total_experts`; `ecr.page_meta`), and the
+  page's week now beats the calendar's guess for `served_wrong_week`.
+  `WaiverBundle.freshness` says so on the page (a plain note, deliberately not
+  `caveat`, which suppresses the empty-section explanations), and the marker
+  records `fantasypros_week` (page on the requested week) and
+  `fantasypros_full` (consensus at `FF_ECR_MIN_EXPERTS`, default 30), so a retry
+  that finds a fuller consensus republishes.
+- **Wednesday posts to Discord only if the adds changed.** Every waiver digest
+  carries a second marker, `<!-- ff-adds season week sig= -->`, a hash of each
+  league's (add, drop) claims (`board.adds_signature`). `values.yml`'s waivers
+  rebuild runs with `--discord --adds-changed-since` against the waiver issue:
+  same claims, no message; changed claims, a summary-only "Wednesday update"
+  (no expert board) and a comment on the waiver issue, so the 02:30 UTC retry
+  compares with the update rather than sending it twice. `workflow.py
+  adds-changed` is the same decision, for the comment step. Manual runs always publish. The decision
   is `waivers.board.report_has_news`, shared by `cmd_waivers` and
   `workflow.py news`.
 

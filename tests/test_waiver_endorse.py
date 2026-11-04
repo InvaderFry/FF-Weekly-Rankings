@@ -225,3 +225,49 @@ def test_a_retry_that_finds_the_kdef_lists_republishes(tmp_path):
     retry = render_waiver_digest(9, [_bundle(tmp_path, pool, ranks, weekly_boards=_kicker_weekly)])
     assert report_has_news(retry, first)
     assert not report_has_news(retry, retry)          # the same lists again is not news
+
+
+# --- a bye-week kicker in the tables ------------------------------------------
+class _Everyone(Signal):
+    """Reads every player, like the injury signal: what gives a kicker on bye a
+    blend score at all (Boswell read 100.0 on the live Week 9 page)."""
+    name = "injury"
+    higher_is_better = True
+
+    def is_available(self):
+        return True
+
+    def fetch(self, week, players):
+        return {p.key: SignalValue(raw=100.0 if p.key == "m9" else 90.0, available=True)
+                for p in players}
+
+
+def test_a_kicker_on_bye_shows_no_fake_score_or_margin(tmp_path):
+    from ff_startsit.sources.schedule import ScheduleProvider
+
+    class KickerBye(ScheduleProvider):
+        def for_week(self, week):
+            return {t: object() for t in (("KC", "SF") if week == 9 else ("KC", "SF", "PIT"))}
+
+    mine = [p if p.key != "m9" else _p("m9", "Chris Boswell", "K", team="PIT") for p in MINE]
+    ranks = {k: v for k, v in RANKS.items() if k != "m9"}
+    ranks["f4"] = 3
+    teams = [FantasyTeam("1", "My Squad", tuple(mine), is_mine=True, faab_spent=20.0),
+             FantasyTeam("2", "Rival FC", tuple(THEIRS))]
+    b = build_bundle(Settings(data_dir=tmp_path), "AndyLOT",
+                     _Provider(pool=[PoolPlayer(_p("f4", "Cam Little", "K"))], teams=teams),
+                     mine, 9, schedule=KickerBye(), signals=[_ECR(ranks), _Everyone()],
+                     include_columns=False, preseason=False, rehearse=False,
+                     include_trades=False,
+                     weekly_boards=lambda players, week, scoring: [
+                         _board("cbs_consensus", "CBS", [("f4", 3)])])
+    add = next(t for t in b.adds if t.score.player.key == "f4")
+    assert add.bye_stream and add.margin is None
+    assert add.drop_label == "Chris Boswell (on bye)"
+    row = next(r for r in b.stream_rows["K"] if r.mine)
+    assert row.final is None and row.status == "yours: on bye, swap for Cam Little"
+    md = render_waiver_digest(9, [b])
+    assert "| Chris Boswell (on bye) |" in md and "+-" not in md
+    assert "| **Chris Boswell** (yours) | PIT | — |" in md
+    html = build_waivers_html(9, [b], "2026-11-04")
+    assert "Chris Boswell (on bye)" in html

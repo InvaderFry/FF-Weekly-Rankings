@@ -190,6 +190,28 @@ def issue_title(report, kind):
     return f"{match[1]} Week {match[2]} {kind}"
 
 
+def publish_adds_changed(report_path, previous_path, output=None):
+    """Whether Wednesday's rebuilt waiver report changed the adds.
+
+    The decision is ``waivers.board.adds_changed`` — the same one ``cmd_waivers``
+    made for Discord — written as ``changed=true|false`` to ``$GITHUB_OUTPUT``
+    so the workflow comments on the waiver issue exactly when Discord was sent.
+    A missing report (the rebuild failed) is ``false``: nothing was posted.
+    """
+    from .waivers.board import adds_changed
+    report, previous = Path(report_path), Path(previous_path)
+    changed = report.exists() and adds_changed(
+        report.read_text(encoding="utf-8"),
+        previous.read_text(encoding="utf-8") if previous.exists() else "")
+    line = f"changed={'true' if changed else 'false'}"
+    print(line)
+    output = output or os.environ.get("GITHUB_OUTPUT")
+    if output:
+        with open(output, "a") as handle:
+            handle.write(line + "\n")
+    return changed
+
+
 def publish_news(report_path, previous_path, output=None):
     """Whether a scheduled waiver run should publish (issue, Pages, Discord).
 
@@ -223,6 +245,8 @@ def main():
         verify_site(Path("site"))
     elif sys.argv[1] == "news":
         publish_news(sys.argv[2], sys.argv[3])
+    elif sys.argv[1] == "adds-changed":
+        publish_adds_changed(sys.argv[2], sys.argv[3])
     elif sys.argv[1] == "restore":
         args = sys.argv[3:]
         optional = "--optional" in args

@@ -147,6 +147,11 @@ class Settings:
     # bar but have no droppable body left to pair with. A ceiling, not a target:
     # the section is empty on a quiet wire and nothing pads it out.
     waiver_max_alternates: int = 5
+    # Below this many experts, FantasyPros' weekly consensus is flagged as thin
+    # on the waiver report. Early in the week most rankers haven't published
+    # (Week 9 read 10 on Tuesday evening), and every add, drop and depth ratio
+    # on the page is built on that consensus.
+    ecr_min_experts: int = 30
     # Most trade ideas to list per league. 0 disables the section.
     max_trade_ideas: int = 5
     trade_suggestions: bool = True
@@ -617,6 +622,7 @@ def load_settings(env_file: str | os.PathLike | None = None) -> Settings:
         waiver_limit=_i("FF_WAIVER_LIMIT", 150, minimum=1),
         waiver_max_adds=_i("FF_WAIVER_MAX_ADDS", 8, minimum=1),
         waiver_max_alternates=_i("FF_WAIVER_MAX_ALTERNATES", 5, minimum=0),
+        ecr_min_experts=_i("FF_ECR_MIN_EXPERTS", 30, minimum=0),
         max_trade_ideas=_i("FF_MAX_TRADE_IDEAS", 5),
         trade_suggestions=_b("FF_TRADE_SUGGESTIONS", True),
         column_scrape=_b("FF_COLUMN_SCRAPE", True),

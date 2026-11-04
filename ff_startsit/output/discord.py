@@ -256,7 +256,7 @@ _WAIVER_COLOR = 0x5865F2
 def _waiver_add_lines(bundle) -> list[str]:
     lines: list[str] = []
     for t in bundle.adds:
-        drop = f" — drop {t.drop.player.name}" if t.drop else ""
+        drop = f" — drop {t.drop_label}" if t.drop else ""
         bid = f" · {t.bid}" if t.bid else ""
         lines.append(f"**{t.score.player.name}** ({t.score.player.position})"
                      f"{drop}{bid}")
@@ -329,6 +329,8 @@ def _build_waiver_embed(bundle) -> dict:
         # differently from a quiet wire, and this embed is the copy most people
         # actually read. None means the banner below already explains it.
         description = bundle.no_adds_reason() or ""
+    if bundle.freshness:
+        description = f"{description}\n\n-# ⏳ {bundle.freshness}".strip()
     if bundle.caveat:
         description = f"**{bundle.caveat}**\n\n{description}".rstrip()
     if banner:

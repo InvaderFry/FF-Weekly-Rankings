@@ -332,7 +332,7 @@ def _waiver_adds_table(bundle) -> str:
         "<th>Drop for him</th><th>Bid</th><th>Why</th></tr></thead><tbody>"
     ]
     for t in bundle.adds:
-        drop = t.drop.player.name if t.drop else "—"
+        drop = t.drop_label
         why = "; ".join(t.reasons[1:]) or "—"
         depth = "—" if t.depth_ratio is None else f"{t.depth_ratio:.2f}"
         rows.append(
@@ -541,6 +541,8 @@ def _waiver_body(bundle) -> list[str]:
                     f"</strong></div>")
     if bundle.caveat:
         body.append(f"<div class='callout'>⚠️ {escape(bundle.caveat)}</div>")
+    if bundle.freshness:
+        body.append(f"<div class='callout'>⏳ {escape(bundle.freshness)}</div>")
     body.append(_waiver_expert_board(bundle))
     body.append(_waiver_adds_table(bundle))
     body.append(_waiver_alternates_table(bundle))

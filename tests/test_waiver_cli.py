@@ -435,3 +435,18 @@ def test_waivers_without_writers_fetches_no_charts(monkeypatch, tmp_path):
     assert _REAL_KDEF_BOARDS(_settings(tmp_path)) is None     # nothing to fetch
     assert cli.cmd_waivers(_Args(report=report), _settings(tmp_path)) == 0
     assert "My roster: rest-of-season value" not in report.read_text()
+
+
+def test_wednesday_posts_discord_only_when_the_adds_changed(monkeypatch, tmp_path):
+    monkeypatch.setattr(cli, "build_roster_provider", lambda *a, **k: _FakeProvider())
+    sent = _sent(monkeypatch)
+    settings = _settings(tmp_path)
+    settings.discord_webhook_url = "https://discord.test/hook"
+    tuesday = tmp_path / "tuesday.md"
+    cli.cmd_waivers(_Args(report=tuesday), settings)
+    assert cli.cmd_waivers(_Args(discord=True, adds_changed_since=tuesday), settings) == 0
+    assert sent == []                                   # same claims: quiet
+    assert cli.cmd_waivers(_Args(discord=True, adds_changed_since=tmp_path / "none.md"),
+                           settings) == 0
+    assert len(sent) == 1                               # the summary only, no board
+    assert sent[0]["content"].startswith("**Wednesday update:**")

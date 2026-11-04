@@ -1,0 +1,106 @@
+"""Tuesday's FantasyPros consensus is thin, and the report says so.
+
+Most rankers publish Wednesday or later (Week 9's page read 10 experts on
+Tuesday evening), so the waiver pass records what the page said about itself,
+the Tuesday retry republishes once the consensus fills in, and Wednesday's
+rebuild posts to Discord only when the claims themselves changed.
+"""
+
+from ff_startsit.config import Settings
+from ff_startsit.models import SignalValue
+from ff_startsit.sources.base import Signal
+from ff_startsit.waivers.board import adds_changed, bundles_read, report_has_news
+from ff_startsit.waivers.build import build_bundle
+from ff_startsit.waivers.models import FantasyTeam, PoolPlayer
+from ff_startsit.waivers.render import render_waiver_digest
+from ff_startsit.workflow import publish_adds_changed
+
+from .test_waiver_build import MINE, RANKS, THEIRS, _NoSchedule, _p, _Provider
+# The autouse fixture applies only once imported into this module.
+from .test_waiver_build import _no_journalists  # noqa: F401
+
+
+class _PagedECR(Signal):
+    """ECR whose pages state a week and an expert count, as FantasyPros' do."""
+    name = "ecr"
+    higher_is_better = False
+
+    def __init__(self, ranks, experts, page_week=9):
+        self.ranks, self.experts, self.page_week = ranks, experts, page_week
+
+    def is_available(self):
+        return True
+
+    def fetch(self, week, players):
+        return {p.key: SignalValue(raw=float(self.ranks[p.key]) if p.key in self.ranks else None,
+                                   available=p.key in self.ranks) for p in players}
+
+    def min_experts(self, week):
+        return self.experts
+
+    def week_verified(self, week):
+        return self.page_week == week
+
+
+def _bundle(tmp_path, ecr, pool=None, label="work"):
+    teams = [FantasyTeam("1", "My Squad", tuple(MINE), is_mine=True, faab_spent=20.0),
+             FantasyTeam("2", "Rival FC", tuple(THEIRS))]
+    pool = pool if pool is not None else [PoolPlayer(_p("f1", "Free Wr", "WR", team="SF"))]
+    return build_bundle(Settings(data_dir=tmp_path), label, _Provider(pool=pool, teams=teams),
+                        MINE, 9, schedule=_NoSchedule(), signals=[ecr],
+                        include_columns=False, preseason=False, rehearse=False,
+                        include_trades=False)
+
+
+def test_a_thin_consensus_is_said_on_the_page(tmp_path):
+    b = _bundle(tmp_path, _PagedECR(RANKS, experts=10))
+    assert b.ecr_experts == 10 and not b.ecr_full and b.ecr_week_ok
+    assert "has only 10 experts so far" in b.freshness
+    assert "⏳" in render_waiver_digest(9, [b])
+    assert "fantasypros_week" in bundles_read([b]) and "fantasypros_full" not in bundles_read([b])
+    assert b.adds                          # a note, not a caveat: the report still stands
+
+
+def test_a_full_consensus_says_nothing(tmp_path):
+    b = _bundle(tmp_path, _PagedECR(RANKS, experts=60))
+    assert b.ecr_full and b.freshness is None
+    assert "fantasypros_full" in bundles_read([b])
+
+
+def test_a_page_still_on_last_week_is_named(tmp_path):
+    b = _bundle(tmp_path, _PagedECR(RANKS, experts=90, page_week=8))
+    assert "isn't on Week 9 yet" in b.freshness
+    assert "fantasypros_week" not in bundles_read([b])
+
+
+def test_the_tuesday_retry_republishes_once_the_consensus_fills_in(tmp_path):
+    first = render_waiver_digest(9, [_bundle(tmp_path, _PagedECR(RANKS, experts=10))])
+    same = render_waiver_digest(9, [_bundle(tmp_path, _PagedECR(RANKS, experts=12))])
+    fuller = render_waiver_digest(9, [_bundle(tmp_path, _PagedECR(RANKS, experts=45))])
+    assert not report_has_news(same, first)        # still thin: not news
+    assert report_has_news(fuller, first)
+
+
+# --- Wednesday: Discord only if the adds changed ------------------------------
+def test_the_adds_marker_tracks_the_claims(tmp_path):
+    tuesday = render_waiver_digest(9, [_bundle(tmp_path, _PagedECR(RANKS, experts=10))])
+    same_claims = render_waiver_digest(9, [_bundle(tmp_path, _PagedECR(RANKS, experts=60))])
+    assert "<!-- ff-adds season=" in tuesday
+    assert not adds_changed(same_claims, tuesday)
+    # A better free agent on Wednesday changes the claim.
+    ranks = dict(RANKS, f3=2)
+    pool = [PoolPlayer(_p("f1", "Free Wr", "WR", team="SF")),
+            PoolPlayer(_p("f3", "Hot Wr", "WR", team="SF"))]
+    wednesday = render_waiver_digest(9, [_bundle(tmp_path, _PagedECR(ranks, experts=60), pool)])
+    assert adds_changed(wednesday, tuesday)
+    # Once the update is on the issue, a retry compares with it, not with Tuesday.
+    assert not adds_changed(wednesday, tuesday + "\n" + wednesday)
+    assert adds_changed(wednesday, "")             # nothing published yet
+
+
+def test_the_workflow_helper_agrees_and_handles_a_failed_rebuild(tmp_path):
+    tuesday = tmp_path / "prev.md"
+    tuesday.write_text(render_waiver_digest(9, [_bundle(tmp_path, _PagedECR(RANKS, experts=10))]))
+    out = tmp_path / "out.txt"
+    assert publish_adds_changed(tmp_path / "missing.md", tuesday, output=str(out)) is False
+    assert out.read_text().strip() == "changed=false"

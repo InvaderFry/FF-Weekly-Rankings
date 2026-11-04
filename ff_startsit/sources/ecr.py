@@ -75,6 +75,27 @@ def parse_api_response(payload: dict) -> list[ExternalRow]:
     return rows
 
 
+def page_meta(payload: dict) -> dict:
+    """The week and expert count a rankings payload states about itself.
+
+    Both transports carry them (the page's embedded ``ecrData`` mirrors the API
+    response): ``week`` is which week the consensus is *for*, and
+    ``total_experts`` is how many rankers are in it so far. Early in the week
+    that count is thin — Week 9's page read 10 experts on Tuesday evening —
+    because most rankers publish Wednesday or later. Missing or unparseable
+    fields are simply absent from the result.
+    """
+    out: dict = {}
+    for key, name in (("week", "week"), ("total_experts", "experts")):
+        try:
+            value = int(str(payload.get(key)).strip())
+        except (TypeError, ValueError):
+            continue
+        if value > 0:
+            out[name] = value
+    return out
+
+
 def parse_scrape_html(html: str) -> list[ExternalRow]:
     """Extract the embedded ``ecrData`` JSON from a rankings page and parse it."""
     m = _ECR_DATA_RE.search(html)
@@ -165,11 +186,13 @@ def _api_failure_reason(exc: requests.RequestException) -> str:
 
 def fetch_scrape_rows(session: requests.Session, scoring: str, position: str,
                       timeout: int = 20,
-                      filters: Optional[str] = None) -> list[ExternalRow]:
+                      filters: Optional[str] = None,
+                      meta: Optional[dict] = None) -> list[ExternalRow]:
     """Fetch rankings rows by scraping the public rankings page.
 
     ``filters`` narrows the page's embedded ``ecrData`` to the given
-    colon-separated expert ids, same as the API path.
+    colon-separated expert ids, same as the API path. Pass a dict as ``meta``
+    to receive the page's own ``page_meta`` (week, expert count).
     """
     params = {"filters": filters} if filters else None
     resp = session.get(
@@ -179,6 +202,13 @@ def fetch_scrape_rows(session: requests.Session, scoring: str, position: str,
         timeout=timeout,
     )
     resp.raise_for_status()
+    if meta is not None:
+        match = _ECR_DATA_RE.search(resp.text)
+        if match:
+            try:
+                meta.update(page_meta(json.loads(match.group(1))))
+            except ValueError:
+                pass
     if filters:
         # The modern page loads filtered ranks in JavaScript. Its embedded
         # ecrData often remains *unfiltered*, even with a valid filters query.
@@ -220,6 +250,9 @@ class ECRSignal(Signal):
         #: them must not reach the append-only results log, where it would score
         #: present-day consensus against a past week's outcomes forever.
         self.served_wrong_week: bool = False
+        #: (position, requested week) -> what the scraped page said about itself
+        #: (``page_meta``: its week and expert count).
+        self.page_meta: dict[tuple[str, int], dict] = {}
         self._rows_cache: dict[tuple[str, int], list[ExternalRow]] = {}
         self._week_warned: set[int] = set()  # warn once per week, not per position
         #: Guards the dead-key warning below. A set rather than a bool so the
@@ -290,13 +323,19 @@ class ECRSignal(Signal):
             except ValueError as exc:
                 self._warn_api_fallback(
                     f"returned a response this app could not parse ({exc})")
+        meta: dict = {}
         try:
-            rows = self._fetch_scrape(position)
+            rows = self._fetch_scrape(position, meta)
         except requests.RequestException:
             return []  # offline / page unreachable -> signal simply has no data
         self.last_source = "scrape"
-        self._warn_if_week_mismatch(week)
-        self._record_source(position, week, "public current-week page (provider week unverified)")
+        if meta:
+            self.page_meta[(position, week)] = meta
+        self._warn_if_week_mismatch(week, meta.get("week"))
+        if meta.get("week"):
+            self._record_source(position, week, f"public current-week page (page says Week {meta['week']})")
+        else:
+            self._record_source(position, week, "public current-week page (provider week unverified)")
         if not rows:
             # Reached the page but parsed nothing: the embedded ecrData blob is
             # gone or changed shape. Warn so a silently-broken scrape is visible.
@@ -336,9 +375,16 @@ class ECRSignal(Signal):
         """
         entries = []
         for (source, week), (positions, fetched) in self._source_runs.items():
+            experts = sorted(self.page_meta[(p, week)]["experts"] for p in positions
+                             if "experts" in self.page_meta.get((p, week), {}))
+            count = ""
+            if experts:
+                span = (f"{experts[0]}" if experts[0] == experts[-1]
+                        else f"{experts[0]}–{experts[-1]}")
+                count = f"; {span} experts in the consensus so far"
             entries.append((("ecr", source, week),
                             f"ECR {', '.join(positions)}: {source}; "
-                            f"requested Week {week}; fetched {fetched}"))
+                            f"requested Week {week}{count}; fetched {fetched}"))
         # Once, however many transports were tried: it is a fact about the run,
         # not about a fetch.
         if self.served_wrong_week and self._source_runs:
@@ -373,7 +419,25 @@ class ECRSignal(Signal):
               "per-journalist ranks and week-aware rankings need a working key.",
               file=sys.stderr)
 
-    def _warn_if_week_mismatch(self, week: int) -> None:
+    def week_verified(self, week: int) -> Optional[bool]:
+        """Whether every page fetched for ``week`` said it *was* that week.
+
+        ``None`` when no page stated its week (the API path, or a page whose
+        ``ecrData`` lost the field), so callers can tell "checked and wrong"
+        from "couldn't check".
+        """
+        weeks = [m["week"] for (_, w), m in self.page_meta.items() if w == week and "week" in m]
+        if not weeks:
+            return None
+        return all(w == week for w in weeks)
+
+    def min_experts(self, week: int) -> Optional[int]:
+        """The thinnest consensus fetched for ``week``, or ``None`` if unknown."""
+        counts = [m["experts"] for (_, w), m in self.page_meta.items()
+                  if w == week and "experts" in m]
+        return min(counts) if counts else None
+
+    def _warn_if_week_mismatch(self, week: int, page_week: Optional[int] = None) -> None:
         """Say so when scraped rankings can't be the week that was asked for.
 
         The public rankings page has no week selector — it always shows the
@@ -397,7 +461,9 @@ class ECRSignal(Signal):
         """
         from ..season import date_week
 
-        current = date_week()
+        # The page's own statement beats the calendar: the calendar guesses at
+        # the Tuesday rollover, the page knows which week it is serving.
+        current = page_week or date_week()
         if week != current:
             # Set before the warn-once guard: the flag gates logging on every run,
             # while the message only needs saying once per week.
@@ -418,9 +484,9 @@ class ECRSignal(Signal):
         return fetch_api_rows(self.session, self.api_key, self.season, self.scoring,
                               position, week, timeout=self.timeout)
 
-    def _fetch_scrape(self, position: str) -> list[ExternalRow]:
+    def _fetch_scrape(self, position: str, meta: Optional[dict] = None) -> list[ExternalRow]:
         return fetch_scrape_rows(self.session, self.scoring, position,
-                                 timeout=self.timeout)
+                                 timeout=self.timeout, meta=meta)
 
 
 def _canon_pos(position: str) -> str:
