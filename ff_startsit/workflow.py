@@ -59,7 +59,8 @@ RESTORE_FAILED = ".restore-failed-"
 RESTORE_ABSENT = ".restore-absent-"
 
 
-def restore_pages(base_url, directory, pages, session=None, optional=False):
+def restore_pages(base_url, directory, pages, session=None, optional=False,
+                  prefer_live=()):
     """Copy the *published* pages this run didn't build into ``directory``.
 
     The alternative, re-scoring every page in every workflow, costs Odds API
@@ -78,6 +79,14 @@ def restore_pages(base_url, directory, pages, session=None, optional=False):
     The start/sit and waiver workflows restore values.html that way, because a
     Thursday lineup page that fails to deploy costs more than a values page
     missing until the next Wednesday rebuilds it.
+
+    ``prefer_live`` names pages this run *did* build but should replace with the
+    published copy when there is one — the values page on a retry whose charts
+    had nothing new, which may have read fewer charts than the live page. The
+    built copy is the fallback: on a 404 (never published) it is kept, rather
+    than deleted with nothing to restore and the site deployed without it
+    (``kept``). Any other failure is the usual ``failed`` marker, so the deploy
+    is skipped and the live site stands.
     """
     import time
     import requests
@@ -86,9 +95,11 @@ def restore_pages(base_url, directory, pages, session=None, optional=False):
     directory.mkdir(parents=True, exist_ok=True)
     session = session or requests.Session()
     outcome = {}
+    prefer_live = set(prefer_live)
     for page in pages:
         target = directory / page
-        if target.is_file() and target.stat().st_size:
+        built = target.is_file() and target.stat().st_size
+        if built and page not in prefer_live:
             outcome[page] = "built"
             continue
         url = f"{base_url.rstrip('/')}/{page}?v={int(time.time())}"   # past the CDN cache
@@ -100,6 +111,9 @@ def restore_pages(base_url, directory, pages, session=None, optional=False):
         if status == 200 and resp.text.strip():
             target.write_text(resp.text, encoding="utf-8")
             outcome[page] = "restored"
+        elif status == 404 and built:
+            # Never published: this run's page is the only copy there is.
+            outcome[page] = "kept"
         elif status == 404:
             (directory / f"{RESTORE_ABSENT}{page}").write_text("404")
             outcome[page] = "absent"
@@ -308,10 +322,19 @@ def main():
     elif sys.argv[1] == "refreshed-marker":
         refreshed_marker(sys.argv[2])
     elif sys.argv[1] == "restore":
-        args = sys.argv[3:]
+        # restore URL page... [--optional] [--prefer-live page]...
+        args, pages, prefer = sys.argv[3:], [], []
         optional = "--optional" in args
-        restore_pages(sys.argv[2], Path("site"), [a for a in args if a != "--optional"],
-                      optional=optional)
+        it = iter(a for a in args if a != "--optional")
+        for arg in it:
+            if arg == "--prefer-live":
+                page = next(it)
+                prefer.append(page)
+                pages.append(page)
+            else:
+                pages.append(arg)
+        restore_pages(sys.argv[2], Path("site"), pages, optional=optional,
+                      prefer_live=prefer)
 
 
 if __name__ == "__main__":

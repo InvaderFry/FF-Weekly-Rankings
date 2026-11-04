@@ -562,7 +562,11 @@ at the position, with blend score, FP, CBS and Boone side by side.
   the retry believing the refresh had landed. The site deploys when either has
   something, and when only the refresh justifies it the **published**
   values.html is restored rather than this run's, which had nothing new and may
-  have read fewer charts than the page it would replace. A manual `boone_chart`
+  have read fewer charts than the page it would replace. That is
+  `restore --prefer-live values.html`, and this run's page stays the
+  **fallback**: on a 404 (never published, e.g. the first run's deploy failed)
+  it is kept rather than deleted with nothing to restore, which deployed the
+  site with no values page and recorded the refresh as done. A manual `boone_chart`
   URL is passed to both passes (`waivers --boone-chart`), so the waiver page and
   its veto read the same charts the values page does. Manual runs always publish. The decision
   is `waivers.board.report_has_news`, shared by `cmd_waivers` and

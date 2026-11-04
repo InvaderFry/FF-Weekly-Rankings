@@ -352,3 +352,62 @@ def test_a_retry_that_finds_a_missing_boone_chart_is_news():
     assert not report_has_news(retry, retry)
     gone = ExpertBoard("boone_values", "Boone", "Boone", unavailable={ALL_POSITIONS: "down"})
     assert sheets_read([Sheet([gone])]) == []
+
+
+def test_prefer_live_keeps_the_built_page_when_none_was_ever_published(tmp_path, monkeypatch):
+    """A retry with no new charts prefers the published values page, but on a
+    404 (never deployed, e.g. the first run's deploy failed) its own page is the
+    only copy: deleting it deployed the site with no values page at all."""
+    from ff_startsit.workflow import restore_pages, verify_site
+    monkeypatch.setenv("GITHUB_OUTPUT", str(tmp_path / "out"))
+    monkeypatch.setenv("GITHUB_STEP_SUMMARY", str(tmp_path / "sum"))
+    site = tmp_path / "site"
+    site.mkdir()
+    for name in ("index.html", "waivers.html"):
+        (site / name).write_text("built")
+    (site / "values.html").write_text("built this run")
+    out = restore_pages("https://x", site, ["values.html"], prefer_live=["values.html"],
+                        session=PagesSite({}))
+    assert out["values.html"] == "kept"
+    assert (site / "values.html").read_text() == "built this run"
+    assert verify_site(site)
+
+
+def test_prefer_live_takes_the_published_page_when_there_is_one(tmp_path, monkeypatch):
+    from ff_startsit.workflow import restore_pages
+    monkeypatch.setenv("GITHUB_OUTPUT", str(tmp_path / "out"))
+    monkeypatch.setenv("GITHUB_STEP_SUMMARY", str(tmp_path / "sum"))
+    site = tmp_path / "site"
+    site.mkdir()
+    (site / "values.html").write_text("built this run")
+    out = restore_pages("https://x", site, ["values.html"], prefer_live=["values.html"],
+                        session=PagesSite({"values.html": 200}))
+    assert out["values.html"] == "restored"
+    assert (site / "values.html").read_text() != "built this run"
+
+
+def test_prefer_live_on_a_failed_fetch_blocks_the_deploy(tmp_path, monkeypatch):
+    """Not a 404: the live page may exist and be better, so the deploy is
+    skipped and the live site stands, as for any failed restore."""
+    from ff_startsit.workflow import restore_pages, verify_site
+    monkeypatch.setenv("GITHUB_OUTPUT", str(tmp_path / "out"))
+    monkeypatch.setenv("GITHUB_STEP_SUMMARY", str(tmp_path / "sum"))
+    site = tmp_path / "site"
+    site.mkdir()
+    (site / "values.html").write_text("built this run")
+    out = restore_pages("https://x", site, ["values.html"], prefer_live=["values.html"],
+                        session=PagesSite({"values.html": 503}))
+    assert out["values.html"] == "failed" and not verify_site(site)
+
+
+def test_the_restore_command_parses_prefer_live(monkeypatch):
+    import sys
+    import ff_startsit.workflow as w
+    seen = {}
+    monkeypatch.setattr(w, "restore_pages", lambda url, d, pages, optional=False, prefer_live=():
+                        seen.update(pages=pages, optional=optional, prefer=prefer_live))
+    monkeypatch.setattr(sys, "argv", ["workflow", "restore", "https://x", "index.html",
+                                      "waivers.html", "--prefer-live", "values.html"])
+    w.main()
+    assert seen == {"pages": ["index.html", "waivers.html", "values.html"],
+                    "optional": False, "prefer": ["values.html"]}
