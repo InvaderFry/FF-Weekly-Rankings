@@ -64,6 +64,17 @@ nav.pages a { color: #9aa0ad; text-decoration: none; padding: .2rem .55rem;
 nav.pages a.active { color: #e7e9ee; border-color: #3fb950; }
 ul.ideas { margin: .25rem 0 .75rem; padding-left: 1.1rem; }
 ul.ideas li { margin: .25rem 0; }
+p.status-line { margin: .25rem 0; }
+ul.skipped { margin: .35rem 0; padding: .45rem .75rem .45rem 1.6rem;
+             background: rgba(248, 81, 73, .14); border-left: 3px solid #f85149;
+             border-radius: 4px; }
+details.status summary { cursor: pointer; color: #9aa0ad; font-size: .9rem; margin: .35rem 0; }
+details.status ul { font-size: .85rem; color: #c6cad3; }
+.moves { background: rgba(46, 160, 67, .10); border: 1px solid rgba(46, 160, 67, .45);
+         border-radius: 8px; padding: .6rem .9rem; margin: .5rem 0 1.25rem; }
+.moves h3 { margin: .1rem 0 .4rem; color: #e7e9ee; }
+.moves ol { margin: 0; padding-left: 1.3rem; }
+.moves li { margin: .3rem 0; }
 blockquote.quote { margin: .35rem 0 .75rem; padding: .35rem .75rem;
                    border-left: 3px solid #3a4150; color: #c6cad3;
                    font-size: .9rem; }
@@ -543,21 +554,42 @@ def _waiver_body(bundle) -> list[str]:
         body.append(f"<div class='callout'>⚠️ {escape(bundle.caveat)}</div>")
     if bundle.freshness:
         body.append(f"<div class='callout'>⏳ {escape(bundle.freshness)}</div>")
-    body.append(_waiver_expert_board(bundle))
-    body.append(_waiver_adds_table(bundle))
+    body.append(_waiver_roster(bundle))
+    body.append(_waiver_moves(bundle))
+    # Ordered by what a reader acts on: the decisions first (claims, what didn't
+    # fit, what was held back, the K/DEF call, drops, trades, stashes), then the
+    # research they rest on (the writers' board and the roster's chart values),
+    # which used to open the section and push the claims several screens down.
+    adds = _waiver_adds_table(bundle)
+    if adds:
+        body.append("<h3>Claims</h3>" + adds)
     body.append(_waiver_alternates_table(bundle))
     body.append(_waiver_held_back(bundle))
     body.append(_waiver_stream_table(bundle))
     body.append(_waiver_drops_table(bundle))
-    body.append(_waiver_roster_values(bundle))
     body.append(_waiver_trades(bundle))
     body.append(_waiver_lists(bundle))
-    body.append(_waiver_roster(bundle))
+    body.append(_waiver_expert_board(bundle))
+    body.append(_waiver_roster_values(bundle))
     # Inside the league's own <details>, where the numbers they carry can be
     # attributed. Only run-wide notes go to the shared footer.
     for note in bundle.league_notes:
         body.append(f"<p class='note'>{escape(note)}</p>")
     return [b for b in body if b]
+
+
+def _waiver_moves(bundle) -> str:
+    """The "Your moves" card that opens each league: ``WaiverBundle.moves``,
+    which restates the sections below in a few sentences rather than deciding
+    anything of its own."""
+    moves = bundle.moves()
+    if not moves:
+        return ""
+    items = "".join(f"<li><strong>{escape(action)}</strong> {escape(detail)}</li>"
+                    for action, detail in moves)
+    return (f"<div class='moves'><h3>Your moves</h3><ol>{items}</ol>"
+            "<p class='note'>A summary of the tables below; details and the "
+            "reasons for each are there.</p></div>")
 
 
 def _waiver_roster(bundle) -> str:

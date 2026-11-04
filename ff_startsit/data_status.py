@@ -29,8 +29,33 @@ class DataStatus:
         return "## Data status\n\n" + "\n".join(f"- {md_cell(line)}" for line in self.lines()) + "\n"
 
     def html(self):
-        return "<section><h2>Data status</h2><ul>" + "".join(
-            f"<li>{escape(line)}</li>" for line in self.lines()) + "</ul></section>"
+        """The same lines as ``markdown``, with the per-source detail folded away.
+
+        A three-league run carries ~40 detail lines (one per source, missing
+        reading and coverage count), and rendered as a flat list they filled the
+        whole first screen of both dashboards above anything a reader acts on.
+        What stays visible is what the block exists for: the season and week,
+        whether every league made it, **each skipped league with its reason**
+        (a league that fails disappears from the page, so its absence must never
+        be the thing folded away), and the warning that a generation time is
+        not a provider update time. Everything else is one click down, unchanged.
+        The markdown digest keeps the flat list: GitHub issues render it fine
+        and ``workflow.issue_title`` reads the first line of it.
+        """
+        head, leagues, included = self.lines()[:3]
+        disclaimer = self.lines()[-1]
+        skipped = [f"Skipped {name}: {reason}" for name, reason in self.skipped.items()]
+        folded = [included] + self.details
+        out = ["<section class='status'><h2>Data status</h2>",
+               f"<p class='status-line'>{escape(head)}<br>{escape(leagues)}</p>"]
+        if skipped:
+            out.append("<ul class='skipped'>" + "".join(
+                f"<li>{escape(line)}</li>" for line in skipped) + "</ul>")
+        out.append(f"<details class='status'><summary>Sources and coverage "
+                   f"({len(folded)} lines)</summary><ul>" + "".join(
+                       f"<li>{escape(line)}</li>" for line in folded) + "</ul></details>")
+        out.append(f"<p class='note'>{escape(disclaimer)}</p></section>")
+        return "".join(out)
 
 
 def bundle_status(bundles):

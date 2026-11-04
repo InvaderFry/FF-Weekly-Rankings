@@ -1126,6 +1126,17 @@ multi-league message still fits Discord's 10-embed / 6000-char limits.
 `chatops.py` parses `/rank RB`-style issue comments into CLI argv for the Actions
 bot (`/waivers` and `/waivers all` included).
 
+**The waivers page opens each league with "Your moves"** (`WaiverBundle.moves`,
+rendered by `html._waiver_moves`), then the decision tables, then the research
+(the writers' board and roster chart values) that used to open the section and
+push the claims several screens down. `moves` is a **restatement, never a second
+decision**: every sentence is templated from a field a table below renders, so
+it cannot say what the page doesn't, and it stays testable offline. Don't
+"upgrade" it to model-written prose. On both dashboards `DataStatus.html` folds
+the per-source detail into a `<details>`, but a **skipped league and its reason
+stay visible**: a failed league vanishes from the page, so its absence is the one
+thing that must never be folded away. The markdown digest keeps the flat list.
+
 **`Recommendation.lone_candidate` collapses a section that carries no reading.**
 A position with one rostered player rendered as a header, a table whose every
 signal column was blank, a note explaining why they were blank, and a verdict
