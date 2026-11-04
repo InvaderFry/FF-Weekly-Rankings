@@ -123,6 +123,17 @@ label.more-btn .open { display: none; }
   th, td { padding: .3rem .4rem; }
   .tabs label { font-size: .85rem; padding: .25rem .6rem; }
 }
+/* Click-to-sort headers (_SORT_SCRIPT). The arrows are drawn here so a page
+   with scripting off shows plain headers. */
+th[data-sortable] { cursor: pointer; user-select: none; white-space: nowrap; }
+th[data-sortable]::after { content: " ↕"; opacity: .3; font-size: .8em; }
+th[aria-sort=ascending]::after { content: " ▲"; opacity: .9; }
+th[aria-sort=descending]::after { content: " ▼"; opacity: .9; }
+th[data-sortable]:focus-visible { outline: 2px solid #58a6ff; outline-offset: -2px; }
+button.sort-reset { display: inline-block; cursor: pointer; margin: .1rem 0 .2rem;
+                    padding: .2rem .6rem; border: 1px solid #3a4150; border-radius: 6px;
+                    background: transparent; color: #c6cad3; font-size: .8rem; }
+button.sort-reset[hidden] { display: none; }
 blockquote.quote { margin: .35rem 0 .75rem; padding: .35rem .75rem;
                    border-left: 3px solid #3a4150; color: #c6cad3;
                    font-size: .9rem; }
@@ -136,7 +147,7 @@ def _signal_names(rec: Recommendation) -> list[str]:
 def _lineup_table(lineup: Sequence[tuple[str, Optional[PlayerScore]]],
                   unscored: frozenset = frozenset()) -> str:
     rows = ["<tr><th>Slot</th><th>Player</th><th>Team</th>"
-            "<th class='num'>Score</th></tr>"]
+            "<th class='num' data-desc>Score</th></tr>"]
     any_unscored = False
     for slot, pick in lineup:
         if pick is None:
@@ -175,10 +186,12 @@ def _position_table(rec: Recommendation) -> str:
     signal_names = _signal_names(rec)
     boards = section_boards(rec)
     cells = ["<th class='num'>#</th>", "<th>Player</th>", "<th>Pos</th>", "<th>Team</th>",
-             "<th class='num'>Score</th>"]
+             "<th class='num' data-desc>Score</th>"]
     cells += [f"<th class='num expert' title='{escape(b.label)}'>{escape(b.header)}</th>"
               for b in boards]
-    cells += [f"<th class='num'>{escape(n)}</th>" for n in [h.upper() for h in signal_names]]
+    # Signal columns are 0-100 with higher better, so they sort descending first.
+    cells += [f"<th class='num' data-desc>{escape(n)}</th>"
+              for n in [h.upper() for h in signal_names]]
     cells.append("<th>Flags</th>")
     rows = ["<tr>" + "".join(cells) + "</tr>"]
 
@@ -308,6 +321,148 @@ def _nav(active: str) -> str:
     return "<nav class='pages'>" + "".join(links) + "</nav>"
 
 
+def _board_th(board) -> str:
+    """A board's column header. A trade chart's cell leads with its value
+    ("26 · RB30"), where higher is better, so it sorts descending first; every
+    other board cell leads with a rank ("WR1 · $9", "#154", "K5")."""
+    desc = " data-desc" if board.kind == "ros" and board.source_id != "fantasypros_ros" else ""
+    return f"<th title='{escape(board.label)}'{desc}>{escape(board.header)}</th>"
+
+
+#: Click-to-sort for every table on all three pages. Clicking a header cycles
+#: best-first, worst-first, then the original order; a sorted table also shows
+#: an "Original order" button. Progressive enhancement: with scripting off the
+#: tables are exactly as rendered. Sort keys come from the cell text: a leading
+#: number ("47 · RB3" -> 47, "1.42", "#154", "bid ~$15" -> 15) or a positional
+#: rank ("WR1 · $9" -> 1, "DST6" -> 6); a column most of whose cells read as
+#: numbers sorts numerically, anything else alphabetically. Blanks ("—", "off
+#: chart", "not posted yet", "n/a") always sort last, whichever way. Headers
+#: marked ``data-desc`` (scores, trade values, bids) go high-to-low first; the
+#: rest (ranks, depth, names) low-to-high. Sorting the writers' board opens its
+#: "Show all" fold first, since a sort can bring a folded row to the top, and
+#: the original order closes it again. Nothing is remembered between visits.
+_SORT_SCRIPT = r"""
+(function () {
+  var BLANK = /^(\u2014|-|\u2013|off chart|not posted yet|n\/a|\(no option\))?$/i;
+  var RANKED = /^[A-Z]{1,4}(\d+(?:\.\d+)?)(?![\w.])/;
+  var NUMBER = /^[+\-]?\d+(?:\.\d+)?(?![\w\/])/;
+  function key(cell) {
+    var t = (cell ? cell.textContent : '').replace(/\s+/g, ' ').trim();
+    if (BLANK.test(t)) { return null; }
+    var s = t.replace(/^bid\s+/i, '').replace(/^[~$#]+/, '').replace(/^\u2212/, '-');
+    var m = s.match(RANKED);
+    if (m) { return {n: parseFloat(m[1]), t: t.toLowerCase()}; }
+    m = s.match(NUMBER);
+    if (m) { return {n: parseFloat(m[0]), t: t.toLowerCase()}; }
+    return {n: null, t: t.toLowerCase()};
+  }
+  function setup(table) {
+    var head = table.tHead ? table.tHead.rows[0] : null;
+    var body = table.tBodies[0];
+    if (!body) { return; }
+    if (!head) {
+      head = body.rows[0];
+      if (!head || head.querySelector('td')) { return; }
+    }
+    var rows = [];
+    for (var i = 0; i < body.rows.length; i++) {
+      if (body.rows[i] !== head) { rows.push(body.rows[i]); }
+    }
+    if (rows.length < 2) { return; }
+    var original = rows.slice();
+    var ths = head.cells;
+    var state = {col: -1, dir: null};
+    var board = table.closest ? table.closest('.board') : null;
+    var more = null;
+    if (board) {
+      for (var c = 0; c < board.children.length; c++) {
+        var el = board.children[c];
+        if (el.tagName === 'INPUT' && el.classList.contains('more')) { more = el; }
+      }
+    }
+    var opened = false;
+    var reset = document.createElement('button');
+    reset.type = 'button';
+    reset.className = 'sort-reset';
+    reset.textContent = '\u21ba Original order';
+    reset.hidden = true;
+    var anchor = table.parentNode && table.parentNode.classList &&
+                 table.parentNode.classList.contains('tablewrap') ? table.parentNode : table;
+    anchor.parentNode.insertBefore(reset, anchor);
+    function place(order) {
+      for (var i = 0; i < order.length; i++) { body.appendChild(order[i]); }
+    }
+    function mark() {
+      for (var i = 0; i < ths.length; i++) {
+        if (i === state.col) {
+          ths[i].setAttribute('aria-sort', state.dir === 'asc' ? 'ascending' : 'descending');
+        } else {
+          ths[i].removeAttribute('aria-sort');
+        }
+      }
+      reset.hidden = state.col < 0;
+    }
+    function restore() {
+      state = {col: -1, dir: null};
+      place(original);
+      if (opened && more) { more.checked = false; }
+      opened = false;
+      mark();
+    }
+    function sortBy(col, dir) {
+      var keyed = original.map(function (row, i) {
+        return {row: row, i: i, k: key(row.cells[col])};
+      });
+      var numbers = 0, words = 0;
+      keyed.forEach(function (x) {
+        if (x.k === null) { return; }
+        if (x.k.n !== null) { numbers++; } else { words++; }
+      });
+      var numeric = numbers > 0 && numbers >= words;
+      var sign = dir === 'asc' ? 1 : -1;
+      keyed.sort(function (a, b) {
+        var va = a.k === null ? null : (numeric ? a.k.n : a.k.t);
+        var vb = b.k === null ? null : (numeric ? b.k.n : b.k.t);
+        if (va === null || vb === null) {
+          if (va === vb) { return a.i - b.i; }
+          return va === null ? 1 : -1;
+        }
+        if (va < vb) { return -sign; }
+        if (va > vb) { return sign; }
+        return a.i - b.i;
+      });
+      if (more && !more.checked) { more.checked = true; opened = true; }
+      place(keyed.map(function (x) { return x.row; }));
+      state = {col: col, dir: dir};
+      mark();
+    }
+    function click(col) {
+      var first = ths[col].hasAttribute('data-desc') ? 'desc' : 'asc';
+      var second = first === 'asc' ? 'desc' : 'asc';
+      if (state.col !== col) { sortBy(col, first); }
+      else if (state.dir === first) { sortBy(col, second); }
+      else { restore(); }
+    }
+    for (var j = 0; j < ths.length; j++) {
+      (function (col) {
+        var th = ths[col];
+        th.setAttribute('data-sortable', '');
+        th.tabIndex = 0;
+        th.title = (th.title ? th.title + ' \u2014 ' : '') + 'Click to sort';
+        th.addEventListener('click', function () { click(col); });
+        th.addEventListener('keydown', function (e) {
+          if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); click(col); }
+        });
+      })(j);
+    }
+    reset.addEventListener('click', restore);
+  }
+  var tables = document.querySelectorAll('table');
+  for (var i = 0; i < tables.length; i++) { setup(tables[i]); }
+})();
+"""
+
+
 def _scrollable_tables(body: str) -> str:
     """Wrap every ``<table>`` in a ``div.tablewrap`` that scrolls sideways.
 
@@ -336,6 +491,7 @@ def _document(title: str, body: str, active: str = "index.html") -> str:
         f"{_nav(active)}\n"
         f"{body}\n"
         "<footer>Generated by ff-startsit — leans, not guarantees.</footer>\n"
+        f"<script data-sort>{_SORT_SCRIPT}</script>\n"
         "</body>\n</html>\n"
     )
 
@@ -405,7 +561,7 @@ def _waiver_adds_table(bundle) -> str:
         return f"<p class='note'>{escape(reason)}</p>" if reason else ""
     rows = [
         "<table><thead><tr><th>Add</th><th>Pos</th><th class='num'>Depth</th>"
-        "<th>Drop for him</th><th>Bid</th><th>Why</th></tr></thead><tbody>"
+        "<th>Drop for him</th><th data-desc>Bid</th><th>Why</th></tr></thead><tbody>"
     ]
     for t in bundle.adds:
         drop = t.drop_label
@@ -441,7 +597,7 @@ def _waiver_alternates_table(bundle) -> str:
             "<p class='note'>No roster spot open for these — they clear the same "
             "bar as the table above.</p>",
             "<table><thead><tr><th>Add</th><th>Pos</th><th class='num'>Depth</th>"
-            "<th>Bid</th><th>Why</th></tr></thead><tbody>"]
+            "<th data-desc>Bid</th><th>Why</th></tr></thead><tbody>"]
     for t in bundle.alternates:
         why = "; ".join(t.reasons) or "—"  # no drop line to skip here
         depth = "—" if t.depth_ratio is None else f"{t.depth_ratio:.2f}"
@@ -474,7 +630,7 @@ def _waiver_stream_table(bundle) -> str:
     out = ["<h3>Kicker and defense: this week's experts</h3>"]
     for pos, rows in bundle.stream_rows.items():
         out.append(f"<table><thead><tr><th>{escape(pos)}</th><th>Team</th>"
-                   f"<th class='num'>Score</th><th>FP Wk</th>{head}<th>This tool</th>"
+                   f"<th class='num' data-desc>Score</th><th>FP Wk</th>{head}<th>This tool</th>"
                    "</tr></thead><tbody>")
         for row in rows:
             name, team, score, fp, *rest = row.cells(cols)
@@ -498,7 +654,7 @@ def _waiver_drops_table(bundle) -> str:
     # waivers/render.py._drops_table.
     from ..waivers.values import chart_boards, chart_cell
     charts = chart_boards(bundle.values) if bundle.values is not None else []
-    head = "".join(f"<th title='{escape(b.label)}'>{escape(b.header)}</th>" for b in charts)
+    head = "".join(_board_th(b) for b in charts)
     rows = ["<h3>Conditional drop candidates</h3>",
             "<table><thead><tr><th>Player</th><th>Pos</th>"
             f"<th class='num'>ROS rank</th>{head}<th>Why</th></tr></thead><tbody>"]
@@ -596,7 +752,7 @@ def _waiver_expert_board(bundle, uid: str = "0") -> str:
             out.append(f"<p class='note'>Showing {len(rows) - hidden} of {len(rows)}: "
                        "the top of the list, where the writers agree most, plus "
                        "every player this tool acted on.</p>")
-        head = "".join(f"<th title='{escape(b.label)}'>{escape(b.header)}</th>" for b in boards)
+        head = "".join(_board_th(b) for b in boards)
         out.append(f"<table><thead><tr><th>Player</th><th>Pos</th><th>Team</th>{head}"
                    "<th>This tool</th></tr></thead><tbody>")
         for row in rows:
@@ -844,7 +1000,7 @@ def _values_table_html(sheet) -> str:
     from ..waivers.values import sheet_cell
     out = []
     if sheet.rows:
-        head = "".join(f"<th title='{escape(b.label)}'>{escape(b.header)}</th>" for b in sheet.boards)
+        head = "".join(_board_th(b) for b in sheet.boards)
         out.append(f"<table><thead><tr><th>Player</th><th>Pos</th><th>Team</th>{head}"
                    "<th>Charts</th></tr></thead><tbody>")
         for row in sheet.rows:

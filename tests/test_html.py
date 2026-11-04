@@ -175,3 +175,42 @@ def test_analyst_unposted_note_renders_below_the_table_and_escapes():
     assert '&lt;b&gt;' in html and '<b>' not in html
     assert "class='callout analyst'" not in html
     assert html.index('analyst-note') > html.index('</table>')
+
+
+# --- click-to-sort tables ----------------------------------------------------
+def test_every_page_carries_the_sort_script_once():
+    """One script sorts every table on all three pages; it lives in
+    ``_document`` so no page builder can forget it."""
+    from ff_startsit.output.html import build_values_html, build_waivers_html
+    from ff_startsit.waivers.models import WaiverBundle
+    from ff_startsit.waivers.values import ValueSheet
+    rb = _rec(_ps("1", "Alpha", "RB", 90.0), _ps("2", "Bravo", "RB", 10.0))
+    pages = [build_dashboard_html(3, "ppr", [("RB", rb.scores[0])], {"RB": rb},
+                                  generated_on="2026-06-24"),
+             build_waivers_html(9, [WaiverBundle(label="a", scoring="ppr", week=9)],
+                                "2026-11-04"),
+             build_values_html(9, [ValueSheet("a", "ppr", 9)], "2026-11-04")]
+    for page in pages:
+        assert page.count("<script data-sort>") == 1
+        assert "Original order" in page
+        # Raw string: the regexes reach the browser with their backslashes.
+        assert r"(\d+(?:\.\d+)?)" in page
+
+
+def test_score_and_signal_columns_sort_high_first_ranks_low_first():
+    rb = _rec(_ps("1", "Alpha", "RB", 90.0), _ps("2", "Bravo", "RB", 10.0))
+    html = build_dashboard_html(3, "ppr", [("RB", rb.scores[0])], {"RB": rb},
+                                generated_on="2026-06-24")
+    assert "<th class='num' data-desc>Score</th>" in html
+    assert "<th class='num' data-desc>ECR</th>" in html
+    assert "<th class='num'>#</th>" in html                  # a rank: low first
+
+
+def test_a_trade_chart_column_sorts_by_value_high_first_fp_ros_does_not():
+    from ff_startsit.boards.models import ExpertBoard
+    from ff_startsit.output.html import _board_th
+    chart = ExpertBoard("boone_trade_values", "Boone", "Boone's charts", kind="ros")
+    column = ExpertBoard("boone_waivers", "Boone", "Boone's column", kind="waiver")
+    fp = ExpertBoard("fantasypros_ros", "FP ROS", "FantasyPros ROS", kind="ros")
+    assert _board_th(chart) == "<th title='Boone&#x27;s charts' data-desc>Boone ROS</th>"
+    assert "data-desc" not in _board_th(column) and "data-desc" not in _board_th(fp)
