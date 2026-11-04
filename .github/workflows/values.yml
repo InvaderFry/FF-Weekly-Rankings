@@ -201,10 +201,9 @@ jobs:
         run: |
           OWNER="${GITHUB_REPOSITORY%%/*}"; REPO="${GITHUB_REPOSITORY##*/}"
           PAGES=(index.html waivers.html)
-          if [ "$VALUES_NEWS" != "true" ]; then
-            rm -f site/values.html
-            PAGES+=(values.html)
-          fi
+          # The published values page wins when there is one; this run's page
+          # stays only if the live site has never served one (a 404).
+          if [ "$VALUES_NEWS" != "true" ]; then PAGES+=(--prefer-live values.html); fi
           python -m ff_startsit.workflow restore "https://${OWNER,,}.github.io/${REPO}" "${PAGES[@]}"
 
       - name: Post / update issue
