@@ -75,6 +75,29 @@ details.status ul { font-size: .85rem; color: #c6cad3; }
 .moves h3 { margin: .1rem 0 .4rem; color: #e7e9ee; }
 .moves ol { margin: 0; padding-left: 1.3rem; }
 .moves li { margin: .3rem 0; }
+/* Waivers: league tabs (radio buttons + sibling selectors; see _league_tabs). */
+.leagues { margin-top: 1.25rem; }
+.leagues > input.tab { position: absolute; opacity: 0; pointer-events: none; }
+.leagues > section.league-panel { display: none; }
+.tabs { position: sticky; top: 0; z-index: 2; display: flex; flex-wrap: wrap; gap: .4rem;
+        padding: .5rem 0; background: #0f1115; border-bottom: 1px solid #262a33; }
+.tabs label { cursor: pointer; padding: .3rem .75rem; border: 1px solid #262a33;
+              border-radius: 999px; color: #9aa0ad; font-size: .92rem; }
+.tabs label small { color: #6e7481; font-size: .75rem; }
+h2.league-title { font-size: 1.3rem; margin: 1.25rem 0 .5rem; }
+/* Waivers: the writers' board folds its single-writer rows (board_visible_keys). */
+.board > input.more { position: absolute; opacity: 0; pointer-events: none; }
+.board .minor { display: none; }
+.board > input.more:checked ~ table tr.minor { display: table-row; }
+.board > input.more:checked ~ blockquote.minor,
+.board > input.more:checked ~ h4.minor { display: block; }
+label.more-btn { display: inline-block; cursor: pointer; margin: .1rem 0 .4rem;
+                 padding: .25rem .7rem; border: 1px solid #3a4150; border-radius: 6px;
+                 color: #c6cad3; font-size: .85rem; }
+label.more-btn .open { display: none; }
+.board > input.more:checked ~ label.more-btn .open { display: inline; }
+.board > input.more:checked ~ label.more-btn .closed { display: none; }
+.board > input.more:focus-visible ~ label.more-btn { outline: 2px solid #58a6ff; }
 blockquote.quote { margin: .35rem 0 .75rem; padding: .35rem .75rem;
                    border-left: 3px solid #3a4150; color: #c6cad3;
                    font-size: .9rem; }
@@ -509,19 +532,55 @@ def _waiver_lists(bundle) -> str:
     return "\n".join(out)
 
 
-def _waiver_expert_board(bundle) -> str:
-    """The Tuesday board: every free agent a writer named, side by side."""
+#: The writers' board shows at least this many rows before "Show all".
+BOARD_MIN_ROWS = 10
+
+
+def board_visible_keys(rows) -> set:
+    """Which writers'-board rows the page shows before "Show all".
+
+    The board lists every free agent any writer named (~70 a league on a
+    Tuesday), most of them on one writer's list and untouched by this tool.
+    Visible by default: the top of the list (``build_board`` sorts by how many
+    writers recommend a player, so this is where they agree), at least
+    ``BOARD_MIN_ROWS`` deep and deep enough to hold everyone two writers named,
+    plus every player this tool acted on wherever he sits. Display only: the
+    folded rows are in the page, one click away, and no add or drop reads this.
+    """
+    agree = sum(1 for r in rows if r.listed_by >= 2)
+    depth = max(agree, BOARD_MIN_ROWS)
+    return {r.player.key for i, r in enumerate(rows) if i < depth or r.tool}
+
+
+def _waiver_expert_board(bundle, uid: str = "0") -> str:
+    """The Tuesday board: every free agent a writer named, side by side.
+
+    Rows outside ``board_visible_keys`` (and their quotes) carry ``minor`` and
+    are hidden until the "Show all" checkbox is ticked: CSS only, so with no
+    stylesheet every row still shows.
+    """
     boards = getattr(bundle, "expert_boards", None)
     if not boards:
         return ""
-    out = ["<h3>What the writers say</h3>"]
-    if bundle.expert_rows:
+    from ..waivers.board import board_reasons, cell_position
+    rows = bundle.expert_rows
+    visible = board_visible_keys(rows)
+    hidden = len(rows) - sum(1 for r in rows if r.player.key in visible)
+    out = ["<h3>What the writers say</h3><div class='board'>"]
+    if hidden:
+        out.append(f"<input type='checkbox' class='more' id='more-{escape(uid)}'>")
+    if rows:
+        if hidden:
+            out.append(f"<p class='note'>Showing {len(rows) - hidden} of {len(rows)}: "
+                       "the top of the list, where the writers agree most, plus "
+                       "every player this tool acted on.</p>")
         head = "".join(f"<th title='{escape(b.label)}'>{escape(b.short)}</th>" for b in boards)
         out.append(f"<table><thead><tr><th>Player</th><th>Pos</th><th>Team</th>{head}"
                    "<th>This tool</th></tr></thead><tbody>")
-        for row in bundle.expert_rows:
-            cls = " class='top'" if row.listed_by >= 2 else ""
-            from ..waivers.board import cell_position
+        for row in rows:
+            classes = (["top"] if row.listed_by >= 2 else []) + \
+                ([] if row.player.key in visible else ["minor"])
+            cls = f" class='{' '.join(classes)}'" if classes else ""
             cells = "".join(f"<td class='expert'>"
                             f"{escape(waiver_cell(row.entries.get(b.source_id), cell_position(b, row.player)))}</td>"
                             for b in boards)
@@ -530,22 +589,29 @@ def _waiver_expert_board(bundle) -> str:
                        f"<td>{escape(row.player.team or 'FA')}</td>{cells}"
                        f"<td>{escape(row.tool or '—')}</td></tr>")
         out.append("</tbody></table>")
+        if hidden:
+            out.append(f"<label class='more-btn' for='more-{escape(uid)}'>"
+                       f"<span class='closed'>Show all {len(rows)} players</span>"
+                       "<span class='open'>Show fewer</span></label>")
     else:
         out.append("<p class='note'>No free agent in this league was named by a writer this week.</p>")
     out.append(f"<p class='note'>{escape(waiver_legend(boards))}</p>")
-    from ..waivers.board import board_reasons
     for reason in board_reasons(boards):
         out.append(f"<p class='note'>{escape(reason)}</p>")
-    quoted = [(row, q) for row in bundle.expert_rows for q in row.quotes]
+    quoted = [(row, q) for row in rows for q in row.quotes]
     if quoted:
-        out.append("<h4>Why, in their words</h4>")
+        shown = any(row.player.key in visible for row, _ in quoted)
+        out.append("<h4>Why, in their words</h4>" if shown
+                   else "<h4 class='minor'>Why, in their words</h4>")
         for row, q in quoted:
-            out.append(f"<blockquote class='quote'><strong>{escape(row.player.name)}</strong> — "
+            cls = "quote" if row.player.key in visible else "quote minor"
+            out.append(f"<blockquote class='{cls}'><strong>{escape(row.player.name)}</strong> — "
                        f"<a href='{escape(q.url)}'>{escape(q.author)}</a>: {escape(q.snippet)}</blockquote>")
+    out.append("</div>")
     return "".join(out)
 
 
-def _waiver_body(bundle) -> list[str]:
+def _waiver_body(bundle, uid: str = "0") -> list[str]:
     body: list[str] = []
     if bundle.banner:
         body.append(f"<div class='callout'><strong>{escape(bundle.banner)}"
@@ -569,7 +635,7 @@ def _waiver_body(bundle) -> list[str]:
     body.append(_waiver_drops_table(bundle))
     body.append(_waiver_trades(bundle))
     body.append(_waiver_lists(bundle))
-    body.append(_waiver_expert_board(bundle))
+    body.append(_waiver_expert_board(bundle, uid))
     body.append(_waiver_roster_values(bundle))
     # Inside the league's own <details>, where the numbers they carry can be
     # attributed. Only run-wide notes go to the shared footer.
@@ -607,6 +673,88 @@ def _waiver_roster(bundle) -> str:
     return "".join(out)
 
 
+def league_slugs(labels: Sequence[str]) -> list[str]:
+    """URL-hash names for the league tabs (``waivers.html#AndyLOT``): the label
+    with anything but letters, digits, ``-`` and ``_`` collapsed to ``-``,
+    made unique, and never ``all`` (the "All leagues" tab's own name)."""
+    import re
+    slugs: list[str] = []
+    for i, label in enumerate(labels):
+        base = re.sub(r"[^A-Za-z0-9_-]+", "-", label).strip("-") or f"league-{i + 1}"
+        slug, n = base, 2
+        while slug.lower() == "all" or slug in slugs:
+            slug, n = f"{base}-{n}", n + 1
+        slugs.append(slug)
+    return slugs
+
+
+#: Picks the tab named in the URL hash, else the last one this browser chose,
+#: and records each choice in both. Without it the tabs still work (CSS radio
+#: buttons, first league selected); this only adds the deep link and the memory.
+_TABS_SCRIPT = """
+(function () {
+  var tabs = document.querySelectorAll('input.tab');
+  function pick(slug) {
+    for (var i = 0; i < tabs.length; i++) {
+      if (tabs[i].getAttribute('data-slug') === slug) { tabs[i].checked = true; return true; }
+    }
+    return false;
+  }
+  var saved = null;
+  try { saved = window.localStorage.getItem('ff-waivers-league'); } catch (e) {}
+  var hash = decodeURIComponent(window.location.hash.slice(1));
+  if (!(hash && pick(hash)) && saved) { pick(saved); }
+  for (var i = 0; i < tabs.length; i++) {
+    tabs[i].addEventListener('change', function () {
+      var slug = this.getAttribute('data-slug');
+      try { window.localStorage.setItem('ff-waivers-league', slug); } catch (e) {}
+      try { history.replaceState(null, '', '#' + slug); } catch (e) {}
+    });
+  }
+})();
+"""
+
+
+def _league_tabs(bundles: Sequence) -> str:
+    """One tab per league plus "All leagues", each showing that league's section.
+
+    Each manager reads one league, and three stacked leagues made the page three
+    times as long as anyone needed. The tabs are radio buttons styled by CSS
+    sibling selectors, so they work with scripting off; ``_TABS_SCRIPT`` adds the
+    ``#league`` deep link and remembers the last choice. Every league's content
+    is still in the page (and all of it shows without CSS or under "All").
+    """
+    slugs = league_slugs([b.label for b in bundles])
+    ids = [f"lg-{i}" for i in range(len(bundles))] + ["lg-all"]
+    names = slugs + ["all"]
+    rules = [f"#{t}:checked ~ #league-{i}" for i, t in enumerate(ids[:-1])]
+    rules.append("#lg-all:checked ~ section.league-panel")
+    active = [f"#{t}:checked ~ .tabs label[for='{t}']" for t in ids]
+    focus = [f"#{t}:focus-visible ~ .tabs label[for='{t}']" for t in ids]
+    out = ["<style>", ", ".join(rules), " { display: block; }\n",
+           ", ".join(active), " { color: #e7e9ee; border-color: #3fb950; "
+           "background: rgba(46, 160, 67, .14); }\n",
+           ", ".join(focus), " { outline: 2px solid #58a6ff; outline-offset: 2px; }",
+           "</style><div class='leagues'>"]
+    for i, (t, slug) in enumerate(zip(ids, names)):
+        checked = " checked" if i == 0 else ""
+        out.append(f"<input type='radio' name='league' class='tab' id='{t}' "
+                   f"data-slug='{escape(slug)}'{checked}>")
+    out.append("<div class='tabs' role='tablist'>")
+    for t, b in zip(ids, bundles):
+        out.append(f"<label for='{t}'>{escape(b.label)} "
+                   f"<small>{escape(b.scoring.upper())}</small></label>")
+    out.append("<label for='lg-all'>All leagues</label></div>")
+    for i, (b, slug) in enumerate(zip(bundles, slugs)):
+        out.append(f"<section class='league-panel' id='league-{i}' data-slug='{escape(slug)}'>")
+        out.append(f"<h2 class='league-title'>{escape(b.label)} — "
+                   f"{escape(b.scoring.upper())}</h2>")
+        out += _waiver_body(b, uid=str(i))
+        out.append("</section>")
+    out.append(f"</div><script data-tabs>{_TABS_SCRIPT}</script>")
+    return "".join(out)
+
+
 def build_waivers_html(week: int, bundles: Sequence, generated_on: str) -> str:
     """Render the waiver/trade report as a self-contained page.
 
@@ -627,15 +775,11 @@ def build_waivers_html(week: int, bundles: Sequence, generated_on: str) -> str:
     status = bundle_status(bundles)
     if status:
         sections.append(status.html())
-    multi = len(bundles) > 1
-    for b in bundles:
-        if multi:
-            sections.append("<details class='league' open>")
-            sections.append(f"<summary class='league'>{escape(b.label)} — "
-                            f"{escape(b.scoring.upper())}</summary>")
-        sections += _waiver_body(b)
-        if multi:
-            sections.append("</details>")
+    if len(bundles) > 1:
+        sections.append(_league_tabs(bundles))
+    else:
+        for b in bundles:
+            sections += _waiver_body(b)
 
     notes: list[str] = []
     for b in bundles:

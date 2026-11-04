@@ -1137,6 +1137,16 @@ the per-source detail into a `<details>`, but a **skipped league and its reason
 stay visible**: a failed league vanishes from the page, so its absence is the one
 thing that must never be folded away. The markdown digest keeps the flat list.
 
+With more than one league the page is **tabbed** (`html._league_tabs`): CSS radio
+buttons, so the tabs work with scripting off, plus a small inline script for the
+`waivers.html#<league>` deep link (`league_slugs`) and remembering the viewer's
+last tab in `localStorage` (wrapped in try/catch; a convenience, never state).
+"All leagues" shows every section. The writers' board shows the top of its list
+(at least `BOARD_MIN_ROWS`, deep enough for everyone two writers named) plus
+every row the tool acted on (`board_visible_keys`), and folds the rest and their
+quotes behind a "Show all" checkbox. Both are display only: every league and
+every row stays in the page, and the markdown digest and Discord are untouched.
+
 **`Recommendation.lone_candidate` collapses a section that carries no reading.**
 A position with one rostered player rendered as a header, a table whose every
 signal column was blank, a note explaining why they were blank, and a verdict
