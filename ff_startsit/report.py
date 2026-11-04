@@ -8,7 +8,7 @@ assembles the full phone-friendly report posted as a GitHub Issue.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import date
+import sys
 from typing import Optional, Sequence
 
 from .config import Settings
@@ -17,7 +17,7 @@ from .models import Player, PlayerScore, Recommendation
 from .output.render import LINEUP_UNSCORED_NOTE, lineup_unscored_keys, md_cell, render_markdown
 from .engine.blend import flag_starter_boundary_pair
 from .pipeline import build_signals, log_deferred, recommend
-from .season import preseason_banner, season_year
+from .season import generated_stamp, preseason_banner, season_year
 from .boards.boone import boone_board_or_none
 from .boards.fantasypros import fantasypros_weekly
 from .engine.analyst import detect_conflicts
@@ -608,7 +608,7 @@ def render_digest(week: int, scoring: str, recs: dict[str, Recommendation],
     label_suffix = f" · {label}" if label else ""
     lines: list[str] = [
         f"# 🏈 Week {week} start/sit — {scoring.upper()}{label_suffix}",
-        f"_Generated {date.today().isoformat()}._",
+        f"_Generated {generated_stamp()}._",
         "",
     ]
     lines += [single_status(week, label, recs).markdown(), ""]
@@ -620,7 +620,7 @@ def render_multi_digest(week: int, bundles: Sequence[LeagueBundle]) -> str:
     """Render several leagues into one digest, a section per league under one H1."""
     lines: list[str] = [
         f"# 🏈 Week {week} start/sit",
-        f"_Generated {date.today().isoformat()} · {len(bundles)} league(s)._",
+        f"_Generated {generated_stamp()} · {len(bundles)} league(s)._",
         "",
     ]
     from .data_status import bundle_status

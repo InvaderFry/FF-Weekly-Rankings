@@ -104,3 +104,29 @@ def test_the_workflow_helper_agrees_and_handles_a_failed_rebuild(tmp_path):
     out = tmp_path / "out.txt"
     assert publish_adds_changed(tmp_path / "missing.md", tuesday, output=str(out)) is False
     assert out.read_text().strip() == "changed=false"
+
+
+# --- the Wednesday refresh retries on its own record -------------------------
+def test_a_failed_refresh_is_retried_even_with_no_new_charts(tmp_path):
+    from ff_startsit.workflow import refresh_needed, refreshed_marker
+    report = tmp_path / "values.md"
+    report.write_text("# Week 9 trade values\n\n<!-- ff-board season=2026 week=9 mode=live read=richard_chart -->\n")
+    previous = tmp_path / "previous.md"
+    out = str(tmp_path / "out.txt")
+    assert refresh_needed(report, tmp_path / "none.md", output=out)      # nothing published
+    previous.write_text(report.read_text())                               # posted, refresh failed
+    assert refresh_needed(report, previous, output=out)
+    previous.write_text(report.read_text() + refreshed_marker(report))    # posted after a refresh
+    assert not refresh_needed(report, previous, output=out)
+    # Last week's marker doesn't count for this week.
+    previous.write_text("<!-- ff-waivers-refreshed season=2026 week=8 -->")
+    assert refresh_needed(report, previous, output=out)
+
+
+def test_generated_stamp_carries_the_time():
+    from datetime import datetime, timezone
+    from ff_startsit.season import generated_stamp
+    assert generated_stamp(datetime(2026, 11, 4, 1, 15, tzinfo=timezone.utc)) == \
+        "2026-11-03 7:15 PM CST (01:15 UTC)"
+    assert generated_stamp(datetime(2026, 10, 6, 14, 5, tzinfo=timezone.utc)) == \
+        "2026-10-06 9:05 AM CDT (14:05 UTC)"

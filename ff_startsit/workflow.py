@@ -212,6 +212,55 @@ def publish_adds_changed(report_path, previous_path, output=None):
     return changed
 
 
+_REFRESHED = "<!-- ff-waivers-refreshed season={season} week={week} -->"
+
+
+def _report_identity(report_text):
+    """(season, week) from a digest's ff-board marker, or ``None``."""
+    from .waivers.board import _MARKER
+    match = _MARKER.search(report_text or "")
+    return (int(match[1]), int(match[2])) if match else None
+
+
+def refreshed_marker(report_path):
+    """The marker that says this week's Wednesday waivers refresh succeeded.
+
+    Appended to the values report (so it rides into the values issue) only when
+    the refresh step succeeded; ``refresh_needed`` looks for it.
+    """
+    identity = _report_identity(Path(report_path).read_text(encoding="utf-8"))
+    if identity is None:
+        return ""
+    marker = _REFRESHED.format(season=identity[0], week=identity[1])
+    print(marker)
+    return marker
+
+
+def refresh_needed(report_path, previous_path, output=None):
+    """Whether Wednesday's waivers refresh still has to run this week.
+
+    The refresh used to be gated on the values report's own news, so a refresh
+    that failed on the first pass was never retried: the retry found no new
+    charts and skipped it, leaving Tuesday's page and picks standing. It is now
+    gated on its own record — the published values report carries the
+    ``refreshed_marker`` only once a refresh succeeded. A missing previous
+    report, or a report this can't identify, means "run it".
+    """
+    report, previous = Path(report_path), Path(previous_path)
+    identity = _report_identity(report.read_text(encoding="utf-8")) if report.exists() else None
+    needed = True
+    if identity is not None and previous.exists():
+        marker = _REFRESHED.format(season=identity[0], week=identity[1])
+        needed = marker not in previous.read_text(encoding="utf-8")
+    line = f"needed={'true' if needed else 'false'}"
+    print(line)
+    output = output or os.environ.get("GITHUB_OUTPUT")
+    if output:
+        with open(output, "a") as handle:
+            handle.write(line + "\n")
+    return needed
+
+
 def publish_news(report_path, previous_path, output=None):
     """Whether a scheduled waiver run should publish (issue, Pages, Discord).
 
@@ -247,6 +296,10 @@ def main():
         publish_news(sys.argv[2], sys.argv[3])
     elif sys.argv[1] == "adds-changed":
         publish_adds_changed(sys.argv[2], sys.argv[3])
+    elif sys.argv[1] == "refresh-needed":
+        refresh_needed(sys.argv[2], sys.argv[3])
+    elif sys.argv[1] == "refreshed-marker":
+        refreshed_marker(sys.argv[2])
     elif sys.argv[1] == "restore":
         args = sys.argv[3:]
         optional = "--optional" in args

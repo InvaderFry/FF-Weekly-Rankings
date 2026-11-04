@@ -551,7 +551,15 @@ at the position, with blend score, FP, CBS and Boone side by side.
   same claims, no message; changed claims, a summary-only "Wednesday update"
   (no expert board) and a comment on the waiver issue, so the 02:30 UTC retry
   compares with the update rather than sending it twice. `workflow.py
-  adds-changed` is the same decision, for the comment step. Manual runs always publish. The decision
+  adds-changed` is the same decision, for the comment step.
+  The refresh is gated on **its own record**, not on the values report's news:
+  a successful refresh appends `<!-- ff-waivers-refreshed season week -->` to
+  the values report, and `workflow.py refresh-needed` runs it again on the retry
+  whenever the published report lacks it — that retry may find no new charts,
+  and gating on chart news left Tuesday's page standing after a failed first
+  refresh. The site deploys when either has something. A manual `boone_chart`
+  URL is passed to both passes (`waivers --boone-chart`), so the waiver page and
+  its veto read the same charts the values page does. Manual runs always publish. The decision
   is `waivers.board.report_has_news`, shared by `cmd_waivers` and
   `workflow.py news`.
 
@@ -805,6 +813,10 @@ reason a piece of it is shaped the way it is.
     told to add a third and cut a back for him. `must_swap_in_position` makes a
     capped-position add like-for-like once the active roster holds the starters
     plus one backup there; a lone starter may still add a backup across positions.
+    The counts are **projected**: each accepted add (and each "Also consider"
+    alternate) moves them before the next pairing is checked (`score._project`).
+    Checking every pairing against the pre-add roster let a two-QB league holding
+    two quarterbacks take two cross-position QB adds, four in all.
   - **A K/DEF on bye is the one unranked player who must be replaced.** `has_ecr`
     keeps unranked players off the drop list because "unranked usually means on
     bye", and for a streamer that exact case is the one needing a pickup — the

@@ -217,3 +217,29 @@ def test_drop_table_carries_each_chart(tmp_path):
     md = render_waiver_digest(9, [b])
     assert "| Player | Pos | ROS rank | Richard | Why |" in md
     assert f"4 · {first.position}50" in md
+
+
+def test_the_roster_count_moves_with_each_recommended_add(tmp_path, monkeypatch):
+    """A two-QB league already carrying two quarterbacks: starters plus one
+    backup is three. Two startable QBs on the wire and droppable receivers used
+    to yield *two* cross-position QB adds — four quarterbacks — because every
+    pairing read the roster as it was before the first add. The second may only
+    replace a quarterback."""
+    from dataclasses import replace
+    from ff_startsit.waivers.models import FantasyTeam
+    two_qb = replace(RULES, roster_slots={**RULES.roster_slots, "QB": 2})
+    _season(monkeypatch, {"f3": 80, "f5": 85, "m7": 260, "m6": 250})
+    mine = MINE + [_p("m13", "My Qb2", "QB")]
+    ranks = dict(RANKS, m13=12, f3=5, f5=6)
+    pool = [PoolPlayer(_p("f3", "Free Qb", "QB")), PoolPlayer(_p("f5", "Other Qb", "QB"))]
+    teams = [FantasyTeam("1", "My Squad", tuple(mine), is_mine=True, faab_spent=20.0),
+             FantasyTeam("2", "Rival FC", tuple(THEIRS))]
+    b = build_bundle(Settings(data_dir=tmp_path), "work",
+                     _Provider(pool=pool, teams=teams, rules=two_qb), mine, 9,
+                     schedule=_NoSchedule(), signals=[_ECR(ranks)], include_columns=False,
+                     preseason=False, rehearse=False, include_trades=False)
+    qb_adds = [a for a in b.adds if a.score.player.position == "QB"]
+    cross = [a for a in qb_adds if a.drop.player.position != "QB"]
+    assert len(cross) <= 1, [(a.score.player.name, a.drop.player.name) for a in qb_adds]
+    # And nothing in "Also consider" may push the count past three either.
+    assert not [a for a in b.alternates if a.score.player.position == "QB"] or not cross

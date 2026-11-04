@@ -7,12 +7,12 @@ built from ``WaiverBundle`` and nothing else. Cell text goes through
 
 from __future__ import annotations
 
-from datetime import date
 from typing import Optional, Sequence
 
 from ..output.board import waiver_cell, waiver_legend
 from ..output.render import DEPTH_LEGEND, md_cell
 from .board import board_marker, board_reasons, bundles_read, cell_position
+from ..season import generated_stamp
 from .models import STREAM_TABLE_NOTE, WaiverBundle, WaiverTarget
 from .values import chart_cell, sheet_cell
 
@@ -343,7 +343,7 @@ def render_bundle(bundle: WaiverBundle, heading: str = "###") -> list[str]:
 def render_waiver_digest(week: int, bundles: Sequence[WaiverBundle],
                          generated_on: Optional[str] = None) -> str:
     """The full multi-league markdown digest."""
-    generated_on = generated_on or date.today().isoformat()
+    generated_on = generated_on or generated_stamp()
     lines = [f"# Week {week} waiver wire & trades", "",
              f"_Generated {generated_on}._", ""]
     if not bundles:
@@ -419,7 +419,7 @@ def _values_section(sheet, heading: str = "###") -> list[str]:
 def render_values_digest(week: int, sheets, generated_on: Optional[str] = None) -> str:
     """The Wednesday digest: every league's values sheet plus the retry marker."""
     from .values import sheets_read
-    generated_on = generated_on or date.today().isoformat()
+    generated_on = generated_on or generated_stamp()
     lines = [f"# Week {week} trade values", "", f"_Generated {generated_on}._", ""]
     if not sheets:
         return "\n".join(lines + ["No configured league could be scored.", ""])

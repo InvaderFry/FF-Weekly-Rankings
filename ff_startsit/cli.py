@@ -209,6 +209,10 @@ def _build_parser() -> argparse.ArgumentParser:
     p_wai.add_argument("--since", type=Path, default=None,
                        help="the report already published this week; send Discord "
                             "only if this run read a writer it didn't (retry runs)")
+    p_wai.add_argument("--boone-chart", action="append", default=[], dest="boone_chart",
+                       metavar="URL",
+                       help="a Boone trade chart URL, for when his pages don't link "
+                            "this week's yet (same as `values --boone-chart`)")
     p_wai.add_argument("--adds-changed-since", type=Path, default=None,
                        dest="adds_changed_since",
                        help="the report already published this week; send Discord "
@@ -671,7 +675,6 @@ def _print_expert_checks(checks) -> int:
 
 
 def cmd_dashboard(args, settings: Settings) -> int:
-    from datetime import date
 
     from .output.html import build_dashboard_html, build_multi_dashboard_html
 
@@ -682,7 +685,7 @@ def cmd_dashboard(args, settings: Settings) -> int:
             print("No configured league could be scored.", file=sys.stderr)
             return 1
         html = build_multi_dashboard_html(week, bundles,
-                                          generated_on=date.today().isoformat())
+                                          generated_on=season.generated_stamp())
         args.out.parent.mkdir(parents=True, exist_ok=True)
         args.out.write_text(html)
         print(f"Wrote dashboard ({len(bundles)} leagues) to {args.out}")
@@ -695,7 +698,7 @@ def cmd_dashboard(args, settings: Settings) -> int:
     recs = ws.recs
     lineup = report.lineup_from(ws)
     html = build_dashboard_html(week, settings.scoring, lineup, recs,
-                                generated_on=date.today().isoformat(),
+                                generated_on=season.generated_stamp(),
                                 banner=season.preseason_banner(settings),
                                 journalists=report.build_journalist_view(
                                     settings, players, week),
@@ -740,7 +743,6 @@ def cmd_publish(args, settings: Settings) -> int:
     if getattr(args, "all_leagues", False):
         return _cmd_publish_all(args, settings)
 
-    from datetime import date
 
     from .output.discord import build_discord_payload, send_discord
     from .output.html import build_dashboard_html
@@ -772,7 +774,7 @@ def cmd_publish(args, settings: Settings) -> int:
 
     if args.dashboard:
         html = build_dashboard_html(week, settings.scoring, lineup, recs,
-                                    generated_on=date.today().isoformat(),
+                                    generated_on=season.generated_stamp(),
                                     banner=banner,
                                     journalists=journalists, label=label)
         args.dashboard.parent.mkdir(parents=True, exist_ok=True)
@@ -846,7 +848,6 @@ def _league_bundles(args, settings: Settings, week: int) -> list:
 
 def _cmd_publish_all(args, settings: Settings) -> int:
     """Publish every configured league into one combined digest/dashboard/Discord."""
-    from datetime import date
 
     from .output.discord import build_multi_discord_payload, send_discord
     from .output.html import build_multi_dashboard_html
@@ -865,7 +866,7 @@ def _cmd_publish_all(args, settings: Settings) -> int:
 
     if args.dashboard:
         html = build_multi_dashboard_html(week, bundles,
-                                          generated_on=date.today().isoformat())
+                                          generated_on=season.generated_stamp())
         args.dashboard.parent.mkdir(parents=True, exist_ok=True)
         args.dashboard.write_text(html)
         print(f"Wrote dashboard ({len(bundles)} leagues) to {args.dashboard}")
@@ -982,7 +983,6 @@ def cmd_waivers(args, settings: Settings) -> int:
     ``calibrate --write`` floors with evidence nobody acted on. The log is
     append-only, so there is no undoing it.
     """
-    from datetime import date
 
     from .output.discord import build_waiver_payload, send_discord
     from .output.html import build_waivers_html
@@ -1001,7 +1001,8 @@ def cmd_waivers(args, settings: Settings) -> int:
     writers = waiver_writer_sources(settings, fetcher)
     # The charts price your roster (display) and, with the columns and this
     # week's K/DEF lists, can veto an add the writers don't back (waivers/endorse.py).
-    charts = value_chart_sources(settings, fetcher=fetcher, only_enabled=True)
+    charts = value_chart_sources(settings, getattr(args, "boone_chart", []) or [],
+                                 fetcher=fetcher, only_enabled=True)
     weekly = kdef_weekly_boards(settings)
     bundles = _waiver_bundles(args, settings, week, writers=writers,
                               bundle_kwargs={"chart_sources": charts,
@@ -1018,7 +1019,7 @@ def cmd_waivers(args, settings: Settings) -> int:
 
     if args.dashboard:
         html = build_waivers_html(week, bundles,
-                                  generated_on=date.today().isoformat())
+                                  generated_on=season.generated_stamp())
         args.dashboard.parent.mkdir(parents=True, exist_ok=True)
         args.dashboard.write_text(html)
         print(f"Wrote waivers page ({len(bundles)} league(s)) to {args.dashboard}")
@@ -1130,7 +1131,6 @@ def cmd_values(args, settings: Settings) -> int:
     idea once per chart. Like ``waivers`` it has no ``--log``: nothing here is a
     start/sit decision.
     """
-    from datetime import date
 
     from .output.discord import build_values_payloads, send_discord
     from .output.html import build_values_html
@@ -1161,7 +1161,7 @@ def cmd_values(args, settings: Settings) -> int:
         args.report.write_text(digest)
     if args.dashboard:
         args.dashboard.parent.mkdir(parents=True, exist_ok=True)
-        args.dashboard.write_text(build_values_html(week, sheets, generated_on=date.today().isoformat()))
+        args.dashboard.write_text(build_values_html(week, sheets, generated_on=season.generated_stamp()))
         print(f"Wrote values page ({len(sheets)} league(s)) to {args.dashboard}")
 
     since = getattr(args, "since", None)
