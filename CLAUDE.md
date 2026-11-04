@@ -1177,8 +1177,15 @@ starters changed in each league since the latest published lineup ("start X
 `render_multi_digest` appends (`report.lineup_marker`, base64 JSON so no player
 name can break the HTML comment), and the note ends with this pass's marker so
 the next pass compares with it rather than with Thursday's. Moving the same
-players between slots (RB to FLEX) is deliberately not a change. Discord for
-start/sit is unchanged: every pass still posts its full summary.
+players between slots (RB to FLEX) is deliberately not a change. **Discord
+follows the same marker**: scheduled passes run `publish --since` with the week's
+published issue, and `report.lineup_changes_since` (the one definition the note
+uses too) decides — no change, no message; a change, the full summary led by
+an "**Update:**" line naming it; nothing comparable published (the week's
+first post, last week's issue, a pre-marker issue), the full summary as
+before. Manual runs pass no `--since` and always send. Only lineups count: a
+flag or close call that moved without moving a starter is not something the
+owner acts on, and it is still in the issue and on the page.
 
 With more than one league **all three pages are tabbed** by one shared
 `html._league_tabs(bundles, body)`: CSS radio buttons, so the tabs work with
