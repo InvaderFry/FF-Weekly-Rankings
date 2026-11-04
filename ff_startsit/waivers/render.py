@@ -105,7 +105,7 @@ def _stream_section(bundle: WaiverBundle) -> list[str]:
     if not bundle.stream_rows:
         return []
     cols = list(bundle.stream_columns)
-    head = ["Player", "Team", "Score", "FP", *cols, "This tool"]
+    head = ["Player", "Team", "Score", "FP Wk", *cols, "This tool"]
     lines = ["**Kicker and defense: this week's experts**", ""]
     for pos, rows in bundle.stream_rows.items():
         lines += [f"_{pos}_", "", "| " + " | ".join(head) + " |",
@@ -138,7 +138,7 @@ def _drops_table(bundle: WaiverBundle) -> list[str]:
     # say he is worth before you cut him. Display only — the drops were chosen
     # on the ROS rank, and these columns change none of them.
     charts = _chart_boards(bundle)
-    head = "".join(f" {md_cell(b.short)} |" for b in charts)
+    head = "".join(f" {md_cell(b.header)} |" for b in charts)
     lines = ["**Conditional drop candidates** (only for a verified upgrade)", "",
              f"| Player | Pos | ROS rank |{head} Why |",
              "|---|---|---:|" + "---|" * len(charts) + "---|"]
@@ -163,7 +163,7 @@ def _value_table_lines(sheet) -> list[str]:
     the waiver page's "My roster" table, so the two can't disagree."""
     lines: list[str] = []
     if sheet.rows:
-        header = ["Player", "Pos", "Team", *[b.short for b in sheet.boards], "Charts"]
+        header = ["Player", "Pos", "Team", *[b.header for b in sheet.boards], "Charts"]
         lines.append("| " + " | ".join(header) + " |")
         lines.append("|" + "|".join("---" for _ in header) + "|")
         for row in sheet.rows:
@@ -278,7 +278,7 @@ def _mentions_section(bundle: WaiverBundle) -> list[str]:
 
 
 def _board_table(boards, rows) -> list[str]:
-    header = ["Player", "Pos", "Team", *[b.short for b in boards], "This tool"]
+    header = ["Player", "Pos", "Team", *[b.header for b in boards], "This tool"]
     lines = ["| " + " | ".join(header) + " |",
              "|" + "|".join("---" for _ in header) + "|"]
     for row in rows:
@@ -319,7 +319,7 @@ def _expert_board_section(bundle: WaiverBundle) -> list[str]:
     else:
         lines += ["_No free agent in this league was named by a writer this week._", ""]
     lines.append(f"_{md_cell(waiver_legend(boards))}_")
-    for reason in board_reasons(boards):
+    for reason in board_reasons(boards) + list(getattr(bundle, "board_pending", [])):
         lines.append(f"- {md_cell(reason)}")
     lines.append("")
     quoted = [(row, q) for row in shown for q in row.quotes]

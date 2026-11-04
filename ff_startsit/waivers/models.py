@@ -297,6 +297,10 @@ class WaiverBundle:
     #: The boards behind ``expert_rows``, in column order, carrying each
     #: writer's unavailable reason when his article couldn't be read.
     expert_boards: list = field(default_factory=list)
+    #: Why a trade-chart column is missing from the board (Boone's charts post
+    #: Wednesday, so Tuesday's board has no "Boone ROS" yet). Rendered under the
+    #: board; the column itself is left out rather than printed blank.
+    board_pending: list[str] = field(default_factory=list)
     sources: list[tuple[str, str]] = field(default_factory=list)  # (author, url)
     #: Surfaced by every renderer, like ``report.Lineup.caveat`` — the honest
     #: "here is what this report could not see this week" line.

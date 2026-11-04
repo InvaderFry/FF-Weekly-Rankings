@@ -132,6 +132,7 @@ def build_sheet(bundle, my_players: Sequence[Player], sources: Sequence, week: i
             boards.append(source.fetch(everyone, week, bundle.scoring, superflex=superflex))
         except Exception as exc:     # a source never raises for I/O; belt and braces
             boards.append(ExpertBoard(source.id, source.short, source.label,
+                                      kind=getattr(source, "kind", "ros"),
                                       unavailable={ALL_POSITIONS: f"{source.label}: {exc}"}))
     season_ranks = {s.player.key: s.season_rank
                     for rec in (bundle.recs or {}).values() for s in rec.scores

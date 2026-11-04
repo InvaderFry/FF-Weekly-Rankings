@@ -77,7 +77,10 @@ def close_call_comparison(rec: Recommendation,
         ra, rb = board_cell(board, a.player.key), board_cell(board, b.player.key)
         if ra == BLANK and rb == BLANK:
             continue
-        parts.append(f"{board.header} {ra}–{rb}")
+        # Every source here is a weekly list, so the "Wk" tag adds nothing to
+        # a one-line Discord comparison; the scoring mismatch still does.
+        name = f"{board.short} ({board.scoring_label})" if board.scoring_label else board.short
+        parts.append(f"{name} {ra}–{rb}")
     if not parts:
         return None
     return f"{a.player.name} vs {b.player.name} — " + " · ".join(parts)
@@ -106,7 +109,7 @@ def waiver_cell(entry: Optional[BoardEntry], position: Optional[str] = None) -> 
 
 def waiver_legend(boards) -> str:
     """Where each Tuesday column came from."""
-    return "Columns — " + "; ".join(f"{b.short}: {b.label}" for b in boards) + "."
+    return "Columns — " + "; ".join(f"{b.header}: {b.label}" for b in boards) + "."
 
 
 def chart_net(value: Optional[float]) -> str:

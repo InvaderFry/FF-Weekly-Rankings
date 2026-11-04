@@ -28,6 +28,7 @@ from .test_waiver_build import (MINE, RANKS, RULES, THEIRS, _NoSchedule, _p,
                                 _Provider)
 # The autouse fixture applies only once imported into this module.
 from .test_waiver_build import _no_journalists  # noqa: F401
+from ._kinds import kind_of  # noqa: F401
 
 
 
@@ -193,14 +194,14 @@ def test_a_chart_cell_says_which_blank_it_is():
     from ff_startsit.boards.models import ALL_POSITIONS, BoardEntry, ExpertBoard
     from ff_startsit.waivers.values import chart_cell
     rb = _p("r1", "Some Rb", "RB")
-    read = ExpertBoard("richard_chart", "Richard", "Richard",
+    read = ExpertBoard("richard_chart", "Richard", "Richard", kind="ros",
                        entries={"r1": BoardEntry(value=12.0, pos_rank=31)})
     assert chart_cell(read, rb) == "12 · RB31"
     assert chart_cell(read, _p("r2", "Deep Rb", "RB")) == "off chart"
-    later = ExpertBoard("boone_trade_values", "Boone", "Boone",
+    later = ExpertBoard("boone_trade_values", "Boone", "Boone", kind="ros",
                         unavailable={ALL_POSITIONS: "Boone's charts: not posted yet, or too old"})
     assert chart_cell(later, rb) == "not posted yet"
-    std = ExpertBoard("boone_trade_values", "Boone", "Boone",
+    std = ExpertBoard("boone_trade_values", "Boone", "Boone", kind="ros",
                       unavailable={"RB": "Boone publishes no standard-scoring values"})
     assert chart_cell(std, rb) == "n/a"
 
@@ -212,10 +213,10 @@ def test_drop_table_carries_each_chart(tmp_path):
     assert b.drops
     first = b.drops[0].score.player
     b.values = ValueSheet("work", "half", 9, boards=[
-        ExpertBoard("richard_chart", "Richard", "Richard",
+        ExpertBoard("richard_chart", "Richard", "Richard", kind="ros",
                     entries={first.key: BoardEntry(value=4.0, pos_rank=50)})])
     md = render_waiver_digest(9, [b])
-    assert "| Player | Pos | ROS rank | Richard | Why |" in md
+    assert "| Player | Pos | ROS rank | Richard ROS | Why |" in md
     assert f"4 · {first.position}50" in md
 
 

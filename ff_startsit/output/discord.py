@@ -422,7 +422,7 @@ def _board_field(index: int, row, boards) -> dict:
     p = row.player
     name = _clip(f"{index}. {p.name} ({p.position}, {p.team or 'FA'})", _TITLE_MAX)
     from ..waivers.board import cell_position
-    parts = [f"{b.short} {waiver_cell(row.entries.get(b.source_id), cell_position(b, p))}"
+    parts = [f"{b.header} {waiver_cell(row.entries.get(b.source_id), cell_position(b, p))}"
              for b in boards]
     value = " | ".join(parts)
     if row.tool:
@@ -523,7 +523,7 @@ def build_values_payloads(week: int, sheets: Sequence) -> list[dict]:
         fields = []
         for row in sheet.rows:
             p = row.player
-            value = " | ".join(f"{b.short} {waiver_cell(row.entries.get(b.source_id), cell_position(b, p))}"
+            value = " | ".join(f"{b.header} {waiver_cell(row.entries.get(b.source_id), cell_position(b, p))}"
                                for b in sheet.boards)
             if row.split:
                 value += f"\n⚠️ {row.split}"
