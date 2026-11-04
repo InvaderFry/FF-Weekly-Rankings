@@ -319,6 +319,8 @@ def render_bundle(bundle: WaiverBundle, heading: str = "###") -> list[str]:
         lines += [f"> **{bundle.banner}**", ""]
     if bundle.caveat:
         lines += [f"> ⚠️ {bundle.caveat}", ""]
+    if bundle.freshness:
+        lines += [f"> ⏳ {md_cell(bundle.freshness)}", ""]
     lines += _expert_board_section(bundle)
     lines += _adds_table(bundle)
     lines += _alternates_table(bundle)
@@ -379,6 +381,9 @@ def render_waiver_digest(week: int, bundles: Sequence[WaiverBundle],
     from ..season import season_year
     from .board import run_mode
     lines += [board_marker(season_year(), week, bundles_read(bundles), run_mode(bundles)), ""]
+    # Read back by Wednesday's rebuild, which posts to Discord only if these changed.
+    from .board import adds_marker
+    lines += [adds_marker(season_year(), week, bundles), ""]
     return "\n".join(lines)
 
 

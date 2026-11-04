@@ -469,6 +469,7 @@ The knobs are all optional:
 | `FF_WAIVER_LIMIT` | `150` | Free agents considered per league, in the platform's own relevance order |
 | `FF_WAIVER_MAX_ADDS` | `8` | Most adds (and drop candidates) listed per league |
 | `FF_WAIVER_MAX_ALTERNATES` | `5` | Ceiling on the "Also consider adding" list — free agents who clear the add bar but have no roster spot left. `0` turns the section off |
+| `FF_ECR_MIN_EXPERTS` | `30` | Below this many experts, the waiver report says FantasyPros' weekly consensus is still thin (early in the week most rankers haven't published) and the Tuesday retry republishes once it fills in. `0` never flags |
 | `FF_TRADE_SUGGESTIONS` | `1` | `0` removes the trade section |
 | `FF_MAX_TRADE_IDEAS` | `5` | Cap on trade ideas per league |
 | `FF_COLUMN_SCRAPE` | `1` | `0` skips fetching the CBS/Yahoo waiver columns |

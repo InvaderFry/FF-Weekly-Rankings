@@ -61,6 +61,7 @@ jobs:
       ODDS_API_KEY: ${{ secrets.ODDS_API_KEY }}
       FANTASYPROS_API_KEY: ${{ secrets.FANTASYPROS_API_KEY }}
       FF_ANALYSTS: ${{ vars.FF_ANALYSTS }}
+      FF_ECR_MIN_EXPERTS: ${{ vars.FF_ECR_MIN_EXPERTS }}
       DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
       ARTIFACT_ONLY: ${{ inputs.artifact_only || false }}
       INPUT_WEEK: ${{ github.event.inputs.week }}
@@ -116,14 +117,55 @@ jobs:
       # issue; Tuesday's post stands. The Odds API payload is disk-cached for
       # 30 minutes and the values step above just fetched it, so this costs no
       # extra credits. If it fails, the restore below keeps Tuesday's page.
+      # Tuesday's published waiver report, for the "did the adds change?" check
+      # below (its latest ff-adds marker is what this run compares with).
+      - name: Fetch this week's published waiver report
+        if: steps.news.outputs.news == 'true'
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          NUM=$(gh issue list --state open --search 'in:title "waiver wire"' \
+                --json number --jq '.[0].number // empty')
+          if [ -n "$NUM" ]; then
+            echo "$NUM" > waiver-issue.txt
+            gh issue view "$NUM" --json body,comments \
+              --jq '.body, (.comments[].body)' > previous-waivers.md
+          fi
+
+      # Discord gets a short "Wednesday update" only when the claims themselves
+      # changed since Tuesday's post (cmd_waivers --adds-changed-since); a
+      # Wednesday that agrees with Tuesday stays quiet.
       - name: Refresh the waivers page
         if: steps.news.outputs.news == 'true'
         continue-on-error: true
         run: |
           WEEK_ARGS=()
           if [ -n "$INPUT_WEEK" ]; then WEEK_ARGS=(--week "$INPUT_WEEK"); fi
+          OWNER="${GITHUB_REPOSITORY%%/*}"; REPO="${GITHUB_REPOSITORY##*/}"
+          WAIVERS_URL="https://${OWNER,,}.github.io/${REPO}/waivers.html"
           python -m ff_startsit.workflow run waivers "${WEEK_ARGS[@]}" \
-            --all-leagues --report waivers.md --dashboard ./site/waivers.html
+            --all-leagues --report waivers.md --dashboard ./site/waivers.html \
+            --discord --adds-changed-since previous-waivers.md --url "$WAIVERS_URL"
+
+      # Same decision as the Discord gate above. When it fired, record the
+      # update on the waiver issue, so the 02:30 UTC retry compares with it
+      # rather than with Tuesday's post and doesn't send the update twice.
+      - name: Did the adds change?
+        id: adds
+        if: steps.news.outputs.news == 'true'
+        run: python -m ff_startsit.workflow adds-changed waivers.md previous-waivers.md
+
+      - name: Record the Wednesday update on the waiver issue
+        if: ${{ !inputs.artifact_only && steps.adds.outputs.changed == 'true' }}
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if [ -f waiver-issue.txt ]; then
+            { echo "**Wednesday update:** the adds changed since Tuesday's post."; echo; cat waivers.md; } > wednesday.md
+            gh issue comment "$(cat waiver-issue.txt)" --body-file wednesday.md
+          fi
 
       # The start/sit page (and waivers.html, if the refresh above failed) is
       # copied from the live site rather than re-scored; if a page can't be

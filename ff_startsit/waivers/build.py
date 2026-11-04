@@ -244,6 +244,7 @@ def build_bundle(settings: Settings, label: str, provider: LeagueViewProvider,
     # is the one thing a waiver report must never say when it cannot see.
     bundle.pool_size = len(pool)
     bundle.coverage = signal_coverage(index, pool_players(pool))
+    _record_ecr_freshness(bundle, signals, week, settings.ecr_min_experts)
     bundle.recs = recs
 
     if rehearsing:
@@ -398,6 +399,37 @@ def build_bundle(settings: Settings, label: str, provider: LeagueViewProvider,
         bundle.values = build_sheet(bundle, my_players, (), week, superflex=superflex,
                                     boards=chart_boards)
     return bundle
+
+
+def _record_ecr_freshness(bundle: WaiverBundle, signals: Sequence, week: int,
+                          min_experts: int) -> None:
+    """Note how complete FantasyPros' weekly consensus was when this ran.
+
+    On a Tuesday most rankers haven't published (Week 9's page read 10 experts
+    on Tuesday evening), and early enough the page can still be last week's.
+    Almost everything on this report reads that consensus — which free agents
+    are ranked, every depth ratio, the drop pool — so the report says so, and
+    the retry marker records it (``board.bundles_read``) so a later run with a
+    fuller consensus republishes. The writers' columns and charts, and CBS and
+    Boone for K/DEF, are current on Tuesday; the note says that too.
+    """
+    ecr = next((s for s in signals if getattr(s, "name", "") == "ecr"), None)
+    if ecr is None or not hasattr(ecr, "min_experts"):
+        return
+    bundle.ecr_experts = ecr.min_experts(week)
+    bundle.ecr_week_ok = ecr.week_verified(week)
+    bundle.ecr_full = bundle.ecr_experts is not None and bundle.ecr_experts >= min_experts
+    if bundle.ecr_week_ok is False:
+        bundle.freshness = (f"FantasyPros' weekly page isn't on Week {week} yet, so this "
+                            "report's adds and drops are built on last week's ranks. "
+                            "The writers' columns and charts are current.")
+    elif bundle.ecr_experts is not None and not bundle.ecr_full:
+        bundle.freshness = (f"FantasyPros' Week {week} consensus has only "
+                            f"{bundle.ecr_experts} experts so far (most rankers publish "
+                            "Wednesday or later), so its weekly ranks, and the adds, "
+                            "drops and depth figures built on them, may still move. "
+                            "The writers' columns and charts, and CBS and Boone for "
+                            "kickers and defenses, are current.")
 
 
 def _fetch_boards(sources: Sequence, players: Sequence[Player], week: int,

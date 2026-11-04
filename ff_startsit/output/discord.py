@@ -329,6 +329,8 @@ def _build_waiver_embed(bundle) -> dict:
         # differently from a quiet wire, and this embed is the copy most people
         # actually read. None means the banner below already explains it.
         description = bundle.no_adds_reason() or ""
+    if bundle.freshness:
+        description = f"{description}\n\n-# ⏳ {bundle.freshness}".strip()
     if bundle.caveat:
         description = f"**{bundle.caveat}**\n\n{description}".rstrip()
     if banner:
