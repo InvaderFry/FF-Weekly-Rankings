@@ -523,6 +523,50 @@ def test_board_changes_no_add_or_drop(tmp_path):
     assert key(plain) == key(with_board)
 
 
+def test_boones_trade_chart_is_a_board_column_and_brings_its_own_rows(tmp_path):
+    """Boone's chart, fetched for the values sheet and the veto, also fills a
+    "Boone ROS" column. A free agent only a chart lists still gets a row: that
+    is how a valuable player someone else dropped reaches the board."""
+    from ff_startsit.boards.models import BoardEntry
+    from ff_startsit.output.html import build_waivers_html
+    from ff_startsit.waivers.render import render_waiver_digest
+    bundle = _build(tmp_path, writer_sources=[
+        _WriterSource("boone_waivers", "Boone", {"f1": BoardEntry(pos_rank=1)})],
+        chart_sources=[_WriterSource("boone_trade_values", "Boone",
+                                     {"f2": BoardEntry(value=26, pos_rank=30)})])
+    assert [b.header for b in bundle.expert_boards] == ["Boone WW", "Boone ROS", "FP ROS"]
+    rows = {r.player.key: r for r in bundle.expert_rows}
+    assert set(rows) == {"f1", "f2"}
+    assert rows["f2"].listed_by == 0 and "boone_trade_values" in rows["f2"].entries
+    assert bundle.expert_rows[0].player.key == "f1"     # a recommendation leads
+    md = render_waiver_digest(9, [bundle])
+    assert "| Player | Pos | Team | Boone WW | Boone ROS | FP ROS | This tool |" in md
+    assert "26 · RB30" in md
+    assert ">Boone ROS</th>" in build_waivers_html(9, [bundle], "2026-11-04")
+
+
+def test_an_unread_chart_is_left_off_the_board_and_says_why(tmp_path):
+    """Tuesday: Boone's charts aren't up. No column of blanks; one note."""
+    from ff_startsit.boards.models import BoardEntry
+    from ff_startsit.waivers.render import render_waiver_digest
+    bundle = _build(tmp_path, writer_sources=[
+        _WriterSource("boone_waivers", "Boone", {"f1": BoardEntry(pos_rank=1)})],
+        chart_sources=[_WriterSource("boone_trade_values", "Boone", {},
+                                     reason="Boone's Week 9 charts: not posted yet")])
+    assert [b.header for b in bundle.expert_boards] == ["Boone WW", "FP ROS"]
+    assert bundle.board_pending == [
+        "No Boone ROS column yet: Boone's Week 9 charts: not posted yet"]
+    assert "No Boone ROS column yet" in render_waiver_digest(9, [bundle])
+
+
+def test_richards_chart_is_one_column_though_read_twice(tmp_path):
+    from ff_startsit.boards.models import BoardEntry
+    entries = {"f1": BoardEntry(value=6, pos_rank=35)}
+    bundle = _build(tmp_path, writer_sources=[_WriterSource("richard_chart", "Richard", entries)],
+                    chart_sources=[_WriterSource("richard_chart", "Richard", entries)])
+    assert [b.header for b in bundle.expert_boards] == ["Richard ROS", "FP ROS"]
+
+
 def test_a_source_that_raises_costs_only_its_column(tmp_path):
     class Broken(_WriterSource):
         def fetch(self, *a, **k):

@@ -20,9 +20,12 @@ from typing import Iterable, Optional, Sequence
 from ..boards.models import ALL_POSITIONS, BoardEntry, ExpertBoard
 from ..models import Player
 
-#: Boards whose listing *is* a pickup recommendation. Richard's chart values
-#: players but doesn't recommend adds, so it fills a column without counting.
+#: Boards whose listing *is* a pickup recommendation. The trade charts value
+#: players but don't recommend adds, so they fill a column without counting.
 RECOMMENDING = ("boone_waivers", "eisenberg_waivers")
+#: Trade charts (rest-of-season values). A free agent on one gets a row even
+#: when no waiver column named him.
+CHARTS = ("richard_chart", "boone_trade_values")
 FP_ROS_ID = "fantasypros_ros"
 
 
@@ -53,11 +56,14 @@ def fp_ros_board(season_ranks: dict[str, float]) -> ExpertBoard:
 
 def build_board(free_agents: Sequence[Player], boards: Sequence[ExpertBoard],
                 adds=(), alternates=(), mentions=None) -> list[BoardRow]:
-    """Rows for every free agent a writer named, best-supported first.
+    """Rows for every free agent a writer named or a trade chart values,
+    best-supported first.
 
     Sorted by how many writers recommend him, then the best (lowest) rank
-    either gave him, then Richard's value, then name, so the top of the table
-    is where the people you trust agree.
+    either gave him, then how many trade charts list him, then Richard's value,
+    then Boone's, then name, so the top of the table is where the people you
+    trust agree. Each chart's value is only ever compared with that chart's
+    own: the two are on different scales.
     """
     tool: dict[str, str] = {}
     for target in adds:
@@ -86,11 +92,13 @@ def build_board(free_agents: Sequence[Player], boards: Sequence[ExpertBoard],
     def key(row: BoardRow):
         ranks = [row.entries[s].pos_rank for s in RECOMMENDING
                  if s in row.entries and row.entries[s].pos_rank is not None]
-        richard = row.entries.get("richard_chart")
         top10 = [int(m[1]) for e in row.entries.values()
                  if e.tier and (m := re.match(r"top-10 #(\d+)", e.tier))]
+        charts = [row.entries.get(s) for s in CHARTS]
         return (-row.listed_by, min(ranks) if ranks else 999, min(top10) if top10 else 99,
-                -(richard.value or 0) if richard else 0, row.player.name)
+                -sum(1 for c in charts if c is not None),
+                *[-(c.value or 0) if c is not None else 0 for c in charts],
+                row.player.name)
     rows.sort(key=key)
     return rows
 

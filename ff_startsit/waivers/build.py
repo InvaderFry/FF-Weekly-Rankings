@@ -373,7 +373,7 @@ def build_bundle(settings: Settings, label: str, provider: LeagueViewProvider,
 
     if writer_sources:
         _attach_expert_board(bundle, writer_boards, pool_players(pool), season_ranks,
-                             mentions)
+                             mentions, chart_boards)
 
     taken = {t.score.player.key
              for t in list(bundle.adds) + list(bundle.alternates)}
@@ -523,10 +523,30 @@ def _stream_rows(index: dict, pool: Sequence[PoolPlayer], my_scores: Sequence[Pl
 
 
 def _attach_expert_board(bundle: WaiverBundle, boards: list, free_agents: Sequence[Player],
-                         season_ranks: dict, mentions: Optional[dict] = None) -> None:
-    """Each writer's reading of this league's wire, side by side (display only)."""
+                         season_ranks: dict, mentions: Optional[dict] = None,
+                         charts: Sequence = ()) -> None:
+    """Each writer's reading of this league's wire, side by side (display only).
+
+    The trade charts the pass already fetched (``charts``) join as columns —
+    Boone's, in practice, since Richard's is a Tuesday source already — so a
+    free agent either chart values gets a row even when no waiver column named
+    him: that is how a valuable player someone else dropped shows up. A chart
+    not read at all (Boone's, on a Tuesday) is left out rather than printed as
+    a column of blanks, and says why in ``board_pending``.
+    """
+    from ..boards.models import ALL_POSITIONS
     from .board import build_board, fp_ros_board
     boards = list(boards)
+    have = {b.source_id for b in boards}
+    for chart in charts:
+        if chart.source_id in have:
+            continue
+        have.add(chart.source_id)
+        if ALL_POSITIONS in chart.unavailable:
+            bundle.board_pending.append(
+                f"No {chart.header} column yet: {chart.unavailable[ALL_POSITIONS]}")
+            continue
+        boards.append(chart)
     boards.append(fp_ros_board(season_ranks))
     bundle.expert_boards = boards
     bundle.expert_rows = build_board(free_agents, boards, bundle.adds, bundle.alternates,

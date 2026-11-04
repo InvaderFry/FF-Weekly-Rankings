@@ -319,7 +319,7 @@ def _expert_board_section(bundle: WaiverBundle) -> list[str]:
     else:
         lines += ["_No free agent in this league was named by a writer this week._", ""]
     lines.append(f"_{md_cell(waiver_legend(boards))}_")
-    for reason in board_reasons(boards):
+    for reason in board_reasons(boards) + list(getattr(bundle, "board_pending", [])):
         lines.append(f"- {md_cell(reason)}")
     lines.append("")
     quoted = [(row, q) for row in shown for q in row.quotes]

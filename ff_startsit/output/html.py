@@ -618,7 +618,7 @@ def _waiver_expert_board(bundle, uid: str = "0") -> str:
     else:
         out.append("<p class='note'>No free agent in this league was named by a writer this week.</p>")
     out.append(f"<p class='note'>{escape(waiver_legend(boards))}</p>")
-    for reason in board_reasons(boards):
+    for reason in board_reasons(boards) + list(getattr(bundle, "board_pending", [])):
         out.append(f"<p class='note'>{escape(reason)}</p>")
     quoted = [(row, q) for row in rows for q in row.quotes]
     if quoted:
