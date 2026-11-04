@@ -214,17 +214,28 @@ couldn't, and publishes `values.html` plus the full tables to Discord.
 
 **What the writers say.** With `FF_ANALYSTS=boone,cbs`, each league's report
 opens with a table of every free agent named by Justin Boone's waiver column,
-Jamey Eisenberg's waiver column or Dave Richard's trade chart, side by side
-(an illustrative row):
+Jamey Eisenberg's waiver column, Dave Richard's trade chart or (from Wednesday)
+Boone's trade value charts, side by side (an illustrative row):
 
-| Player | Pos | Boone | Eisenberg | Richard | FP ROS | This tool |
-|---|---|---|---|---|---|---|
-| Mike Washington Jr. | RB | RB1 · $29 · top-10 #1 | RB2 · 10%+ FAAB | 9 · RB34 | #88 | add (drop …) |
+| Player | Pos | Boone WW | Eisenberg WW | Richard ROS | Boone ROS | FP ROS | This tool |
+|---|---|---|---|---|---|---|---|
+| Mike Washington Jr. | RB | RB1 · $29 · top-10 #1 | RB2 · 10%+ FAAB | 9 · RB34 | 27 · RB33 | #88 | add (drop …) |
 
-Boone's bids are FAB dollars, Eisenberg's are a share of remaining FAAB, and
-Richard's number is his trade/rest-of-season value for your scoring. A writer
-whose article isn't up yet is named under the table rather than silently left
-out. Only free agents in *that* league are listed.
+Column tags say what kind of reading each is: **WW** a waiver column, **ROS** a
+trade chart (rest-of-season value), **Wk** a weekly ranking. Boone's bids are
+FAB dollars, Eisenberg's are a share of remaining FAAB, and each ROS number is
+that writer's trade value for your scoring (on his own scale, so never compare
+Richard's numbers with Boone's). A free agent on either trade chart is listed
+even if no column named him, so a valuable player another team dropped shows
+up. A writer whose article isn't up yet is named under the table rather than
+silently left out. Only free agents in *that* league are listed.
+
+A claim the trade charts disagree with is held back: when more charts value
+the player you'd drop above the one you'd add, the swap is listed under "Held
+back" instead of being recommended.
+
+Every table on the published pages sorts by clicking its column header (best
+first, then worst first, then the original order).
 
 The Tuesday-evening companion to the Sunday lineup. Where the rest of the app
 asks *who do I start?*, this asks *who do I acquire?* — and it can see your whole

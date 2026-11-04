@@ -461,11 +461,26 @@ the verified shape of every source page live in `docs/EXPERT_BOARD_PLAN.md`.
 ### The Tuesday expert board (`boards/writers.py`, `waivers/board.py`)
 
 `waivers` adds a **"What the writers say"** table per league: every free agent
-that Boone's waiver column, Eisenberg's waiver column or Richard's trade chart
-names, with each writer's reading side by side (Boone's positional rank, tier
-and FAB bid; Eisenberg's priority and FAAB %; Richard's value and rank by
-value), FantasyPros' overall ROS rank, and what this tool's own pass decided
-("add (drop X)", "also consider"). `FF_ANALYSTS=boone` enables Boone's column
+that Boone's waiver column, Eisenberg's waiver column or either trade chart
+(Richard's, Boone's) names, with each writer's reading side by side (Boone's
+positional rank, tier and FAB bid; Eisenberg's priority and FAAB %; each
+chart's value and rank by value), FantasyPros' overall ROS rank, and what this
+tool's own pass decided ("add (drop X)", "also consider"). A free agent only a
+chart lists still gets a row — that is how a valuable player another team cut
+reaches the board — sorted below every writer recommendation and folded unless
+the tool acted on him. Boone's chart joins as a column from the `chart_sources`
+the pass already fetched (`_attach_expert_board`); on a Tuesday, before it
+posts, it is left off rather than printed as a column of blanks, and
+`WaiverBundle.board_pending` says why under the board.
+
+**Column headers carry the kind of reading** (`ExpertBoard.header`, from
+`kind`): "Boone Wk" (weekly ranks), "Boone WW" (waiver column), "Boone ROS"
+(trade chart), likewise "Richard ROS", "Eisenberg WW", "CBS Wk", "FP Wk". One
+writer can fill three columns, and a bare "Boone" over each is how the trade
+chart that decided Dulcich's add was invisible on the page beside a "Boone"
+column that was his waiver column. Sentences keep the bare `short` ("Richard's
+trade chart values ..."). A test fake standing in for a source must set that
+source's `kind` (`tests/_kinds.py`), or a chart renders as a weekly list. `FF_ANALYSTS=boone` enables Boone's column
 and `cbs` enables Eisenberg's and Richard's. It is a board, so the rules above
 hold: no weight, no add/drop/bid it creates or moves
 (`test_board_changes_no_add_or_drop`), nothing in `results_log.jsonl`.
@@ -478,6 +493,18 @@ reorder or re-price one (`test_the_veto_only_removes`):
   (Richard's or Boone's) or named in Boone's or Eisenberg's waiver column; QB/TE
   on a trade chart, because a league starts one of each and a QB or TE no chart
   values is a one-week streamer (Malik Willis was on none).
+- **The charts' values decide a skill-player swap** (`Endorsements.value_veto`).
+  Being *on* a chart is a low bar: "Greg Dulcich, drop Jadarian Price" cleared
+  it at Boone's TE27 of 30 while Boone valued Price 26 to 6 and Richard listed
+  only Price. Every chart read at *both* positions votes for the player it
+  values higher (listing only one backs him; neither abstains); the pairing is
+  held back when more charts prefer the drop. Per pairing, like the K/DEF rule,
+  so the add may still take a drop the charts value less. Trade charts are the
+  one cross-position scale this tool reads that was made for this comparison;
+  values are never compared *across* charts. `Endorsements.charts` merges the
+  two reads of Richard's chart (pool-only for the board, every roster for the
+  value sheet): keeping only the first read lost every rostered player's value,
+  i.e. the drop side of this comparison.
 - **K/DEF** are judged pairwise against the player they'd replace, on this
   week's CBS consensus and Boone's weekly list (`cli.kdef_weekly_boards`). The
   swap is held back when more of the experts who ranked either player prefer
@@ -1192,7 +1219,15 @@ With more than one league **all three pages are tabbed** by one shared
 scripting off, plus a small inline script for the `<page>.html#<league>` deep
 link (`league_slugs`) and remembering the viewer's last league in `localStorage`
 under one key for every page (wrapped in try/catch; a convenience, never state).
-"All leagues" shows every section. `_document` wraps every `<table>` in a
+"All leagues" shows every section. **Every table sorts by clicking its
+header** (`_SORT_SCRIPT`, added in `_document`): best-first, worst-first, then
+the original order, with an "Original order" button while sorted. Keys come
+from cell text (leading number or positional rank; "—", "off chart", "not
+posted yet" and "n/a" always last), and a header marked `data-desc` (scores,
+signal columns, bids, trade-chart values via `_board_th`) sorts high first.
+Sorting the writers' board opens its "Show all" fold, since a sort can lift a
+folded row to the top. The script is a **raw** string: its regexes need their
+backslashes, and a plain string turned them into invalid escapes. `_document` wraps every `<table>` in a
 sideways-scrolling `div.tablewrap` with a pinned first column
 (`_scrollable_tables`), because a table wider than a phone used to widen the
 whole page; anything that styles a table by sibling selector (the board's
