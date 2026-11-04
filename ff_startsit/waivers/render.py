@@ -277,37 +277,73 @@ def _mentions_section(bundle: WaiverBundle) -> list[str]:
     return lines
 
 
+def _board_table(boards, rows) -> list[str]:
+    header = ["Player", "Pos", "Team", *[b.short for b in boards], "This tool"]
+    lines = ["| " + " | ".join(header) + " |",
+             "|" + "|".join("---" for _ in header) + "|"]
+    for row in rows:
+        cells = [md_cell(row.player.name), row.player.position, row.player.team or "FA",
+                 *[md_cell(waiver_cell(row.entries.get(b.source_id), cell_position(b, row.player)))
+                   for b in boards],
+                 md_cell(row.tool or "—")]
+        lines.append("| " + " | ".join(cells) + " |")
+    return lines + [""]
+
+
+def _quote_lines(quoted) -> list[str]:
+    return [f"- **{md_cell(row.player.name)}** — [{md_cell(q.author)}]({q.url}): "
+            f"“{md_cell(q.snippet)}”" for row, q in quoted] + [""]
+
+
 def _expert_board_section(bundle: WaiverBundle) -> list[str]:
-    """Every free agent a writer named, each writer's reading side by side."""
+    """Every free agent a writer named, each writer's reading side by side.
+
+    The rows ``board_visible_keys`` picks (the same ones the page shows first)
+    lead; the rest, with their quotes, sit in a folded ``<details>`` below, so
+    the issue stays the complete weekly record without opening on ~70 rows.
+    """
     boards = bundle.expert_boards
     if not boards:
         return []
+    from .board import board_visible_keys
+    rows = bundle.expert_rows
+    visible = board_visible_keys(rows)
+    shown = [r for r in rows if r.player.key in visible]
+    folded = [r for r in rows if r.player.key not in visible]
     lines = ["### What the writers say", ""]
-    if bundle.expert_rows:
-        header = ["Player", "Pos", "Team", *[b.short for b in boards], "This tool"]
-        lines.append("| " + " | ".join(header) + " |")
-        lines.append("|" + "|".join("---" for _ in header) + "|")
-        for row in bundle.expert_rows:
-            cells = [md_cell(row.player.name), row.player.position, row.player.team or "FA",
-                     *[md_cell(waiver_cell(row.entries.get(b.source_id), cell_position(b, row.player)))
-                       for b in boards],
-                     md_cell(row.tool or "—")]
-            lines.append("| " + " | ".join(cells) + " |")
-        lines.append("")
+    if rows:
+        if folded:
+            lines += [f"_Showing {len(shown)} of {len(rows)}: the top of the list, where "
+                      "the writers agree most, plus every player this tool acted on._", ""]
+        lines += _board_table(boards, shown)
     else:
         lines += ["_No free agent in this league was named by a writer this week._", ""]
     lines.append(f"_{md_cell(waiver_legend(boards))}_")
     for reason in board_reasons(boards):
         lines.append(f"- {md_cell(reason)}")
     lines.append("")
-    quoted = [(row, q) for row in bundle.expert_rows for q in row.quotes]
+    quoted = [(row, q) for row in shown for q in row.quotes]
     if quoted:
-        lines += ["**Why, in their words**", ""]
-        for row, q in quoted:
-            lines.append(f"- **{md_cell(row.player.name)}** — [{md_cell(q.author)}]({q.url}): "
-                         f"“{md_cell(q.snippet)}”")
-        lines.append("")
+        lines += ["**Why, in their words**", ""] + _quote_lines(quoted)
+    if folded:
+        # Blank lines inside <details> are what make GitHub render the markdown.
+        lines += [f"<details><summary>The other {len(folded)} players the writers named"
+                  "</summary>", ""] + _board_table(boards, folded)
+        more = [(row, q) for row in folded for q in row.quotes]
+        if more:
+            lines += ["**Why, in their words**", ""] + _quote_lines(more)
+        lines += ["</details>", ""]
     return lines
+
+
+def _moves_section(bundle: WaiverBundle) -> list[str]:
+    """``WaiverBundle.moves``: the page's "Your moves" card, as a numbered list."""
+    moves = bundle.moves()
+    if not moves:
+        return []
+    return ["**Your moves**", "",
+            *[f"{i}. **{md_cell(m.action)}** {md_cell(m.detail)}"
+              for i, m in enumerate(moves, start=1)], ""]
 
 
 def render_bundle(bundle: WaiverBundle, heading: str = "###") -> list[str]:
@@ -321,18 +357,24 @@ def render_bundle(bundle: WaiverBundle, heading: str = "###") -> list[str]:
         lines += [f"> ⚠️ {bundle.caveat}", ""]
     if bundle.freshness:
         lines += [f"> ⏳ {md_cell(bundle.freshness)}", ""]
-    lines += _expert_board_section(bundle)
-    lines += _adds_table(bundle)
+    lines += _roster_section(bundle)
+    lines += _moves_section(bundle)
+    # The page's order: decisions first, then the research they rest on (the
+    # writers' board and the roster's chart values), which used to open the
+    # section and push the claims below ~70 rows of table.
+    claims = _adds_table(bundle)
+    if claims:
+        lines += ["**Claims**", ""] + claims
     lines += _alternates_table(bundle)
     lines += _held_back_section(bundle)
     lines += _stream_section(bundle)
     lines += _drops_table(bundle)
-    lines += _roster_values_section(bundle)
     lines += _trades_section(bundle)
     lines += _stash_section(bundle)
     lines += _bye_section(bundle)
     lines += _mentions_section(bundle)
-    lines += _roster_section(bundle)
+    lines += _expert_board_section(bundle)
+    lines += _roster_values_section(bundle)
     # Inside the league's own section, where the numbers they carry can be
     # attributed. Only run-wide notes go to the shared footer below.
     if bundle.league_notes:

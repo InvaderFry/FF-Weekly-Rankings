@@ -25,8 +25,22 @@ class DataStatus:
         return lines
 
     def markdown(self):
+        """The same split as ``html``: what the block is for stays visible, the
+        per-source detail folds into a ``<details>`` GitHub renders.
+
+        The first line must stay visible and first: ``workflow.issue_title``
+        reads the season and week off it to title the issue.
+        """
         from .output.render import md_cell
-        return "## Data status\n\n" + "\n".join(f"- {md_cell(line)}" for line in self.lines()) + "\n"
+        head, leagues, included = self.lines()[:3]
+        skipped = [f"Skipped {name}: {reason}" for name, reason in self.skipped.items()]
+        folded = [included] + self.details
+        out = ["## Data status", "", f"- {md_cell(head)}", f"- {md_cell(leagues)}"]
+        out += [f"- **{md_cell(line)}**" for line in skipped]
+        out += ["", f"<details><summary>Sources and coverage ({len(folded)} lines)</summary>",
+                "", *[f"- {md_cell(line)}" for line in folded], "", "</details>", "",
+                f"_{md_cell(self.lines()[-1])}_"]
+        return "\n".join(out) + "\n"
 
     def html(self):
         """The same lines as ``markdown``, with the per-source detail folded away.

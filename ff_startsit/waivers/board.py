@@ -95,6 +95,28 @@ def build_board(free_agents: Sequence[Player], boards: Sequence[ExpertBoard],
     return rows
 
 
+#: The writers' board shows at least this many rows before "Show all".
+BOARD_MIN_ROWS = 10
+
+
+def board_visible_keys(rows) -> set:
+    """Which writers'-board rows the page shows before "Show all".
+
+    The board lists every free agent any writer named (~70 a league on a
+    Tuesday), most of them on one writer's list and untouched by this tool.
+    Visible by default: the top of the list (``build_board`` sorts by how many
+    writers recommend a player, so this is where they agree), at least
+    ``BOARD_MIN_ROWS`` deep and deep enough to hold everyone two writers named,
+    plus every player this tool acted on wherever he sits. Display only: the
+    folded rows are one click away on the page (and in a folded section of the
+    issue), and no add or drop reads this. One rule for the page, the issue and
+    Discord, so the three agree on which rows lead.
+    """
+    agree = sum(1 for r in rows if r.listed_by >= 2)
+    depth = max(agree, BOARD_MIN_ROWS)
+    return {r.player.key for i, r in enumerate(rows) if i < depth or r.tool}
+
+
 def board_reasons(boards: Sequence[ExpertBoard]) -> list[str]:
     """One line per writer whose article couldn't be read, in its own words
     ("…not posted yet" stays distinct from "…could not be verified")."""
@@ -252,6 +274,23 @@ def has_news(read: Iterable[str], previous_text: Optional[str], season: int, wee
     if published is None:
         return True
     return bool(set(read) - published)
+
+
+def published_before(current_text: str, previous_text: Optional[str]) -> bool:
+    """Whether a report for this digest's season, week and mode is already out.
+
+    ``report_has_news`` answers "publish at all?"; this answers "is this the
+    first post or a later one?". A later Tuesday run that read something new
+    still updates the issue and the page, but Discord already has the board and
+    the claims, so ``cmd_waivers`` sends only a summary, and only when the
+    claims changed (``adds_changed``).
+    """
+    match = _MARKER.search(current_text or "")
+    if match is None:
+        return False
+    season, week, mode = match[1], match[2], match[3] or "live"
+    return any(s_ == season and w_ == week and (m_ or "live") == mode
+               for s_, w_, m_, _ in _MARKER.findall(previous_text or ""))
 
 
 def report_has_news(current_text: str, previous_text: Optional[str]) -> bool:

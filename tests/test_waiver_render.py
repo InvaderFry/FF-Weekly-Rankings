@@ -134,7 +134,7 @@ def test_markdown_escapes_pipes_so_a_name_cannot_break_the_table():
     b = _bundle()
     b.adds[0].score.player = Player("f0", "Odd | Name", "KC", "WR")
     md = render_waiver_digest(9, [b])
-    row = [line for line in md.splitlines() if "Odd" in line][0]
+    row = [line for line in md.splitlines() if "Odd" in line and line.startswith("|")][0]
     assert r"Odd \| Name" in row        # escaped, so it stays inside its cell
     # 6 columns => 7 unescaped delimiters, whatever the name contains.
     assert len(re.findall(r"(?<!\\)\|", row)) == 7
@@ -718,9 +718,12 @@ def test_all_three_renderers_carry_the_alternates_section():
     payload = json.dumps(build_waiver_payload(9, [b]))
 
     for rendered in (md, html, payload):
-        assert "Also consider" in rendered
+        # The "Your moves" line, in all three (Discord's card is built from it)...
+        assert "Also worth adding if you free a spot" in rendered
         assert "Spare Back" in rendered
         assert "No Ratio Guy" in rendered
+    # ...and the full section on the page and in the issue.
+    assert "Also consider adding" in md and "Also consider adding" in html
 
 
 def test_the_alternates_table_shows_no_drop_column():
@@ -740,7 +743,7 @@ def test_a_missing_depth_ratio_renders_as_a_dash_in_the_alternates_table():
     """Same contract as the adds table's Depth and the drop table's ROS rank:
     renderers tolerate a target built outside ``pick_alternates``."""
     md = render_waiver_digest(9, [_alternates_bundle()])
-    row = [ln for ln in md.splitlines() if "No Ratio Guy" in ln][0]
+    row = [ln for ln in md.splitlines() if "No Ratio Guy" in ln and ln.startswith("|")][0]
     assert "| — |" in row
 
 

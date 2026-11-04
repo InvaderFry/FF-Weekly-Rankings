@@ -41,18 +41,18 @@ def _bundle():
 
 
 def test_moves_restate_each_section_in_plain_sentences():
-    moves = dict(_bundle().moves())
+    moves = {m.action: m.detail for m in _bundle().moves()}
     assert moves["Claim Jonah Coleman (RB), drop Zach Charbonnet."] == (
         "Worth your top waiver claim. Named this week by Jamey Eisenberg, Justin Boone.")
     assert "Alt 0 (WR), Alt 1 (WR), Alt 2 (WR), Alt 3 (WR) and 2 more." == \
         moves["Also worth adding if you free a spot:"]
-    assert moves["Trade idea with Rival:"] == "send My Rb3, get Their Wr3. 1 more idea below."
+    assert moves["Trade idea with Rival:"] == "send My Rb3, get Their Wr3. 1 more in Trade ideas."
     assert moves["Stash:"] == "Carnell Tate (WR)."
-    assert moves["Bye-week hole:"] == "Week 11 leaves you 0 healthy K for 1 slot."
+    assert moves["Bye-week hole:"] == "Week 11 leaves you 0 healthy Ks for 1 slot."
 
 
 def test_held_back_lines_sharing_a_reason_collapse_to_one_sentence():
-    held = [d for a, d in _bundle().moves() if a == "Held back:"]
+    held = [m.detail for m in _bundle().moves() if m.kind == "held_back"]
     assert held == [
         "Evan McPherson (K), Jake Bates (K) — CBS and Boone rank Jason Myers higher this week.",
         "Malik Willis (QB) — no trade chart values him.",
@@ -60,7 +60,7 @@ def test_held_back_lines_sharing_a_reason_collapse_to_one_sentence():
 
 
 def test_moves_order_follows_what_a_reader_acts_on():
-    actions = [a for a, _ in _bundle().moves()]
+    actions = [m.action for m in _bundle().moves()]
     assert actions[0].startswith("Claim ")
     assert actions.index("Also worth adding if you free a spot:") < actions.index("Held back:")
     assert actions.index("Held back:") < actions.index("Trade idea with Rival:")
@@ -71,7 +71,7 @@ def test_an_empty_wire_says_why_with_the_shared_reason():
     b = WaiverBundle(label="work", scoring="ppr", week=9)
     b.pool_size, b.coverage = 150, {"ecr": 120}
     moves = b.moves()
-    assert moves == [("No claims this week.", b.no_adds_reason())]
+    assert [tuple(m) for m in moves] == [("claim", "No claims this week.", b.no_adds_reason())]
 
 
 def test_a_preseason_refusal_has_no_card():
@@ -89,7 +89,7 @@ def test_the_card_and_claims_come_before_the_research_tables():
                                        unavailable={}, source_id="boone")]
     html = build_waivers_html(9, [b], "2026-11-04")
     order = [html.index(s) for s in ("Your moves", "<h3>Claims</h3>",
-                                     "Also consider adding", "Trade ideas",
+                                     "Also consider adding", "<h3>Trade ideas</h3>",
                                      "What the writers say")]
     assert order == sorted(order)
     assert "Claim Jonah Coleman (RB), drop Zach Charbonnet." in html

@@ -176,8 +176,15 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           if [ -f waiver-issue.txt ]; then
-            { echo "**Wednesday update:** the adds changed since Tuesday's post."; echo; cat waivers.md; } > wednesday.md
-            gh issue comment "$(cat waiver-issue.txt)" --body-file wednesday.md
+            # Same shape as waivers.yml's later runs: the body becomes this
+            # report, and the comment says only what changed.
+            NUM=$(cat waiver-issue.txt)
+            OWNER="${GITHUB_REPOSITORY%%/*}"; REPO="${GITHUB_REPOSITORY##*/}"
+            WAIVERS_URL="https://${OWNER,,}.github.io/${REPO}/waivers.html"
+            python -m ff_startsit.workflow update-note waivers.md previous-waivers.md \
+              "$WAIVERS_URL" "Wednesday update" > wednesday.md
+            gh issue edit "$NUM" --body-file waivers.md
+            gh issue comment "$NUM" --body-file wednesday.md
           fi
 
       # The site deploys when the values report has news, or when a retry's

@@ -253,29 +253,6 @@ def send_discord(webhook_url: str, payload: dict,
 _WAIVER_COLOR = 0x5865F2
 
 
-def _waiver_add_lines(bundle) -> list[str]:
-    lines: list[str] = []
-    for t in bundle.adds:
-        drop = f" — drop {t.drop_label}" if t.drop else ""
-        bid = f" · {t.bid}" if t.bid else ""
-        lines.append(f"**{t.score.player.name}** ({t.score.player.position})"
-                     f"{drop}{bid}")
-    return lines
-
-
-def _waiver_alternate_lines(bundle) -> list[str]:
-    """The "Also consider" adds, one short line each.
-
-    A field rather than more lines in the description, because every description
-    line is a claim instruction ("drop X for Y") and these have no drop to name.
-    No reason text and no reason sentence when empty: this is the embed a reader
-    skims on a Tuesday evening, and the dashboard carries the "why".
-    """
-    return [f"**{t.score.player.name}** ({t.score.player.position})"
-            + (f" · {t.bid}" if t.bid else "")
-            for t in bundle.alternates]
-
-
 def _waiver_trade_lines(bundle) -> list[str]:
     if not bundle.trades:
         # A league this tool declines to price must not read like a league where
@@ -303,12 +280,22 @@ def _waiver_roster_lines(bundle) -> list[str]:
             for position, players in bundle.roster_by_position()]
 
 
-def _build_waiver_embed(bundle) -> dict:
+def _waiver_move_lines(bundle) -> list[str]:
+    """``WaiverBundle.moves`` as numbered lines: the same "Your moves" the page
+    and the issue open with. The trade line is left out because the card keeps
+    its own trade field, which lists every idea (or says why there are none)."""
+    moves = [m for m in bundle.moves() if m.kind != "trade"]
+    return [f"{i}. **{m.action}** {m.detail}".rstrip() for i, m in enumerate(moves, start=1)]
+
+
+def _build_waiver_embed(bundle, url: Optional[str] = None) -> dict:
     """One league's waiver embed.
 
-    Adds come first and trades last on purpose: ``_fit_message_budget`` trims
-    the longest field when the message overruns, and a trade idea is the part a
-    reader can most afford to open the dashboard for. A waiver claim has a
+    It opens with the league's "Your moves" (claims, what didn't fit, what was
+    held back, stashes, bye holes) and links its title to that league's tab on
+    the page (``url``). Trades come last on purpose: ``_fit_message_budget``
+    trims the longest block when the message overruns, and a trade idea is the
+    part a reader can most afford to open the page for. A waiver claim has a
     deadline tonight.
     """
     label = f" · {bundle.label}" if bundle.label else ""
@@ -316,19 +303,15 @@ def _build_waiver_embed(bundle) -> dict:
                   f"{bundle.scoring.upper()}{label}", _TITLE_MAX)
 
     banner = bundle.banner
-    adds = _waiver_add_lines(bundle)
-    if adds:
-        description = "\n".join(adds)
-        # This embed is the copy most people actually read, so the positions that
-        # produced no add are worth the two lines here too.
-        gap = bundle.no_adds_at_positions()
-        if gap:
-            description = f"{description}\n\n{gap}"
-    else:
-        # One shared definition of what an empty section means — an outage reads
-        # differently from a quiet wire, and this embed is the copy most people
-        # actually read. None means the banner below already explains it.
-        description = bundle.no_adds_reason() or ""
+    # One shared definition of every sentence here (``WaiverBundle.moves``),
+    # including what an empty wire means — an outage reads differently from a
+    # quiet one. Empty under the preseason banner, which explains itself.
+    description = "\n".join(_waiver_move_lines(bundle))
+    # This embed is the copy most people actually read, so the positions that
+    # produced no add are worth the two lines here too.
+    gap = bundle.no_adds_at_positions()
+    if gap:
+        description = f"{description}\n\n{gap}"
     if bundle.freshness:
         description = f"{description}\n\n-# ⏳ {bundle.freshness}".strip()
     if bundle.caveat:
@@ -342,22 +325,10 @@ def _build_waiver_embed(bundle) -> dict:
         "color": _BANNER_COLOR if (banner or bundle.caveat) else _WAIVER_COLOR,
         "fields": [],
     }
-
-    alternates = _waiver_alternate_lines(bundle)
-    if alternates:
-        # Before the drop list: these are still adds, and a claim has tonight's
-        # deadline while a conditional drop does not.
-        embed["fields"].append({
-            "name": "➕ Also consider adding (no roster spot open)",
-            "value": _clip("\n".join(alternates), _FIELD_VALUE_MAX),
-            "inline": False,
-        })
-    if bundle.held_back:
-        embed["fields"].append({
-            "name": "✋ Held back (the experts don't back these)",
-            "value": _clip("\n".join(bundle.held_back), _FIELD_VALUE_MAX),
-            "inline": False,
-        })
+    if url:
+        embed["url"] = url
+    # "Also consider", "Held back", stashes and bye holes are lines of the
+    # description now (``moves``); a veto is still always visible, just there.
     if bundle.drops or bundle.ir_drops:
         names = [d.score.player.name for d in bundle.drops]
         names += [f"{d.score.player.name} (IR: frees an IR slot only)"
@@ -382,14 +353,6 @@ def _build_waiver_embed(bundle) -> dict:
             "value": _clip("\n".join(trades), _FIELD_VALUE_MAX),
             "inline": False,
         })
-    if bundle.byes:
-        gaps = ", ".join(f"W{g.week} {g.position} ({g.available}/{g.needed})"
-                         for g in bundle.byes)
-        embed["fields"].append({
-            "name": "🗓️ Bye holes",
-            "value": _clip(gaps, _FIELD_VALUE_MAX),
-            "inline": False,
-        })
     return embed
 
 
@@ -403,10 +366,11 @@ def build_waiver_payload(week: int, bundles: Sequence,
     trimmed here rather than sent to be rejected, and the trim is stated in the
     last embed instead of left for the reader to spot.
     """
+    links = _league_links(bundles, dashboard_url)
     embeds: list[dict] = []
     budget = _TOTAL_CHARS_MAX
-    for b in bundles[:_MAX_EMBEDS]:
-        embed = _build_waiver_embed(b)
+    for b, link in zip(bundles[:_MAX_EMBEDS], links):
+        embed = _build_waiver_embed(b, url=link)
         cost = _embed_chars(embed)
         if embeds and cost > budget - _TRAILER_RESERVE:
             break
@@ -426,10 +390,26 @@ def build_waiver_payload(week: int, bundles: Sequence,
                            _FIELD_VALUE_MAX),
             "inline": False,
         })
+    league_link = last.get("url")
     _dashboard_field(last, dashboard_url)
+    if league_link:
+        last["url"] = league_link          # keep the title on its own league's tab
     _commands_field(last, commands_url)
     _fit_message_budget(embeds)
     return {"embeds": embeds}
+
+
+def _league_links(bundles: Sequence, dashboard_url: Optional[str]) -> list[Optional[str]]:
+    """``waivers.html#<league>`` per bundle: the page's own tab names
+    (``html.league_slugs``), so a card opens the league it is about. A single
+    league has no tabs, so it links the page itself."""
+    if not dashboard_url:
+        return [None] * len(bundles)
+    if len(bundles) < 2:
+        return [dashboard_url] * len(bundles)
+    from .html import league_slugs
+    base = dashboard_url.split("#", 1)[0]
+    return [f"{base}#{slug}" for slug in league_slugs([b.label for b in bundles])]
 
 
 # --- the Tuesday expert board ------------------------------------------------
@@ -450,16 +430,22 @@ def _board_field(index: int, row, boards) -> dict:
     return {"name": name, "value": _clip(value, _FIELD_VALUE_MAX), "inline": False}
 
 
-def build_waiver_board_payloads(week: int, bundles: Sequence) -> list[dict]:
-    """The full Tuesday board, one Discord message (or more) per league.
+def build_waiver_board_payloads(week: int, bundles: Sequence,
+                                dashboard_url: Optional[str] = None) -> list[dict]:
+    """The Tuesday board, one Discord message (or more) per league.
 
-    Separate from ``build_waiver_payload``'s summary because a full table
-    outgrows one message: every league gets its own, split into 25-field
+    Separate from ``build_waiver_payload``'s summary because even the short
+    table outgrows one message: every league gets its own, split into 25-field
     embeds and, past Discord's 10-embed / 6000-character message limits, into
-    further messages. Nothing is trimmed -- the owner asked for the full table.
+    further messages. It carries the rows the page shows first
+    (``board_visible_keys``: where the writers agree, and every player this
+    tool acted on) and says how many more are on the page, linked to that
+    league's tab. The full table used to go out here, ~70 fields a league.
     """
+    from ..waivers.board import board_visible_keys
+    links = _league_links(bundles, dashboard_url)
     payloads: list[dict] = []
-    for bundle in bundles:
+    for bundle, link in zip(bundles, links):
         boards = getattr(bundle, "expert_boards", None)
         if not boards:
             continue
@@ -471,11 +457,24 @@ def build_waiver_board_payloads(week: int, bundles: Sequence) -> list[dict]:
         if not bundle.expert_rows:
             description = ("No free agent in this league was named by a writer this week.\n"
                            + description).strip()
-        fields = [_board_field(i, row, boards) for i, row in enumerate(bundle.expert_rows, start=1)]
+        visible = board_visible_keys(bundle.expert_rows)
+        hidden = len(bundle.expert_rows) - len(
+            [r for r in bundle.expert_rows if r.player.key in visible])
+        if hidden:
+            more = (f"[on the page]({link})" if link else "on the page")
+            description = (f"{hidden} more player{'s' if hidden != 1 else ''} the writers "
+                           f"named are {more}.\n" + description).strip()
+        # The list position stays the row's number, so a gap shows where the
+        # folded rows sit.
+        fields = [_board_field(i, row, boards)
+                  for i, row in enumerate(bundle.expert_rows, start=1)
+                  if row.player.key in visible]
         # Chunk by field count *and* characters: one embed of 25 long fields can
         # exceed the 6000-character message limit on its own, and no amount of
         # splitting into messages fixes an embed that is itself too big.
         first = {"title": title, "color": _WAIVER_COLOR, "fields": []}
+        if link:
+            first["url"] = link
         if description:
             first["description"] = _clip(description, 4096)
         embeds: list[dict] = [first]
