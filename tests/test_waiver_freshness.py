@@ -11,7 +11,7 @@ from ff_startsit.models import SignalValue
 from ff_startsit.sources.base import Signal
 from ff_startsit.waivers.board import adds_changed, bundles_read, report_has_news
 from ff_startsit.waivers.build import build_bundle
-from ff_startsit.waivers.models import FantasyTeam, PoolPlayer
+from ff_startsit.waivers.models import FantasyTeam, PoolPlayer, WaiverBundle
 from ff_startsit.waivers.render import render_waiver_digest
 from ff_startsit.workflow import publish_adds_changed
 
@@ -133,3 +133,31 @@ def test_generated_stamp_carries_the_time():
         "2026-11-03 7:15 PM CST (01:15 UTC)"
     assert generated_stamp(datetime(2026, 10, 6, 14, 5, tzinfo=timezone.utc)) == \
         "2026-10-06 9:05 AM CDT (14:05 UTC)"
+
+
+def test_a_retry_that_finds_boones_missing_te_chart_republishes():
+    """Boone's chart is on the writers' board and can veto an add, and his four
+    charts post one at a time. Recorded as one id, the run missing TE and the
+    retry that found it wrote the same marker and the retry was suppressed,
+    though its claims could differ. Per position, like the values sheet."""
+    from ff_startsit.boards.models import ExpertBoard
+    from ff_startsit.waivers.board import board_marker
+
+    def bundle(unavailable):
+        b = WaiverBundle(label="work", scoring="ppr", week=9)
+        b.expert_boards = [
+            ExpertBoard("richard_chart", "Richard", "Richard", kind="ros"),
+            ExpertBoard("boone_trade_values", "Boone", "Boone", kind="ros",
+                        unavailable=dict(unavailable))]
+        return b
+
+    partial = bundles_read([bundle({"TE": "Boone's Week 9 TE trade chart not found"})])
+    full = bundles_read([bundle({})])
+    assert "boone_trade_values:TE" not in partial and "boone_trade_values:TE" in full
+    assert "boone_trade_values" not in full                 # never the bare id
+    assert "richard_chart" in full                          # one article, one id
+    first = board_marker(2026, 9, partial)
+    retry = board_marker(2026, 9, full)
+    assert report_has_news(retry, first)
+    assert not report_has_news(first, retry)                # fewer is not news
+    assert not report_has_news(retry, retry)

@@ -561,7 +561,11 @@ at the position, with blend score, FP, CBS and Boone side by side.
   because with nothing read all three are "Week 1" with the same read list,
   and a refusal or rehearsal already posted would suppress the live report.
   The values sheet records `read` per chart position (`boone_trade_values:TE`),
-  since Boone's charts post one at a time. The marker also records the weekly
+  since Boone's charts post one at a time, and the waiver digest does the same
+  for his chart on the writers' board (`board.PER_POSITION_SOURCES`): the
+  trade-value veto lets a newly found TE chart change the claims, and as one
+  bare id the retry that found it read the same marker as the partial run and
+  was suppressed. Richard's chart is one article and stays one id. The marker also records the weekly
   K/DEF lists per position (`cbs_consensus:K`, `boone_weekly:DEF`,
   `board.weekly_read`), counted only where the list ranked a player in the K/DEF
   table: both post Tuesday evening, between the first pass and the retry, and

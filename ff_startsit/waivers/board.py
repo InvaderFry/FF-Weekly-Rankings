@@ -182,6 +182,16 @@ def run_mode(items) -> str:
     return max(modes, key=MODES.index) if modes else "live"
 
 
+#: Board sources that post one article per position, recorded in the retry
+#: marker per position read (``boone_trade_values:TE``). Boone's four trade
+#: value charts land one at a time, and since his chart joined the writers'
+#: board and the trade-value veto, a retry that finds the missing TE chart can
+#: change the claims; recorded as one id, that retry read the same marker as
+#: the partial run and the gate suppressed it. Richard's chart is one article
+#: and stays one id, so markers already published keep matching.
+PER_POSITION_SOURCES = {"boone_trade_values": ("QB", "RB", "WR", "TE")}
+
+
 def bundles_read(bundles) -> list[str]:
     """Writer boards read in any league this run, plus this week's K/DEF lists.
 
@@ -191,11 +201,17 @@ def bundles_read(bundles) -> list[str]:
     then decide there was nothing new, so the published picks never saw them.
     They are recorded per position (``cbs_consensus:K``), and only where the
     list actually ranked one of the players in the table: a list that was
-    fetched but ranked nobody we asked about gave the report nothing.
+    fetched but ranked nobody we asked about gave the report nothing. Boone's
+    trade charts are per position too (``PER_POSITION_SOURCES``).
     """
     seen: set[str] = set()
     for bundle in bundles:
-        seen.update(read_sources(getattr(bundle, "expert_boards", [])))
+        boards = getattr(bundle, "expert_boards", [])
+        seen.update(read_sources([b for b in boards
+                                  if b.source_id not in PER_POSITION_SOURCES]))
+        for b in boards:
+            if b.source_id in PER_POSITION_SOURCES:
+                seen.update(read_sources([b], positions=PER_POSITION_SOURCES[b.source_id]))
         seen.update(weekly_read(bundle))
         # FantasyPros fills in through the week; a retry that finds its page on
         # the right week, or its consensus past FF_ECR_MIN_EXPERTS, is news.
