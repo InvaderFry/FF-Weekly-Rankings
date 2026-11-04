@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import sys
 from dataclasses import replace
-from typing import Optional, Sequence
+from typing import Callable, Optional, Sequence
 
 from ..config import Settings
 from ..models import Player, PlayerScore
@@ -21,14 +21,17 @@ from ..season import (REHEARSAL_BANNER, WAIVER_BANNER, is_preseason,
 from ..sources.schedule import ScheduleProvider
 from .base import LeagueViewProvider, pool_players
 from .columns import ColumnFetcher, index_mentions
-from .models import DropCandidate, LeagueRules, PoolPlayer, WaiverBundle
+from .endorse import Endorsements
+from .models import DropCandidate, LeagueRules, PoolPlayer, StreamRow, WaiverBundle
 from .season_values import SeasonValueProvider, URLS, protected_rank
 from .score import (BYE_HORIZON, MIN_LEAGUE_TEAMS, STREAM_POSITIONS, bye_gaps,
                     dedupe_players, droppable, find_stashes, has_ecr,
                     pick_adds, pick_alternates,
                     score_positions, signal_coverage, stash_candidates,
-                    starting_slots, team_players, viable_adds_by_position)
+                    starting_slots, team_players, viable_adds_by_position,
+                    _add_candidates)
 from .trades import suggest_trades
+from .values import build_sheet, superflex_for
 
 #: Scores are min-maxed inside a position's own candidate set, so a 9-point WR
 #: gain and a 9-point TE gain are not the same nine points. Adds and drops are
@@ -145,7 +148,10 @@ def build_bundle(settings: Settings, label: str, provider: LeagueViewProvider,
                  include_columns: bool = True,
                  preseason: Optional[bool] = None,
                  rehearse: Optional[bool] = None,
-                 writer_sources: Sequence = ()) -> WaiverBundle:
+                 writer_sources: Sequence = (),
+                 chart_sources: Sequence = (),
+                 weekly_boards: Optional[Callable[[Sequence[Player], int, str],
+                                                  list]] = None) -> WaiverBundle:
     """Score one league's waiver wire and build its report.
 
     Before Week 1 the report is **refused**, not filled. ``pipeline.build_signals``
@@ -308,10 +314,33 @@ def build_bundle(settings: Settings, label: str, provider: LeagueViewProvider,
 
     faab_left = rules.faab_remaining(my_team.faab_spent if my_team else None)
 
+    # The writers' readings are fetched *before* the pick now, because they can
+    # veto an add (``endorse``). They still never create, reorder or re-price one.
+    superflex = superflex_for(rules)
+    writer_boards = _fetch_boards(writer_sources, pool_players(pool), week,
+                                  settings.scoring, superflex)
+    chart_boards = _fetch_boards(chart_sources, candidates, week,
+                                 settings.scoring, superflex)
+    stream_players = [p for p in dedupe_players(my_players, pool_players(pool))
+                      if p.position in STREAM_POSITIONS]
+    weekly = []
+    if weekly_boards is not None and stream_players:
+        try:
+            weekly = [b for b in weekly_boards(stream_players, week, settings.scoring) if b]
+        except Exception as exc:     # an annotation never sinks the report
+            print(f"warning: K/DEF expert ranks unavailable: {exc}", file=sys.stderr)
+    endorse = None
+    if writer_boards or chart_boards or weekly:
+        endorse = Endorsements(boards=writer_boards + chart_boards, weekly=weekly,
+                               mentioned=frozenset(mentions))
+    veto = endorse.veto if endorse is not None else None
+    held: list = []
+
     all_drops = drops + streamers
     bundle.adds = pick_adds(index, pool, all_drops, rules, faab_remaining=faab_left,
                             journalist_ranks=ranks, mentions=mentions,
-                            max_adds=max_adds, rostered=rostered)
+                            max_adds=max_adds, rostered=rostered,
+                            veto=veto, held_back=held)
     # The same candidates against the same drops, minus the pairing: the adds
     # table runs out of roster spots long before it runs out of players worth
     # adding, and an empty row there used to be indistinguishable from a quiet
@@ -322,16 +351,28 @@ def build_bundle(settings: Settings, label: str, provider: LeagueViewProvider,
                                         faab_remaining=faab_left,
                                         journalist_ranks=ranks, mentions=mentions,
                                         max_alternates=max_alternates,
-                                        rostered=rostered)
+                                        rostered=rostered,
+                                        veto=veto, held_back=held)
     # Counted from the same gate ``pick_adds`` applies, so "N were compared" and
     # the table it explains can never name different Ns.
     bundle.considered_adds = viable_adds_by_position(index, pool, rules)
     bundle.drops = drops[:max_adds]
     bundle.drop_pool = len(all_drops)
+    if endorse is not None:
+        for target in list(bundle.adds) + list(bundle.alternates):
+            note = endorse.fallback_note(target.score)
+            if note:
+                target.reasons = (*target.reasons, note)
+        bundle.held_back = [f"{s.player.name} ({s.player.position}): {why}" for s, why in held]
+    if weekly:
+        bundle.stream_columns = [b.short for b in weekly]
+        bundle.weekly_boards = list(weekly)
+        bundle.stream_rows = _stream_rows(index, pool, my_scores, rules, bundle, weekly,
+                                          bye_teams, held)
 
     if writer_sources:
-        _attach_expert_board(bundle, writer_sources, pool_players(pool), week,
-                             settings.scoring, rules, season_ranks, mentions)
+        _attach_expert_board(bundle, writer_boards, pool_players(pool), season_ranks,
+                             mentions)
 
     taken = {t.score.player.key
              for t in list(bundle.adds) + list(bundle.alternates)}
@@ -352,28 +393,102 @@ def build_bundle(settings: Settings, label: str, provider: LeagueViewProvider,
                                            max_ideas=max_trades)
             if bundle.trades:
                 bundle.notes.append(TRADE_NOTE)
+    if chart_sources:
+        # Your roster on each chart (display only), from the boards fetched above.
+        bundle.values = build_sheet(bundle, my_players, (), week, superflex=superflex,
+                                    boards=chart_boards)
     return bundle
 
 
-def _attach_expert_board(bundle: WaiverBundle, sources: Sequence, free_agents: Sequence[Player],
-                         week: int, scoring: str, rules: LeagueRules,
-                         season_ranks: dict, mentions: Optional[dict] = None) -> None:
-    """Each writer's reading of this league's wire, side by side (display only).
-
-    A source never raises for I/O, but one that does anyway costs its own
-    column and nothing else -- the add/drop report above is already built.
-    """
-    from .board import build_board, fp_ros_board
+def _fetch_boards(sources: Sequence, players: Sequence[Player], week: int,
+                  scoring: str, superflex: bool) -> list:
+    """Each source's board. A source never raises for I/O, but one that does
+    anyway costs its own column and nothing else."""
     from ..boards.models import ALL_POSITIONS, ExpertBoard
-    superflex = bool(rules.flex_slots.get("SUPER_FLEX")) or rules.roster_slots.get("QB", 1) >= 2
     boards = []
     for source in sources:
         try:
-            boards.append(source.fetch(free_agents, week, scoring, superflex=superflex))
+            boards.append(source.fetch(players, week, scoring, superflex=superflex))
         except Exception as exc:
             print(f"warning: {source.label} unavailable: {exc}", file=sys.stderr)
             boards.append(ExpertBoard(source.id, source.short, source.label,
                                       unavailable={ALL_POSITIONS: f"{source.label}: {exc}"}))
+    return boards
+
+
+#: Free agents per position shown in the K/DEF comparison, beside your own.
+STREAM_TABLE_ROWS = 5
+
+
+def _stream_rows(index: dict, pool: Sequence[PoolPlayer], my_scores: Sequence[PlayerScore],
+                 rules: LeagueRules, bundle: WaiverBundle, weekly: Sequence,
+                 bye_teams: set[str], held: Sequence) -> dict:
+    """Your K/DEF and the best free agents there, every expert side by side.
+
+    Free agents are the add candidates at that position (the same gate
+    ``pick_adds`` applies), so the table never lists a player the report could
+    not have suggested; they are ordered by FantasyPros' rank.
+    """
+    from ..boards.models import ALL_POSITIONS
+    added = {t.score.player.key: t for t in bundle.adds}
+    alternates = {t.score.player.key for t in bundle.alternates}
+    held_why = {s.player.key: why for s, why in held}
+    dropped = {t.drop.player.key: t.score.player.name for t in bundle.adds if t.drop}
+
+    def ranks(player):
+        out = {}
+        for b in weekly:
+            if ALL_POSITIONS in b.unavailable or player.position in b.unavailable:
+                out[b.short] = None
+                continue
+            e = b.entries.get(player.key)
+            out[b.short] = e.pos_rank if e is not None else None
+        return out
+
+    def ecr(score):
+        v = score.raw.get("ecr")
+        return v.raw if v is not None and v.available else None
+
+    rows: dict = {}
+    for pos in ("K", "DEF"):
+        if not starting_slots(rules).get(pos):
+            continue
+        out = []
+        for s in my_scores:
+            if s.player.position != pos:
+                continue
+            if s.player.key in dropped:
+                status = f"yours: swap for {dropped[s.player.key]}"
+            elif s.player.team in bye_teams:
+                status = "yours: on bye"
+            else:
+                status = "yours: keep"
+            out.append(StreamRow(s.player, True, s.final, ecr(s), ranks(s.player), status))
+        fas = [score for _, score in _add_candidates(index, pool, rules)
+               if score.player.position == pos]
+        fas.sort(key=lambda s: ecr(s) or 999)
+        for s in fas[:STREAM_TABLE_ROWS]:
+            key = s.player.key
+            if key in added:
+                drop = added[key].drop
+                status = f"add (drop {drop.player.name})" if drop else "add"
+            elif key in held_why:
+                status = f"held back: {held_why[key]}"
+            elif key in alternates:
+                status = "also consider"
+            else:
+                status = ""
+            out.append(StreamRow(s.player, False, s.final, ecr(s), ranks(s.player), status))
+        if out:
+            rows[pos] = out
+    return rows
+
+
+def _attach_expert_board(bundle: WaiverBundle, boards: list, free_agents: Sequence[Player],
+                         season_ranks: dict, mentions: Optional[dict] = None) -> None:
+    """Each writer's reading of this league's wire, side by side (display only)."""
+    from .board import build_board, fp_ros_board
+    boards = list(boards)
     boards.append(fp_ros_board(season_ranks))
     bundle.expert_boards = boards
     bundle.expert_rows = build_board(free_agents, boards, bundle.adds, bundle.alternates,

@@ -350,6 +350,12 @@ def _build_waiver_embed(bundle) -> dict:
             "value": _clip("\n".join(alternates), _FIELD_VALUE_MAX),
             "inline": False,
         })
+    if bundle.held_back:
+        embed["fields"].append({
+            "name": "✋ Held back (the experts don't back these)",
+            "value": _clip("\n".join(bundle.held_back), _FIELD_VALUE_MAX),
+            "inline": False,
+        })
     if bundle.drops or bundle.ir_drops:
         names = [d.score.player.name for d in bundle.drops]
         names += [f"{d.score.player.name} (IR: frees an IR slot only)"

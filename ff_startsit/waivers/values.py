@@ -108,7 +108,8 @@ def _net(idea, board: ExpertBoard) -> Optional[float]:
 
 
 def build_sheet(bundle, my_players: Sequence[Player], sources: Sequence, week: int,
-                superflex: bool = False) -> ValueSheet:
+                superflex: bool = False, boards: Optional[Sequence[ExpertBoard]] = None
+                ) -> ValueSheet:
     """The values sheet for one league, from its already-built waiver bundle.
 
     ``sources`` are chart sources (Richard, Boone). They are handed your
@@ -123,8 +124,10 @@ def build_sheet(bundle, my_players: Sequence[Player], sources: Sequence, week: i
     mine = [p for p in my_players if p.position in SKILL]
     in_trades = [s.player for idea in bundle.trades for s in (*idea.you_send, *idea.you_get)]
     everyone = list({p.key: p for p in [*mine, *in_trades]}.values())
-    boards: list[ExpertBoard] = []
-    for source in sources:
+    # ``boards`` are charts the caller already fetched over a superset of these
+    # players (the waiver pass reads them before picking adds): no second fetch.
+    boards = list(boards) if boards is not None else []
+    for source in (sources if not boards else ()):
         try:
             boards.append(source.fetch(everyone, week, bundle.scoring, superflex=superflex))
         except Exception as exc:     # a source never raises for I/O; belt and braces

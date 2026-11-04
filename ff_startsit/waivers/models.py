@@ -9,7 +9,7 @@ logic stay pure functions over these, and every renderer consumes the same
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Optional
+from typing import Optional, Sequence
 
 from ..models import Player, PlayerScore
 from ..data_status import DataStatus
@@ -167,6 +167,41 @@ class DropCandidate:
 
 
 @dataclass
+class StreamRow:
+    """One kicker or defense in the K/DEF comparison table.
+
+    ``ranks`` maps an expert's column header (``CBS``, ``Boone``) to his
+    positional rank this week, ``None`` where he didn't rank the player. Display
+    data: what the table shows beside the decision ``status`` names.
+    """
+
+    player: Player
+    mine: bool
+    final: Optional[float] = None
+    ecr: Optional[float] = None
+    ranks: dict[str, Optional[float]] = field(default_factory=dict)
+    status: str = ""
+
+    def cells(self, columns: Sequence[str]) -> list[str]:
+        """Player, Team, Score, FP, each expert, This tool — one definition for
+        the digest and the dashboard, so the two tables cannot disagree."""
+        pos = "DST" if self.player.position == "DEF" else self.player.position
+
+        def rank(r: Optional[float]) -> str:
+            return "—" if r is None else f"{pos}{r:g}"
+        return [self.player.name, self.player.team or "FA",
+                "—" if self.final is None else f"{self.final:.1f}",
+                rank(self.ecr), *[rank(self.ranks.get(c)) for c in columns],
+                self.status or "—"]
+
+
+#: The K/DEF table's explanation, shared by the renderers.
+STREAM_TABLE_NOTE = ("Score is this tool's blend within the position. FP, CBS and Boone "
+                     "are this week's positional ranks; a swap is held back when more of "
+                     "the experts who ranked either player prefer the one you have.")
+
+
+@dataclass
 class TradeIdea:
     """A concrete two-sided swap with a named partner."""
 
@@ -308,6 +343,18 @@ class WaiverBundle:
     #: ``no_adds_reason`` must say that instead. ``None`` (not computed, e.g. a
     #: bundle built by hand) keeps the older wording.
     drop_pool: Optional[int] = None
+    #: Adds the blend would have made that the writers didn't back, as
+    #: "Name (POS): reason" lines (``endorse.Endorsements``). Listed rather than
+    #: silently dropped, so a veto is always visible.
+    held_back: list[str] = field(default_factory=list)
+    #: position -> your K/DEF and the best free agents there, with this week's
+    #: CBS and Boone ranks side by side. Empty when neither list was configured.
+    stream_rows: dict[str, list[StreamRow]] = field(default_factory=dict)
+    #: The expert column headers ``stream_rows`` carries, in order.
+    stream_columns: list[str] = field(default_factory=list)
+    #: The weekly K/DEF boards behind ``stream_rows``, kept so the retry marker
+    #: can record which lists were read (``board.weekly_read``).
+    weekly_boards: list = field(default_factory=list)
     #: Players in an IR/reserve slot who could be cut. Never paired with an add:
     #: dropping one frees an IR slot, not the roster spot an add needs.
     ir_drops: list[DropCandidate] = field(default_factory=list)

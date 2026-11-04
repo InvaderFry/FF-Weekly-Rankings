@@ -510,6 +510,9 @@ def test_board_lists_only_this_leagues_free_agents(tmp_path):
 
 
 def test_board_changes_no_add_or_drop(tmp_path):
+    """A board that backs every add changes nothing. Boards may veto an add
+    (``waivers/endorse.py``; see test_waiver_endorse.py) but never create,
+    reorder or re-price one."""
     from ff_startsit.boards.models import BoardEntry
     plain = _build(tmp_path)
     with_board = _build(tmp_path, writer_sources=[

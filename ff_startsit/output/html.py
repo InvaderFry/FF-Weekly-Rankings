@@ -380,6 +380,39 @@ def _waiver_alternates_table(bundle) -> str:
     return "\n".join(rows)
 
 
+def _waiver_held_back(bundle) -> str:
+    """Mirrors ``waivers/render._held_back_section``."""
+    if not bundle.held_back:
+        return ""
+    items = "".join(f"<li>{escape(line)}</li>" for line in bundle.held_back)
+    return f"<h3>Held back: the experts don't back these</h3><ul class='ideas'>{items}</ul>"
+
+
+def _waiver_stream_table(bundle) -> str:
+    """Mirrors ``waivers/render._stream_section``."""
+    from ..waivers.models import STREAM_TABLE_NOTE
+    if not bundle.stream_rows:
+        return ""
+    cols = list(bundle.stream_columns)
+    head = "".join(f"<th>{escape(c)}</th>" for c in cols)
+    out = ["<h3>Kicker and defense: this week's experts</h3>"]
+    for pos, rows in bundle.stream_rows.items():
+        out.append(f"<table><thead><tr><th>{escape(pos)}</th><th>Team</th>"
+                   f"<th class='num'>Score</th><th>FP</th>{head}<th>This tool</th>"
+                   "</tr></thead><tbody>")
+        for row in rows:
+            name, team, score, fp, *rest = row.cells(cols)
+            experts, status = rest[:-1], rest[-1]
+            label = f"<strong>{escape(name)}</strong> (yours)" if row.mine else escape(name)
+            cells = "".join(f"<td class='expert'>{escape(c)}</td>" for c in experts)
+            out.append(f"<tr><td>{label}</td><td>{escape(team)}</td>"
+                       f"<td class='num'>{escape(score)}</td><td class='expert'>{escape(fp)}</td>"
+                       f"{cells}<td>{escape(status)}</td></tr>")
+        out.append("</tbody></table>")
+    out.append(f"<p class='note'>{escape(STREAM_TABLE_NOTE)}</p>")
+    return "".join(out)
+
+
 def _waiver_drops_table(bundle) -> str:
     if not bundle.drops and not bundle.ir_drops:
         return ""
@@ -511,6 +544,8 @@ def _waiver_body(bundle) -> list[str]:
     body.append(_waiver_expert_board(bundle))
     body.append(_waiver_adds_table(bundle))
     body.append(_waiver_alternates_table(bundle))
+    body.append(_waiver_held_back(bundle))
+    body.append(_waiver_stream_table(bundle))
     body.append(_waiver_drops_table(bundle))
     body.append(_waiver_roster_values(bundle))
     body.append(_waiver_trades(bundle))

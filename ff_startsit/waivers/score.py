@@ -417,6 +417,29 @@ def _upgrade_over(add: PlayerScore, drop: DropCandidate, rules: LeagueRules,
     return _worth_adding(add, drop.score, rules)
 
 
+def _first_unvetoed(add: PlayerScore, drops: Sequence[DropCandidate], rules: LeagueRules,
+                    rostered: Optional[dict[str, int]], veto
+                    ) -> tuple[Optional[DropCandidate], Optional[str]]:
+    """The first drop ``add`` may replace that the experts don't veto.
+
+    Returns ``(drop, None)`` on a pairing, ``(None, reason)`` when every pairing
+    the blend allowed was vetoed, and ``(None, None)`` when the blend allowed
+    none — so a held-back add is only ever one the blend *would* have made.
+    ``veto`` (``endorse.Endorsements.veto``) can only remove a pairing; it never
+    creates one.
+    """
+    reason = None
+    for d in drops:
+        if not _upgrade_over(add, d, rules, rostered):
+            continue
+        why = veto(add, d) if veto is not None else None
+        if why:
+            reason = reason or why
+            continue
+        return d, None
+    return None, reason
+
+
 def _add_candidates(index: dict[str, PlayerScore], pool: Sequence[PoolPlayer],
                     rules: LeagueRules) -> list[tuple[float, PlayerScore]]:
     """Free agents worth a roster spot, in the order both add lists read.
@@ -491,7 +514,9 @@ def pick_adds(index: dict[str, PlayerScore], pool: Sequence[PoolPlayer],
               journalist_ranks: Optional[dict[str, float]] = None,
               mentions: Optional[dict[str, list[ColumnMention]]] = None,
               max_adds: int = 8,
-              rostered: Optional[dict[str, int]] = None) -> list[WaiverTarget]:
+              rostered: Optional[dict[str, int]] = None,
+              veto=None,
+              held_back: Optional[list] = None) -> list[WaiverTarget]:
     """Pair the best free agents with the worst droppable roster players.
 
     An add is only an add if there is a body to cut for him, so each target is
@@ -526,9 +551,10 @@ def pick_adds(index: dict[str, PlayerScore], pool: Sequence[PoolPlayer],
         position = score.player.position.upper()
         if _capped(position, rules, counts):
             continue
-        drop = next((d for d in available_drops
-                     if _upgrade_over(score, d, rules, rostered)), None)
+        drop, reason = _first_unvetoed(score, available_drops, rules, rostered, veto)
         if drop is None:
+            if reason and held_back is not None:
+                held_back.append((score, reason))
             continue
         available_drops.remove(drop)
         counts[position] = counts.get(position, 0) + 1
@@ -545,7 +571,9 @@ def pick_alternates(index: dict[str, PlayerScore], pool: Sequence[PoolPlayer],
                     journalist_ranks: Optional[dict[str, float]] = None,
                     mentions: Optional[dict[str, list[ColumnMention]]] = None,
                     max_alternates: int = 5,
-                    rostered: Optional[dict[str, int]] = None) -> list[WaiverTarget]:
+                    rostered: Optional[dict[str, int]] = None,
+                    veto=None,
+                    held_back: Optional[list] = None) -> list[WaiverTarget]:
     """Free agents who clear the add bar but have no roster spot left to take.
 
     The adds table is bounded by droppable bodies, not by how much the wire is
@@ -589,7 +617,11 @@ def pick_alternates(index: dict[str, PlayerScore], pool: Sequence[PoolPlayer],
         position = score.player.position.upper()
         if _capped(position, rules, counts):
             continue
-        if not any(_upgrade_over(score, d, rules, rostered) for d in drops):
+        drop, reason = _first_unvetoed(score, drops, rules, rostered, veto)
+        if drop is None:
+            if reason and held_back is not None and all(
+                    s.player.key != score.player.key for s, _ in held_back):
+                held_back.append((score, reason))
             continue
         counts[position] = counts.get(position, 0) + 1
         out.append(_build_target(score, ratio, None, pool_by_key, rules,
