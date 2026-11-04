@@ -225,10 +225,11 @@ def _report_identity(report_text):
 def refreshed_marker(report_path, append=False):
     """The marker that says this week's Wednesday waivers refresh succeeded.
 
-    Appended to the values report (so it rides into the values issue) only when
-    the refresh step succeeded; ``refresh_needed`` looks for it. ``append``
-    writes it onto the report here, rather than the workflow redirecting this
-    command's output into the file it reads (shellcheck SC2094).
+    Posted to the values issue only once the refresh is rebuilt *and* deployed —
+    recorded any earlier, a failed restore or Pages deploy left the retry
+    believing the refresh had landed. ``refresh_needed`` looks for it there.
+    ``append`` writes it onto the report itself (never a shell redirect into
+    the file this reads, which shellcheck flags as SC2094).
     """
     path = Path(report_path)
     identity = _report_identity(path.read_text(encoding="utf-8"))
@@ -305,7 +306,7 @@ def main():
     elif sys.argv[1] == "refresh-needed":
         refresh_needed(sys.argv[2], sys.argv[3])
     elif sys.argv[1] == "refreshed-marker":
-        refreshed_marker(sys.argv[2], append=True)
+        refreshed_marker(sys.argv[2])
     elif sys.argv[1] == "restore":
         args = sys.argv[3:]
         optional = "--optional" in args
