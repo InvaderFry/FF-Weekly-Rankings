@@ -495,7 +495,7 @@ reorder or re-price one (`test_the_veto_only_removes`):
   values is a one-week streamer (Malik Willis was on none).
 - **The charts' values decide a skill-player swap** (`Endorsements.value_veto`).
   Being *on* a chart is a low bar: "Greg Dulcich, drop Jadarian Price" cleared
-  it at Boone's TE27 of 30 while Boone valued Price 26 to 6 and Richard listed
+  it at Boone's TE23 (value 6, near the foot of his TE chart) while Boone valued Price 26 and Richard listed
   only Price. Every chart read at *both* positions votes for the player it
   values higher (listing only one backs him; neither abstains); the pairing is
   held back when more charts prefer the drop. Per pairing, like the K/DEF rule,

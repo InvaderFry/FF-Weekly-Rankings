@@ -21,7 +21,7 @@ Three rules, the first two chosen in the Week 9 review:
   higher (one that lists only one of the two prefers him; one that lists
   neither abstains), and the swap is held back when more charts prefer the
   player you'd drop. Being *on* a chart is a low bar — "Greg Dulcich, drop
-  Jadarian Price" cleared it at TE27 of Boone's 30 while both charts valued
+  Jadarian Price" cleared it at Boone's TE23 (value 6) while both charts valued
   Price several times higher. Trade charts are the one cross-position scale
   this tool reads that was built for exactly this comparison.
 * **Kickers and defenses** are judged pairwise against the player they'd

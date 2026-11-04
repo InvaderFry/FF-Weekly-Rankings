@@ -70,7 +70,7 @@ def _chart(sid, short, values=(), unavailable=None):
 
 
 def test_the_charts_valuing_the_drop_higher_hold_a_swap_back():
-    """The live case: Greg Dulcich (Boone TE27, value 6; off Richard's chart)
+    """The live case: Greg Dulcich (Boone TE23, value 6; off Richard's chart)
     for Jadarian Price (Boone 26, Richard 7). Being *on* a chart is not enough."""
     dulcich, price = _score("gd", "Greg Dulcich", "TE"), _score("jp", "Jadarian Price", "RB")
     charts = [_chart("richard_chart", "Richard", [("jp", 7)]),
