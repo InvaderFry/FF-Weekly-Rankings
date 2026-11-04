@@ -374,6 +374,49 @@ def _capped(position: str, rules: LeagueRules, counts: dict[str, int]) -> bool:
     return cap is not None and counts.get((position or "").upper(), 0) >= cap
 
 
+def must_swap_in_position(add_position: str, drop_position: str, rules: LeagueRules,
+                          rostered: Optional[dict[str, int]]) -> bool:
+    """Whether an add at ``add_position`` may only replace someone at that position.
+
+    ``add_position_cap`` limits how many adds a *report* recommends at a capped
+    position, but never looked at the roster the adds land on — so a one-QB
+    league already carrying two quarterbacks was told to add a third and cut a
+    running back for him ("Malik Willis, drop Jadarian Price"). Once you hold the
+    starters plus one backup there, another body at that position is a bench
+    spot that can never enter the lineup, and the only honest move is a
+    like-for-like swap. ``rostered`` counts active players only: an IR body
+    holds no roster spot and starts no game. ``None`` disables the rule.
+    """
+    if rostered is None:
+        return False
+    pos = (add_position or "").upper()
+    if pos == (drop_position or "").upper():
+        return False
+    cap = add_position_cap(pos, rules)
+    return cap is not None and rostered.get(pos, 0) >= cap + 1
+
+
+def _upgrade_over(add: PlayerScore, drop: DropCandidate, rules: LeagueRules,
+                  rostered: Optional[dict[str, int]]) -> bool:
+    """Whether ``add`` may take ``drop``'s roster spot — the pairing test both
+    add lists apply, layered over ``_worth_adding``.
+
+    An IR body is never a pairing: on ESPN and Sleeper alike his slot sits outside
+    the roster limit, so cutting him opens no spot. A K/DEF on bye is the reverse
+    case: he has no ECR (FantasyPros doesn't rank a bye) so the blend cannot score
+    him, but his slot is certain to score zero, so any ranked free agent at his
+    position — ranked means playing — is this week's upgrade.
+    """
+    if drop.on_reserve:
+        return False
+    if drop.bye_stream:
+        return add.player.position == drop.score.player.position
+    if must_swap_in_position(add.player.position, drop.score.player.position,
+                             rules, rostered):
+        return False
+    return _worth_adding(add, drop.score, rules)
+
+
 def _add_candidates(index: dict[str, PlayerScore], pool: Sequence[PoolPlayer],
                     rules: LeagueRules) -> list[tuple[float, PlayerScore]]:
     """Free agents worth a roster spot, in the order both add lists read.
@@ -412,7 +455,8 @@ def _build_target(score: PlayerScore, ratio: float, drop: Optional[PlayerScore],
                   pool_by_key: dict[str, PoolPlayer], rules: LeagueRules,
                   faab_remaining: Optional[float],
                   journalist_ranks: dict[str, float],
-                  mentions: dict[str, list[ColumnMention]]) -> WaiverTarget:
+                  mentions: dict[str, list[ColumnMention]],
+                  bye_stream: bool = False) -> WaiverTarget:
     """Assemble one recommended add, with or without a drop paired to it.
 
     ``drop=None`` is the "Also consider" case and is not a degraded target: the
@@ -422,7 +466,8 @@ def _build_target(score: PlayerScore, ratio: float, drop: Optional[PlayerScore],
     genuinely absent — a roster spot.
     """
     margin = None
-    if drop is not None and drop.player.position == score.player.position:
+    if (drop is not None and drop.player.position == score.player.position
+            and score.final is not None and drop.final is not None):
         margin = score.final - drop.final
     target = WaiverTarget(
         score=score,
@@ -432,6 +477,7 @@ def _build_target(score: PlayerScore, ratio: float, drop: Optional[PlayerScore],
         depth_ratio=ratio,
         journalist_avg=journalist_ranks.get(score.player.key),
         mentions=tuple(mentions.get(score.player.key, ())),
+        bye_stream=bye_stream,
     )
     target.bid = suggest_bid(target, rules, faab_remaining,
                              conviction=_conviction(ratio))
@@ -444,7 +490,8 @@ def pick_adds(index: dict[str, PlayerScore], pool: Sequence[PoolPlayer],
               faab_remaining: Optional[float] = None,
               journalist_ranks: Optional[dict[str, float]] = None,
               mentions: Optional[dict[str, list[ColumnMention]]] = None,
-              max_adds: int = 8) -> list[WaiverTarget]:
+              max_adds: int = 8,
+              rostered: Optional[dict[str, int]] = None) -> list[WaiverTarget]:
     """Pair the best free agents with the worst droppable roster players.
 
     An add is only an add if there is a body to cut for him, so each target is
@@ -480,13 +527,14 @@ def pick_adds(index: dict[str, PlayerScore], pool: Sequence[PoolPlayer],
         if _capped(position, rules, counts):
             continue
         drop = next((d for d in available_drops
-                     if _worth_adding(score, d.score, rules)), None)
+                     if _upgrade_over(score, d, rules, rostered)), None)
         if drop is None:
             continue
         available_drops.remove(drop)
         counts[position] = counts.get(position, 0) + 1
         targets.append(_build_target(score, ratio, drop.score, pool_by_key, rules,
-                                     faab_remaining, journalist_ranks, mentions))
+                                     faab_remaining, journalist_ranks, mentions,
+                                     bye_stream=drop.bye_stream))
     return targets
 
 
@@ -496,7 +544,8 @@ def pick_alternates(index: dict[str, PlayerScore], pool: Sequence[PoolPlayer],
                     faab_remaining: Optional[float] = None,
                     journalist_ranks: Optional[dict[str, float]] = None,
                     mentions: Optional[dict[str, list[ColumnMention]]] = None,
-                    max_alternates: int = 5) -> list[WaiverTarget]:
+                    max_alternates: int = 5,
+                    rostered: Optional[dict[str, int]] = None) -> list[WaiverTarget]:
     """Free agents who clear the add bar but have no roster spot left to take.
 
     The adds table is bounded by droppable bodies, not by how much the wire is
@@ -540,7 +589,7 @@ def pick_alternates(index: dict[str, PlayerScore], pool: Sequence[PoolPlayer],
         position = score.player.position.upper()
         if _capped(position, rules, counts):
             continue
-        if not any(_worth_adding(score, d.score, rules) for d in drops):
+        if not any(_upgrade_over(score, d, rules, rostered) for d in drops):
             continue
         counts[position] = counts.get(position, 0) + 1
         out.append(_build_target(score, ratio, None, pool_by_key, rules,
@@ -605,7 +654,11 @@ def add_reasons(target: WaiverTarget) -> list[str]:
     reads as a dependency this function still has.
     """
     reasons: list[str] = []
-    if target.drop is not None:
+    if target.drop is not None and target.bye_stream:
+        reasons.append(
+            f"streams for {target.drop.player.name}, whose team is on bye this week"
+        )
+    elif target.drop is not None:
         if target.margin is not None:
             reasons.append(
                 f"scores {target.margin:.1f} above {target.drop.player.name}, "

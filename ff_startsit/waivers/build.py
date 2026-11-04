@@ -244,7 +244,26 @@ def build_bundle(settings: Settings, label: str, provider: LeagueViewProvider,
         bundle.banner = _rehearsal_banner(index, pool)
         bundle.mode = "rehearsal"
 
-    my_scores = [index[p.key] for p in my_players if p.key in index]
+    my_team = next((t for t in teams if t.is_mine), None)
+    # IR/reserve bodies sit outside the roster limit: they start no game, hold
+    # no roster spot, and cutting one opens nothing an add could fill. So they
+    # are taken out of the lineup, the drop pool and every positional count, and
+    # listed on their own as IR-only cuts.
+    reserve = my_team.reserve if my_team else frozenset()
+    all_my_scores = [index[p.key] for p in my_players if p.key in index]
+    my_scores = [s for s in all_my_scores if s.player.key not in reserve]
+    active_players = [p for p in my_players if p.key not in reserve]
+    rostered: dict[str, int] = {}
+    for p in active_players:
+        pos = (p.position or "").upper()
+        rostered[pos] = rostered.get(pos, 0) + 1
+
+    # The schedule is read before the drops now: a starting K/DEF on bye has no
+    # ECR, so without knowing he's on bye he could never be streamed for.
+    schedule = schedule or ScheduleProvider(cache_dir=settings.data_dir)
+    playing = _weeks_playing(schedule, week)
+    bye_teams = _bye_teams(candidates, playing.get(week))
+
     protected = _lineup_keys(my_scores, rules)
     drops = droppable(my_scores, rules, protected=protected)
     drops = [d for d in drops if d.score.player.position not in STREAM_POSITIONS
@@ -255,7 +274,15 @@ def build_bundle(settings: Settings, label: str, provider: LeagueViewProvider,
     # a weekly starter can be replaced at that same position, never for a WR/RB.
     streamers = [DropCandidate(s, "same-position streaming replacement only")
                  for s in my_scores if s.player.position in STREAM_POSITIONS
-                 and s.final is not None and has_ecr(s)]
+                 and s.final is not None and has_ecr(s)
+                 and s.player.team not in bye_teams]
+    streamers += _bye_streamers(my_scores, rules, bye_teams, week)
+    rank_floor = protected_rank(rules.team_count)
+    bundle.ir_drops = [
+        DropCandidate(s, _ir_reason(s), on_reserve=True)
+        for s in all_my_scores if s.player.key in reserve
+        and (s.season_rank is None or s.season_rank > rank_floor)
+    ]
 
     ranks = journalist_ranks(settings, dedupe_players(pool_players(pool), my_players), week)
 
@@ -279,13 +306,12 @@ def build_bundle(settings: Settings, label: str, provider: LeagueViewProvider,
         for author, reason in getattr(fetcher, "unavailable", {}).items():
             bundle.notes.append(f"{author}: {reason}. Column commentary omitted.")
 
-    my_team = next((t for t in teams if t.is_mine), None)
     faab_left = rules.faab_remaining(my_team.faab_spent if my_team else None)
 
     all_drops = drops + streamers
     bundle.adds = pick_adds(index, pool, all_drops, rules, faab_remaining=faab_left,
                             journalist_ranks=ranks, mentions=mentions,
-                            max_adds=max_adds)
+                            max_adds=max_adds, rostered=rostered)
     # The same candidates against the same drops, minus the pairing: the adds
     # table runs out of roster spots long before it runs out of players worth
     # adding, and an empty row there used to be indistinguishable from a quiet
@@ -295,25 +321,23 @@ def build_bundle(settings: Settings, label: str, provider: LeagueViewProvider,
     bundle.alternates = pick_alternates(index, pool, all_drops, rules, bundle.adds,
                                         faab_remaining=faab_left,
                                         journalist_ranks=ranks, mentions=mentions,
-                                        max_alternates=max_alternates)
+                                        max_alternates=max_alternates,
+                                        rostered=rostered)
     # Counted from the same gate ``pick_adds`` applies, so "N were compared" and
     # the table it explains can never name different Ns.
     bundle.considered_adds = viable_adds_by_position(index, pool, rules)
     bundle.drops = drops[:max_adds]
+    bundle.drop_pool = len(all_drops)
 
     if writer_sources:
         _attach_expert_board(bundle, writer_sources, pool_players(pool), week,
                              settings.scoring, rules, season_ranks, mentions)
 
-    schedule = schedule or ScheduleProvider(cache_dir=settings.data_dir)
-    playing = _weeks_playing(schedule, week)
-    bye_teams = _bye_teams(candidates, playing.get(week))
-
     taken = {t.score.player.key
              for t in list(bundle.adds) + list(bundle.alternates)}
     bundle.stashes = find_stashes(index, pool, taken, bye_teams)
     bundle.stash_pool = stash_candidates(index, pool, taken, bye_teams)
-    bundle.byes = bye_gaps(my_players, rules, week, playing)
+    bundle.byes = bye_gaps(active_players, rules, week, playing)
 
     if include_trades:
         if my_team is None:
@@ -357,6 +381,39 @@ def _attach_expert_board(bundle: WaiverBundle, sources: Sequence, free_agents: S
     for board in boards:
         if board.url:
             bundle.sources.append((board.label, board.url))
+
+
+def _bye_streamers(my_scores: Sequence[PlayerScore], rules: LeagueRules,
+                   bye_teams: set[str], week: int) -> list[DropCandidate]:
+    """Starting K/DEF on bye this week, when nobody else at his position plays.
+
+    ``has_ecr`` keeps an unranked player off the drop list because "unranked on a
+    Tuesday usually means on bye, not bad" — and for a streamer that exact case
+    is the one that needs replacing: AndyLOT's Week 9 report printed "only 0
+    healthy K for 1 slot(s)" and suggested no kicker. Only when the position
+    can't field its starters this week; a second kicker who plays covers it.
+    """
+    if not bye_teams:
+        return []
+    slots = starting_slots(rules)
+    out: list[DropCandidate] = []
+    for pos in sorted(STREAM_POSITIONS):
+        mine = [s for s in my_scores if s.player.position == pos]
+        playing = [s for s in mine if s.player.team and s.player.team not in bye_teams]
+        if len(playing) >= max(1, slots.get(pos, 1)):
+            continue
+        for s in mine:
+            if s.player.team in bye_teams:
+                out.append(DropCandidate(
+                    s, f"on bye in Week {week}: stream a one-week replacement",
+                    bye_stream=True))
+    return out
+
+
+def _ir_reason(score: PlayerScore) -> str:
+    rank = ("no rest-of-season rank" if score.season_rank is None
+            else f"ROS rank {score.season_rank:g}")
+    return f"on IR ({rank}): cutting him frees an IR slot, not a roster spot"
 
 
 def _bye_teams(players: Sequence[Player], playing: Optional[set[str]]) -> set[str]:

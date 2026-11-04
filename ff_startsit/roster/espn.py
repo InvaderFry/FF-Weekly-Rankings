@@ -50,6 +50,10 @@ SLOT_ID_TO_POS = {0: "QB", 2: "RB", 4: "WR", 6: "TE", 16: "DEF", 17: "K"}
 #: FREE_AGENT_SLOT_IDS and roster parsing, and no player's position is "FLEX".
 #: 23 is FLEX (RB/WR/TE); 7 is ESPN's "OP", the superflex slot that takes a QB.
 FLEX_SLOT_ID_TO_NAME = {23: "FLEX", 7: "SUPER_FLEX"}
+#: ESPN's injured-reserve lineup slot. A player there doesn't count against the
+#: roster limit, so dropping him frees an IR slot and not a bench spot — the
+#: waiver report must never pair him with an add.
+IR_SLOT_ID = 21
 
 #: The slots we ask the free-agent endpoint for — the positions this app ranks.
 FREE_AGENT_SLOT_IDS = sorted(SLOT_ID_TO_POS)
@@ -123,6 +127,19 @@ def parse_team_players(team: dict) -> list[Player]:
     return players
 
 
+def parse_team_reserve(team: dict) -> frozenset[str]:
+    """Keys of one team's players sitting in the IR slot (pure)."""
+    keys = set()
+    for entry in ((team.get("roster") or {}).get("entries")) or []:
+        if entry.get("lineupSlotId") != IR_SLOT_ID:
+            continue
+        info = (entry.get("playerPoolEntry") or {}).get("player") or {}
+        pid = info.get("id", entry.get("playerId"))
+        if pid is not None:
+            keys.add(f"espn-{pid}")
+    return frozenset(keys)
+
+
 def parse_roster(payload: dict, *, team_id: Optional[str] = None,
                  swid: Optional[str] = None) -> list[Player]:
     """Extract one team's canonical roster from an mRoster+mTeam response."""
@@ -172,6 +189,7 @@ def parse_league_teams(payload: dict, *, team_id: Optional[str] = None,
             is_mine=team.get("id") == mine_id and mine_id is not None,
             faab_spent=float(spent) if isinstance(spent, (int, float)) else None,
             waiver_priority=team.get("waiverRank"),
+            reserve=parse_team_reserve(team),
         ))
     return out
 

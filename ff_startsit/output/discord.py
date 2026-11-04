@@ -350,10 +350,13 @@ def _build_waiver_embed(bundle) -> dict:
             "value": _clip("\n".join(alternates), _FIELD_VALUE_MAX),
             "inline": False,
         })
-    if bundle.drops:
+    if bundle.drops or bundle.ir_drops:
+        names = [d.score.player.name for d in bundle.drops]
+        names += [f"{d.score.player.name} (IR: frees an IR slot only)"
+                  for d in bundle.ir_drops]
         embed["fields"].append({
             "name": "✂️ Conditional drop candidates",
-            "value": _clip(", ".join(d.score.player.name for d in bundle.drops),
+            "value": _clip(", ".join(names),
                            _FIELD_VALUE_MAX),
             "inline": False,
         })

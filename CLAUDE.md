@@ -741,6 +741,30 @@ reason a piece of it is shaped the way it is.
   told to add three quarterbacks; the cap subsumes it for all four positions and
   `tests/test_waiver_score.py` pins that K and DEF did not lose the guard in the
   swap.
+- **The roster is read as the platform holds it** (Week 9 review). Three
+  recommendations the owner could not act on, each fixed at the pairing step
+  (`score._upgrade_over`, which both add lists call instead of `_worth_adding`):
+  - **IR is not a roster spot.** `FantasyTeam.reserve` carries the IR/reserve
+    keys (ESPN `lineupSlotId` 21, Sleeper `reserve`). Both platforms keep that slot
+    outside the roster limit, so cutting an IR body opens nothing an add can
+    fill: he is removed from the lineup, the drop pool and every positional count,
+    and listed as `WaiverBundle.ir_drops`, never paired. That is how "Malik Willis,
+    drop Jadarian Price" reached a live report with Price on IR.
+  - **`add_position_cap` never looked at the roster.** It limits adds the
+    *report* recommends, so a one-QB owner already holding two quarterbacks was
+    told to add a third and cut a back for him. `must_swap_in_position` makes a
+    capped-position add like-for-like once the active roster holds the starters
+    plus one backup there; a lone starter may still add a backup across positions.
+  - **A K/DEF on bye is the one unranked player who must be replaced.** `has_ecr`
+    keeps unranked players off the drop list because "unranked usually means on
+    bye", and for a streamer that exact case is the one needing a pickup — the
+    report printed "only 0 healthy K" and suggested no kicker. `_bye_streamers`
+    marks a starting K/DEF whose team is off this week (when no other body there
+    plays) as `DropCandidate.bye_stream`, and any ranked free agent at his position
+    pairs with him. The schedule is read *before* the drops for this reason.
+  - **"Nobody droppable" is not "nothing beat anyone".** `WaiverBundle.drop_pool`
+    counts what adds could be paired with; at zero, `no_adds_reason` says the
+    roster was fully protected rather than claiming a comparison that never ran.
 - **The adds table runs out of roster spots long before it runs out of players.**
   Every target in `pick_adds` consumes a **distinct** drop, so the loop stops on
   `not available_drops` and a tight roster produces a three-row table on a week
