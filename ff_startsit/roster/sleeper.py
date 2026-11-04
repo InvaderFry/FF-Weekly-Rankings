@@ -227,6 +227,8 @@ def build_league_teams(rosters: list[dict], names: dict[str, str], meta: dict,
             is_mine=SleeperClient._owns(r, user_id),
             faab_spent=float(spent) if isinstance(spent, (int, float)) else None,
             waiver_priority=rsettings.get("waiver_position"),
+            # Sleeper's IR slots, outside the roster limit like ESPN's.
+            reserve=frozenset(str(p) for p in (r.get("reserve") or [])),
         ))
     return teams
 

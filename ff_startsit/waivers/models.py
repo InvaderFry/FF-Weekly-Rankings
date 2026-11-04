@@ -43,6 +43,12 @@ class FantasyTeam:
     is_mine: bool = False
     faab_spent: Optional[float] = None
     waiver_priority: Optional[int] = None
+    #: Keys of the players parked in an IR/reserve slot. On both platforms that
+    #: slot sits outside the roster limit, so cutting one frees an IR slot and
+    #: **not** the bench spot an add needs — which is why ``build_bundle`` never
+    #: pairs one with an add, and lists him as an IR-only cut instead. Empty when
+    #: the platform didn't say, which degrades to the old behaviour.
+    reserve: frozenset[str] = frozenset()
 
 
 #: Positions a league starts exactly one of and streams week to week. Lives here
@@ -138,6 +144,9 @@ class WaiverTarget:
     #: Rendered bid advice — a FAAB percentage or priority-claim language.
     bid: str = ""
     reasons: tuple[str, ...] = ()
+    #: Set when this add streams for a starting K/DEF on bye (see
+    #: ``DropCandidate.bye_stream``); ``add_reasons`` says so.
+    bye_stream: bool = False
 
 
 @dataclass
@@ -146,6 +155,15 @@ class DropCandidate:
 
     score: PlayerScore
     reason: str = ""
+    #: A starting K/DEF whose team is on bye this week, with no other body at his
+    #: position playing. FantasyPros doesn't rank a player on bye, so he has no
+    #: ECR and the blend has nothing to compare an add against — but the slot is
+    #: certain to score zero, so any ranked, playing free agent at his position is
+    #: an upgrade *for this week*. ``_upgrade_over`` reads this flag.
+    bye_stream: bool = False
+    #: In an IR/reserve slot: listed as a cut, never paired with an add, because
+    #: dropping him frees an IR slot rather than a roster spot.
+    on_reserve: bool = False
 
 
 @dataclass
@@ -284,6 +302,15 @@ class WaiverBundle:
     #: ``no_adds_at_positions``: it is what lets an empty RB row say whether forty
     #: ranked backs lost the comparison or none were ranked at all.
     considered_adds: dict[str, int] = field(default_factory=dict)
+    #: How many of your players an add could have been paired with (skill drops
+    #: plus K/DEF streaming swaps). ``0`` means the comparison behind "nothing
+    #: beats anyone you could drop" never ran — there was nobody to drop — and
+    #: ``no_adds_reason`` must say that instead. ``None`` (not computed, e.g. a
+    #: bundle built by hand) keeps the older wording.
+    drop_pool: Optional[int] = None
+    #: Players in an IR/reserve slot who could be cut. Never paired with an add:
+    #: dropping one frees an IR slot, not the roster spot an add needs.
+    ir_drops: list[DropCandidate] = field(default_factory=list)
 
     data_status: Optional["DataStatus"] = None
     recs: dict = field(default_factory=dict)
@@ -314,6 +341,14 @@ class WaiverBundle:
             # reached the scoring index, the same outage seen one step earlier.
             return ("Rankings were unavailable for every free agent, so nothing "
                     "could be compared. This is a data outage, not a quiet wire.")
+        if self.drop_pool == 0:
+            # AndyLOT, Week 9: no drop table at all, and the sentence below
+            # claimed a comparison against it. With nobody droppable nothing was
+            # compared, so say who is holding every spot instead.
+            return ("Nobody on your roster could be dropped for an add this week: "
+                    "your starters, your top rest-of-season players, players "
+                    "without a season rank and anyone on IR are all protected, "
+                    "so no free agent was compared.")
         if ranked and ranked < self.pool_size:
             return ("Nothing on the wire beats anyone you could drop this week "
                     f"(ranked {ranked} of {self.pool_size} free agents).")

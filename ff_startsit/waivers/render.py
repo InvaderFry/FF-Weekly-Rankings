@@ -97,7 +97,7 @@ def _ros(rank) -> str:
 
 
 def _drops_table(bundle: WaiverBundle) -> list[str]:
-    if not bundle.drops:
+    if not bundle.drops and not bundle.ir_drops:
         return []
     # The overall rest-of-season rank, not this week's blend score: it is the key
     # this list is *ordered* by (worst first) and the criterion each row was
@@ -107,7 +107,9 @@ def _drops_table(bundle: WaiverBundle) -> list[str]:
     # per-position min-max sets, so reading down that column compared nothing.
     lines = ["**Conditional drop candidates** (only for a verified upgrade)", "",
              "| Player | Pos | ROS rank | Why |", "|---|---|---:|---|"]
-    for d in bundle.drops:
+    # IR cuts ride at the bottom, their reason saying why none is paired with
+    # an add: the slot they free is an IR slot, not a roster spot.
+    for d in list(bundle.drops) + list(bundle.ir_drops):
         lines.append(f"| {md_cell(d.score.player.name)} | {md_cell(d.score.player.position)} "
                      f"| {_ros(d.score.season_rank)} | {md_cell(d.reason)} |")
     lines.append("")

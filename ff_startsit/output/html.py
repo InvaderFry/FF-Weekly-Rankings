@@ -381,14 +381,14 @@ def _waiver_alternates_table(bundle) -> str:
 
 
 def _waiver_drops_table(bundle) -> str:
-    if not bundle.drops:
+    if not bundle.drops and not bundle.ir_drops:
         return ""
     # Ordered by overall rest-of-season rank, so that is the column shown —
     # see the note in waivers/render.py._drops_table.
     rows = ["<h3>Conditional drop candidates</h3>",
             "<table><thead><tr><th>Player</th><th>Pos</th>"
             "<th class='num'>ROS rank</th><th>Why</th></tr></thead><tbody>"]
-    for d in bundle.drops:
+    for d in list(bundle.drops) + list(bundle.ir_drops):
         ros = "—" if d.score.season_rank is None else f"{d.score.season_rank:g}"
         rows.append(
             f"<tr><td>{escape(d.score.player.name)}</td>"
