@@ -6,8 +6,8 @@ page, so these pin what is visible by default and that nothing went missing.
 
 import re
 
-from ff_startsit.output.html import (BOARD_MIN_ROWS, board_visible_keys,
-                                     build_waivers_html, league_slugs)
+from ff_startsit.output.html import build_waivers_html, league_slugs
+from ff_startsit.waivers.board import BOARD_MIN_ROWS, board_visible_keys
 from ff_startsit.waivers.models import ColumnMention, WaiverBundle
 
 from .test_boards_writers import bundle_with_board

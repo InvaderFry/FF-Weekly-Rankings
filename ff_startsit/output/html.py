@@ -574,26 +574,6 @@ def _waiver_lists(bundle) -> str:
     return "\n".join(out)
 
 
-#: The writers' board shows at least this many rows before "Show all".
-BOARD_MIN_ROWS = 10
-
-
-def board_visible_keys(rows) -> set:
-    """Which writers'-board rows the page shows before "Show all".
-
-    The board lists every free agent any writer named (~70 a league on a
-    Tuesday), most of them on one writer's list and untouched by this tool.
-    Visible by default: the top of the list (``build_board`` sorts by how many
-    writers recommend a player, so this is where they agree), at least
-    ``BOARD_MIN_ROWS`` deep and deep enough to hold everyone two writers named,
-    plus every player this tool acted on wherever he sits. Display only: the
-    folded rows are in the page, one click away, and no add or drop reads this.
-    """
-    agree = sum(1 for r in rows if r.listed_by >= 2)
-    depth = max(agree, BOARD_MIN_ROWS)
-    return {r.player.key for i, r in enumerate(rows) if i < depth or r.tool}
-
-
 def _waiver_expert_board(bundle, uid: str = "0") -> str:
     """The Tuesday board: every free agent a writer named, side by side.
 
@@ -604,7 +584,7 @@ def _waiver_expert_board(bundle, uid: str = "0") -> str:
     boards = getattr(bundle, "expert_boards", None)
     if not boards:
         return ""
-    from ..waivers.board import board_reasons, cell_position
+    from ..waivers.board import board_reasons, board_visible_keys, cell_position
     rows = bundle.expert_rows
     visible = board_visible_keys(rows)
     hidden = len(rows) - sum(1 for r in rows if r.player.key in visible)
@@ -693,8 +673,8 @@ def _waiver_moves(bundle) -> str:
     moves = bundle.moves()
     if not moves:
         return ""
-    items = "".join(f"<li><strong>{escape(action)}</strong> {escape(detail)}</li>"
-                    for action, detail in moves)
+    items = "".join(f"<li><strong>{escape(m.action)}</strong> {escape(m.detail)}</li>"
+                    for m in moves)
     return (f"<div class='moves'><h3>Your moves</h3><ol>{items}</ol>"
             "<p class='note'>A summary of the tables below; details and the "
             "reasons for each are there.</p></div>")

@@ -1,5 +1,6 @@
 """Testable entry points used directly by GitHub Actions."""
 from pathlib import Path
+import re
 import os
 import sys
 
@@ -302,6 +303,95 @@ def publish_news(report_path, previous_path, output=None):
     return news
 
 
+#: Plain names for the retry marker's read ids, for the update note.
+READ_LABELS = {
+    "boone_waivers": "Boone's waiver column",
+    "eisenberg_waivers": "Eisenberg's waiver column",
+    "richard_chart": "Richard's trade chart",
+    "boone_trade_values": "Boone's {pos} trade chart",
+    "boone_weekly": "Boone's weekly {pos} ranks",
+    "cbs_consensus": "CBS's weekly {pos} consensus",
+    "fantasypros_week": "FantasyPros' page for this week",
+    "fantasypros_full": "a fuller FantasyPros consensus",
+}
+
+
+def read_label(read_id: str) -> str:
+    """``boone_weekly:K`` -> "Boone's weekly K ranks"; an unknown id as itself."""
+    base, _, pos = read_id.partition(":")
+    label = READ_LABELS.get(base)
+    if label is None:
+        return read_id
+    return label.format(pos=pos) if pos else label.replace(" {pos}", "")
+
+
+def _moves_blocks(report: str) -> list[str]:
+    """Each league's "Your moves" list, lifted from a rendered digest."""
+    out: list[str] = []
+    league = None
+    taking = False
+    for line in report.splitlines():
+        heading = re.match(r"^#{2,3} (.+ · [A-Z]+)$", line)
+        if heading:
+            league, taking = heading.group(1), False
+        elif line == "**Your moves**":
+            taking = True
+            out += ["", f"**{league}**" if league else "**Your moves**"]
+        elif taking and re.match(r"^\d+\. ", line):
+            out.append(line)
+        elif taking and line.strip() and not re.match(r"^\d+\. ", line):
+            taking = False
+    return out
+
+
+def update_note(report: str, previous: str, url: str = "", headline: str = "Update") -> str:
+    """The comment a later run posts on the week's issue, instead of the whole
+    report again.
+
+    The workflow replaces the issue *body* with this run's full report (the
+    earlier version stays in the body's edit history), so the issue keeps one
+    complete, current record and the thread keeps one short line per update:
+    what this run newly read, whether the claims changed (and if so each
+    league's "Your moves"), and a link to the page.
+
+    It also carries the markers the retry gates read. The new body holds this
+    run's; the earlier body's ``ff-board`` markers for this week are copied here
+    because replacing the body would otherwise drop them, and ``has_news``
+    compares against everything published for the week. This run's own
+    ``ff-adds`` marker goes last, because ``adds_changed`` reads the latest one.
+    """
+    from .waivers.board import _ADDS_MARKER, _MARKER, adds_changed
+    current = _MARKER.search(report)
+    newly: list[str] = []
+    carried: list[str] = []
+    if current:
+        season, week, mode, ids = current[1], current[2], current[3] or "live", current[4]
+        published: set[str] = set()
+        for m in _MARKER.finditer(previous or ""):
+            if m[1] == season and m[2] == week:
+                carried.append(m[0])
+                if (m[3] or "live") == mode:
+                    published |= {i for i in m[4].split(",") if i}
+        newly = sorted({i for i in ids.split(",") if i} - published)
+    lines = [f"**{headline}:** the report above now holds this run's results "
+             "(the earlier version is in the issue body's edit history)."]
+    if newly:
+        lines += ["", "Newly read: " + ", ".join(read_label(i) for i in newly) + "."]
+    if adds_changed(report, previous):
+        lines += ["", "**The claims changed.** Your moves now:"] + _moves_blocks(report)
+    else:
+        lines += ["", "The claims are unchanged."]
+    if url:
+        lines += ["", f"[Open the waivers page]({url})"]
+    markers = list(dict.fromkeys(carried))
+    if current:
+        markers.append(current[0])
+    adds = _ADDS_MARKER.search(report)
+    if adds:
+        markers.append(adds[0])
+    return "\n".join(lines + [""] + markers) + "\n"
+
+
 def main():
     if sys.argv[1] == "chatops":
         reply = chatops_reply(os.environ.get("COMMENT_BODY", ""))
@@ -317,6 +407,12 @@ def main():
         publish_news(sys.argv[2], sys.argv[3])
     elif sys.argv[1] == "adds-changed":
         publish_adds_changed(sys.argv[2], sys.argv[3])
+    elif sys.argv[1] == "update-note":
+        # update-note REPORT PREVIOUS [URL] [HEADLINE]
+        previous = Path(sys.argv[3])
+        print(update_note(Path(sys.argv[2]).read_text(encoding="utf-8"),
+                          previous.read_text(encoding="utf-8") if previous.exists() else "",
+                          *sys.argv[4:6]), end="")
     elif sys.argv[1] == "refresh-needed":
         refresh_needed(sys.argv[2], sys.argv[3])
     elif sys.argv[1] == "refreshed-marker":

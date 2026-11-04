@@ -488,8 +488,9 @@ reorder or re-price one (`test_the_veto_only_removes`):
   position, no column read, no weekly K/DEF list: the add stands and its reasons
   say "the blend's call". An expert who wasn't read is not one who disagreed.
 - **A veto is always visible**: `WaiverBundle.held_back` renders as "Held back:
-  the experts don't back these" in all three renderers. A row that silently
-  went missing would be the distinguishable-failures bug again.
+  the experts don't back these" on the page and in the issue, and as a "Held
+  back:" line of the Discord card's "Your moves". A row that silently went
+  missing would be the distinguishable-failures bug again.
 
 Because the veto needs the boards before the pick, `build_bundle` now fetches
 the writer boards, the charts (`chart_sources`, over every candidate so the
@@ -516,9 +517,13 @@ at the position, with blend score, FP, CBS and Boone side by side.
 - **"Not posted yet" stays distinct from "broke"**, and since an author page
   lists only recent pieces, a missing link says both possibilities ("not posted
   yet, or too old to be listed").
-- **Discord gets the full table**, one message per league in 25-field embeds,
-  chunked by characters as well as fields: one embed of 25 long fields can
-  exceed the 6000-character message limit by itself.
+- **Discord gets the lead rows**, not the full table: the rows
+  `board.board_visible_keys` picks (the same ones the page shows first and the
+  issue shows above its fold), with "N more players the writers named are on
+  the page" linking that league's tab. Still one message per league in
+  25-field embeds, chunked by characters as well as fields: one embed of 25 long
+  fields can exceed the 6000-character message limit by itself. The board goes
+  out **once a week**, with the first post; later runs never resend it.
 - **The retry gate.** The digest ends with an invisible
   `<!-- ff-board season week mode read=... -->` marker, written on every
   digest, boards on or off (`read=` when nothing was read). Scheduled runs
@@ -552,6 +557,21 @@ at the position, with blend score, FP, CBS and Boone side by side.
   (no expert board) and a comment on the waiver issue, so the 02:30 UTC retry
   compares with the update rather than sending it twice. `workflow.py
   adds-changed` is the same decision, for the comment step.
+  **Later Tuesday runs follow the same rule on Discord.** A retry with news
+  (`report_has_news`) still updates the issue and the page, but when a report
+  for that season/week/mode is already out (`board.published_before`) it posts
+  to Discord only if the claims changed, and then only the summary with an
+  "**Update:**" line, never the board again.
+  **A later post never re-posts the whole report to the issue.** Both
+  `waivers.yml` (when the week's issue exists) and `values.yml`'s Wednesday
+  step replace the issue **body** with the new full report (GitHub keeps the
+  edit history, and the body stays the week's one complete record) and comment
+  `workflow.update_note`: what was newly read, whether the claims changed (and
+  then each league's "Your moves"), a page link, and the markers. The markers
+  are the delicate part: the gates read body + every comment, and replacing the
+  body drops its `ff-board` markers, so the note **carries the earlier ones for
+  that week** forward (`has_news` compares against everything published), and
+  ends with this run's `ff-adds` marker because `adds_changed` reads the latest.
   The refresh is gated on **its own record**, not on the values report's news:
   once a refresh is rebuilt *and deployed*, a comment on the values issue
   carries `<!-- ff-waivers-refreshed season week -->`, and `workflow.py
@@ -1135,7 +1155,19 @@ it cannot say what the page doesn't, and it stays testable offline. Don't
 "upgrade" it to model-written prose. On both dashboards `DataStatus.html` folds
 the per-source detail into a `<details>`, but a **skipped league and its reason
 stay visible**: a failed league vanishes from the page, so its absence is the one
-thing that must never be folded away. The markdown digest keeps the flat list.
+thing that must never be folded away. `DataStatus.markdown` folds the same way
+for the issues (both digests), and keeps its first line visible and first:
+`workflow.issue_title` reads the season and week off it.
+
+The **waiver issue** (`render_bundle`) has the page's shape too: "Your moves",
+then a "Claims" label on the adds table, the decisions, and the research last,
+with the writers' board split at `board_visible_keys` and the rest (and their
+quotes) inside a `<details>`. Folded, never dropped: the issue is the only
+weekly archive, since the site keeps just the current week. The **Discord
+card** opens with the same `moves` lines (minus the trade line, because the
+card keeps its full trade field, which also carries `no_trades_reason`) and
+links its title to the league's tab (`discord._league_links`, using the page's
+own `league_slugs`).
 
 With more than one league **all three pages are tabbed** by one shared
 `html._league_tabs(bundles, body)`: CSS radio buttons, so the tabs work with
@@ -1150,7 +1182,8 @@ whole page; anything that styles a table by sibling selector (the board's
 (at least `BOARD_MIN_ROWS`, deep enough for everyone two writers named) plus
 every row the tool acted on (`board_visible_keys`), and folds the rest and their
 quotes behind a "Show all" checkbox. Both are display only: every league and
-every row stays in the page, and the markdown digest and Discord are untouched.
+every row stays in the page. `board_visible_keys` lives in `waivers/board.py`
+because the issue and Discord use the same rule.
 
 **`Recommendation.lone_candidate` collapses a section that carries no reading.**
 A position with one rostered player rendered as a header, a table whose every

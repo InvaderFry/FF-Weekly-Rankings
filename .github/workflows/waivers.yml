@@ -167,8 +167,19 @@ jobs:
           NUM=$(gh issue list --state open --search "in:title \"$TITLE\"" \
                 --json number,title --jq ".[] | select(.title==\"$TITLE\") | .number" | head -1)
           if [ -n "$NUM" ]; then
+            # A later run replaces the body with its full report (the issue
+            # stays the week's one complete record; GitHub keeps the edit
+            # history) and comments only what changed (workflow.update_note),
+            # instead of re-posting the whole report as another comment.
             echo "Updating issue #$NUM"
-            gh issue comment "$NUM" --body-file waivers.md
+            OWNER="${GITHUB_REPOSITORY%%/*}"; REPO="${GITHUB_REPOSITORY##*/}"
+            WAIVERS_URL="https://${OWNER,,}.github.io/${REPO}/waivers.html"
+            gh issue view "$NUM" --json body,comments \
+              --jq '.body, (.comments[].body)' > published.md
+            python -m ff_startsit.workflow update-note waivers.md published.md \
+              "$WAIVERS_URL" "Update" > update.md
+            gh issue edit "$NUM" --body-file waivers.md
+            gh issue comment "$NUM" --body-file update.md
           else
             echo "Creating issue: $TITLE"
             gh issue create --title "$TITLE" --body-file waivers.md

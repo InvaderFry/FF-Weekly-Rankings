@@ -9,7 +9,7 @@ logic stay pure functions over these, and every renderer consumes the same
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Optional, Sequence
+from typing import NamedTuple, Optional, Sequence
 
 from ..models import Player, PlayerScore
 from ..data_status import DataStatus
@@ -554,8 +554,8 @@ class WaiverBundle:
             players.sort(key=lambda p: p.name)
         return ordered
 
-    def moves(self) -> list[tuple[str, str]]:
-        """The league's report in a few plain sentences, as (action, detail) pairs.
+    def moves(self) -> list["Move"]:
+        """The league's report in a few plain sentences, as ``Move`` lines.
 
         The full report runs to dozens of rows per league, with the actual
         instruction ("claim Coleman, drop Charbonnet") starting several screens
@@ -568,9 +568,10 @@ class WaiverBundle:
         anything the page beneath it doesn't show, and it stays testable
         offline. An empty list means there is nothing to restate: the preseason
         refusal (whose banner explains itself) or a report with no section
-        filled.
+        filled. ``Move.kind`` lets a renderer leave out a line it already shows
+        in full elsewhere (Discord keeps its own trade section).
         """
-        out: list[tuple[str, str]] = []
+        out: list[Move] = []
         for t in self.adds:
             p = t.score.player
             action = (f"Claim {p.name} ({p.position}), drop {t.drop_label}."
@@ -581,13 +582,13 @@ class WaiverBundle:
             named = next((r for r in t.reasons if r.startswith("named this week by ")), None)
             if named:
                 detail.append(_sentence(named))
-            out.append((action, " ".join(detail)))
+            out.append(Move("claim", action, " ".join(detail)))
         if not self.adds:
             reason = self.no_adds_reason()
             if reason:
-                out.append(("No claims this week.", reason))
+                out.append(Move("claim", "No claims this week.", reason))
         if self.alternates:
-            out.append(("Also worth adding if you free a spot:",
+            out.append(Move("alternate", "Also worth adding if you free a spot:",
                         _name_list([f"{t.score.player.name} ({t.score.player.position})"
                                     for t in self.alternates]) + "."))
         if self.held_back:
@@ -598,25 +599,35 @@ class WaiverBundle:
                 who, sep, why = line.partition(": ")
                 by_reason.setdefault(why if sep else "", []).append(who if sep else line)
             for why, who in by_reason.items():
-                out.append(("Held back:", _name_list(who) + (f" — {why}." if why else ".")))
+                out.append(Move("held_back", "Held back:",
+                                _name_list(who) + (f" — {why}." if why else ".")))
         if self.trades:
             idea = self.trades[0]
             send = ", ".join(s.player.name for s in idea.you_send)
             get = ", ".join(s.player.name for s in idea.you_get)
             more = len(self.trades) - 1
-            out.append((f"Trade idea with {idea.partner}:",
+            out.append(Move("trade", f"Trade idea with {idea.partner}:",
                         f"send {send}, get {get}." +
-                        (f" {more} more idea{'s' if more > 1 else ''} below." if more else "")))
+                        (f" {more} more in Trade ideas." if more else "")))
         if self.stashes:
-            out.append(("Stash:", _name_list(
+            out.append(Move("stash", "Stash:", _name_list(
                 [f"{s.score.player.name} ({s.score.player.position})"
                  for s in self.stashes]) + "."))
         if self.byes:
-            out.append(("Bye-week hole:", "; ".join(
-                f"Week {g.week} leaves you {g.available} healthy {g.position} "
+            out.append(Move("bye", "Bye-week hole:", "; ".join(
+                f"Week {g.week} leaves you {g.available} healthy {g.position}"
+                f"{'s' if g.available != 1 else ''} "
                 f"for {g.needed} slot{'s' if g.needed != 1 else ''}"
                 for g in self.byes) + "."))
         return out
+
+
+class Move(NamedTuple):
+    """One "Your moves" line: ``kind`` (claim, alternate, held_back, trade,
+    stash, bye), the bold ``action`` and the plain ``detail`` after it."""
+    kind: str
+    action: str
+    detail: str
 
 
 #: How many names a ``moves`` sentence lists before "and N more".

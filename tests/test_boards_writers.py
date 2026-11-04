@@ -377,7 +377,10 @@ def test_html_board():
 
 def test_discord_board_is_one_message_per_league_split_into_25_field_embeds():
     from ff_startsit.output.discord import build_waiver_board_payloads
-    payloads = build_waiver_board_payloads(9, [bundle_with_board(30), bundle_with_board(2)])
+    big = bundle_with_board(30)
+    for row in big.expert_rows:      # two writers each: every row is a lead row
+        row.listed_by = 2
+    payloads = build_waiver_board_payloads(9, [big, bundle_with_board(2)])
     assert len(payloads) == 2
     first = payloads[0]["embeds"]
     assert [len(e["fields"]) for e in first] == [25, 5]
@@ -392,6 +395,7 @@ def test_discord_board_splits_a_message_over_6000_characters():
     b = bundle_with_board(60)
     for row in b.expert_rows:
         row.entries["boone_waivers"] = BoardEntry(pos_rank=1, tier="x" * 200)
+        row.listed_by = 2            # every row a lead row, so all 60 go out
     payloads = build_waiver_board_payloads(9, [b])
     assert len(payloads) > 1
     from ff_startsit.output.discord import _embed_chars

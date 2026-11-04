@@ -1025,12 +1025,21 @@ def cmd_waivers(args, settings: Settings) -> int:
         print(f"Wrote waivers page ({len(bundles)} league(s)) to {args.dashboard}")
 
     since = getattr(args, "since", None)
+    followup = False
     if args.discord and since is not None:
-        from .waivers.board import report_has_news
+        from .waivers.board import adds_changed, published_before, report_has_news
         previous = since.read_text(encoding="utf-8") if since.exists() else ""
         if not report_has_news(digest, previous):
             print("Nothing new since this week's published report (same writers read); "
                   "skipping Discord.", file=sys.stderr)
+            return 0
+        # A later run with something new: the issue and page update, but Discord
+        # already has this week's board and claims. Post again only if the
+        # claims changed, and then only the summary (like Wednesday's update).
+        followup = published_before(digest, previous)
+        if followup and not adds_changed(digest, previous):
+            print("Read something new, but the claims match this week's earlier post; "
+                  "skipping Discord (the issue and page still update).", file=sys.stderr)
             return 0
     update = getattr(args, "adds_changed_since", None)
     if args.discord and update is not None:
@@ -1054,6 +1063,9 @@ def cmd_waivers(args, settings: Settings) -> int:
                 payload["content"] = ("**Wednesday update:** the waiver adds changed "
                                       "since Tuesday's post (fuller FantasyPros "
                                       "consensus and Boone's trade charts).")
+            elif followup:
+                payload["content"] = ("**Update:** the waiver claims changed since this "
+                                      "week's earlier post (a later run read something new).")
             try:
                 send_discord(settings.discord_webhook_url, payload)
                 print("Sent Discord notification.")
@@ -1063,8 +1075,9 @@ def cmd_waivers(args, settings: Settings) -> int:
                 print(f"warning: Discord notification failed: {exc}", file=sys.stderr)
             # The full expert board, one message (or more) per league — Tuesday only.
             from .output.discord import build_waiver_board_payloads
-            for board_payload in (build_waiver_board_payloads(week, bundles)
-                                  if update is None else ()):
+            # The writers' board goes out once a week, with the first post.
+            for board_payload in (build_waiver_board_payloads(week, bundles, dashboard_url)
+                                  if update is None and not followup else ()):
                 try:
                     send_discord(settings.discord_webhook_url, board_payload)
                 except Exception as exc:

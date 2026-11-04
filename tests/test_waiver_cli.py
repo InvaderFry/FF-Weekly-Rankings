@@ -326,7 +326,10 @@ def test_retry_with_nothing_new_sends_nothing(monkeypatch, tmp_path, capsys):
     assert sent == [] and "skipping Discord" in capsys.readouterr().err
 
 
-def test_retry_that_read_another_writer_posts(monkeypatch, tmp_path):
+def test_retry_that_read_another_writer_but_kept_the_claims_stays_off_discord(
+        monkeypatch, tmp_path, capsys):
+    """Discord already has this week's board and claims; the issue and page
+    still update (the workflow's own news check says publish)."""
     monkeypatch.setattr(cli, "build_roster_provider", lambda *a, **k: _FakeProvider())
     _board_on(monkeypatch, {"boone_waivers"})
     settings = _settings(tmp_path)
@@ -335,8 +338,28 @@ def test_retry_that_read_another_writer_posts(monkeypatch, tmp_path):
     cli.cmd_waivers(_Args(report=first), settings)
     _board_on(monkeypatch, {"boone_waivers", "eisenberg_waivers"})
     sent = _sent(monkeypatch)
+    second = tmp_path / "second.md"
+    assert cli.cmd_waivers(_Args(discord=True, since=first, report=second), settings) == 0
+    assert sent == [] and "claims match" in capsys.readouterr().err
+    from ff_startsit.waivers.board import report_has_news
+    assert report_has_news(second.read_text(), first.read_text())
+
+
+def test_retry_whose_claims_changed_sends_one_summary_and_no_board(monkeypatch, tmp_path):
+    monkeypatch.setattr(cli, "build_roster_provider", lambda *a, **k: _FakeProvider())
+    _board_on(monkeypatch, {"boone_waivers"})
+    settings = _settings(tmp_path)
+    settings.discord_webhook_url = "https://discord.test/hook"
+    first = tmp_path / "first.md"
+    cli.cmd_waivers(_Args(report=first), settings)
+    # The earlier post's claims differ from what this run will pick.
+    first.write_text(first.read_text().replace(" sig=", " sig=0ld"))
+    _board_on(monkeypatch, {"boone_waivers", "eisenberg_waivers"})
+    sent = _sent(monkeypatch)
     assert cli.cmd_waivers(_Args(discord=True, since=first), settings) == 0
-    assert len(sent) == 2
+    assert len(sent) == 1
+    assert sent[0]["content"].startswith("**Update:**")
+    assert all("what the writers say" not in e["title"] for e in sent[0]["embeds"])
 
 
 def _charts(monkeypatch, read=("richard_chart", "boone_trade_values")):
