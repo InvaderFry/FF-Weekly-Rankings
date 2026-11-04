@@ -110,10 +110,25 @@ jobs:
             echo "news=true" >> "$GITHUB_OUTPUT"
           fi
 
-      # This workflow builds values.html only. The other two pages are copied
-      # from the live site rather than re-scored (no Odds API credits spent);
-      # if either can't be fetched, the deploy below is skipped and the live
-      # site stays as it is (workflow.restore_pages / verify_site).
+      # Wednesday also refreshes waivers.html: by now Boone's charts are up and
+      # claims have processed, so the page shows who is still on the wire, who
+      # was dropped, and your roster on both charts. Page only — no Discord, no
+      # issue; Tuesday's post stands. The Odds API payload is disk-cached for
+      # 30 minutes and the values step above just fetched it, so this costs no
+      # extra credits. If it fails, the restore below keeps Tuesday's page.
+      - name: Refresh the waivers page
+        if: steps.news.outputs.news == 'true'
+        continue-on-error: true
+        run: |
+          WEEK_ARGS=()
+          if [ -n "$INPUT_WEEK" ]; then WEEK_ARGS=(--week "$INPUT_WEEK"); fi
+          python -m ff_startsit.workflow run waivers "${WEEK_ARGS[@]}" \
+            --all-leagues --report waivers.md --dashboard ./site/waivers.html
+
+      # The start/sit page (and waivers.html, if the refresh above failed) is
+      # copied from the live site rather than re-scored; if a page can't be
+      # fetched, the deploy below is skipped and the live site stays as it is
+      # (workflow.restore_pages / verify_site).
       - name: Keep the published start/sit and waiver pages
         if: steps.news.outputs.news == 'true'
         run: |

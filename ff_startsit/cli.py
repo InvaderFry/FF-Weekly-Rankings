@@ -948,7 +948,7 @@ def _waiver_bundles(args, settings: Settings, week: int, writers=None,
     return finish_status(status, bundles)
 
 
-def waiver_writer_sources(settings: Settings) -> list:
+def waiver_writer_sources(settings: Settings, fetcher=None) -> list:
     """The Tuesday expert-board sources ``FF_ANALYSTS`` asks for, sharing one
     article fetcher so each article is read once per run whatever the league
     count: ``boone`` -> Boone's waiver column; ``cbs`` -> Eisenberg's waiver
@@ -957,7 +957,7 @@ def waiver_writer_sources(settings: Settings) -> list:
         return []
     from .boards.articles import ArticleFetcher
     from .boards.writers import BooneWaivers, EisenbergWaivers, RichardChart
-    fetcher = ArticleFetcher(settings.data_dir)
+    fetcher = fetcher or ArticleFetcher(settings.data_dir)
     sources: list = []
     if settings.analysts == "boone":
         sources.append(BooneWaivers(fetcher))
@@ -987,7 +987,23 @@ def cmd_waivers(args, settings: Settings) -> int:
     if banner:
         # Make the Action log say it too, not just the rendered outputs.
         print(f"warning: {banner}", file=sys.stderr)
-    bundles = _waiver_bundles(args, settings, week)
+    # One article fetcher for the writers' board *and* the trade charts, so
+    # Richard's chart — a Tuesday column and a value source at once — is read
+    # once per run, not once per role.
+    from .boards.articles import ArticleFetcher
+    from .waivers.values import build_sheet, superflex_for
+    fetcher = ArticleFetcher(settings.data_dir)
+    writers = waiver_writer_sources(settings, fetcher)
+    charts = value_chart_sources(settings, fetcher=fetcher, only_enabled=True)
+
+    def on_bundle(bundle, players):
+        # Your roster priced on each chart, for the drop table and the "My
+        # roster" table. Display only; the preseason refusal scored nothing.
+        if charts and not (bundle.banner and not bundle.recs):
+            bundle.values = build_sheet(bundle, players, charts, week,
+                                        superflex=superflex_for(bundle.rules))
+
+    bundles = _waiver_bundles(args, settings, week, writers=writers, on_bundle=on_bundle)
     if not bundles:
         print("No configured league could be scored for waivers.", file=sys.stderr)
         return 1
@@ -1038,17 +1054,23 @@ def cmd_waivers(args, settings: Settings) -> int:
     return 0
 
 
-def value_chart_sources(settings: Settings, boone_urls=()) -> list:
+def value_chart_sources(settings: Settings, boone_urls=(), fetcher=None,
+                        only_enabled: bool = False) -> list:
     """Richard's chart (``cbs`` in FF_ANALYSTS) and Boone's (``boone``), sharing
     one article fetcher. With neither enabled there is nothing to compare, so
-    ``values`` uses both regardless: the command exists to show these two."""
+    ``values`` uses both regardless: the command exists to show these two.
+    ``waivers`` passes ``only_enabled`` instead — there the charts are an extra
+    on a report that stands without them, and an unset ``FF_ANALYSTS`` means
+    no writer requests at all."""
     from .boards.articles import ArticleFetcher
     from .boards.writers import BooneTradeValues, RichardChart
-    fetcher = ArticleFetcher(settings.data_dir)
     want_boone = settings.analysts == "boone"
     want_cbs = settings.cbs_rankings
     if not want_boone and not want_cbs:
+        if only_enabled:
+            return []
         want_boone = want_cbs = True
+    fetcher = fetcher or ArticleFetcher(settings.data_dir)
     sources: list = []
     if want_cbs:
         sources.append(RichardChart(fetcher))
@@ -1070,16 +1092,15 @@ def cmd_values(args, settings: Settings) -> int:
     from .output.discord import build_values_payloads, send_discord
     from .output.html import build_values_html
     from .waivers.render import render_values_digest
-    from .waivers.values import build_sheet
+    from .waivers.values import build_sheet, superflex_for
 
     week = _resolve_week(args, settings)
     sources = value_chart_sources(settings, getattr(args, "boone_chart", []) or [])
     sheets: list = []
 
     def on_bundle(bundle, players):
-        rules = bundle.rules
-        superflex = bool(rules.flex_slots.get("SUPER_FLEX")) or rules.roster_slots.get("QB", 1) >= 2
-        sheets.append(build_sheet(bundle, players, sources, week, superflex=superflex))
+        sheets.append(build_sheet(bundle, players, sources, week,
+                                  superflex=superflex_for(bundle.rules)))
 
     # The waiver pass without its Tuesday extras: no column quotes, no writers' board.
     from types import SimpleNamespace

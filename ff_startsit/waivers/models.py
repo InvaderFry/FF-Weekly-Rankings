@@ -314,6 +314,11 @@ class WaiverBundle:
 
     data_status: Optional["DataStatus"] = None
     recs: dict = field(default_factory=dict)
+    #: Your roster on Richard's and Boone's trade charts (a ``values.ValueSheet``),
+    #: attached by ``cmd_waivers`` when ``FF_ANALYSTS`` enables either writer.
+    #: Display only, like every board: it prices the drop table and fills the
+    #: "My roster" table, and changes no add, drop or bid.
+    values: object = None
 
     def no_adds_reason(self) -> Optional[str]:
         """Why the adds section is empty — an outage, a thin read, or a quiet wire.

@@ -160,6 +160,53 @@ def build_sheet(bundle, my_players: Sequence[Player], sources: Sequence, week: i
     return sheet
 
 
+def superflex_for(rules) -> bool:
+    """Whether a league's charts should be read off their 2QB columns."""
+    return (bool(rules.flex_slots.get("SUPER_FLEX"))
+            or (rules.roster_slots or {}).get("QB", 1) >= 2)
+
+
+def chart_boards(sheet) -> list[ExpertBoard]:
+    """The writers' own charts on a sheet (Richard, Boone), read or not.
+
+    FantasyPros ROS rides on every sheet too, but the waiver page already prints
+    it as "ROS rank" beside each drop, so callers adding chart columns there skip it.
+    """
+    from .board import FP_ROS_ID
+    return [b for b in (getattr(sheet, "boards", None) or []) if b.source_id != FP_ROS_ID]
+
+
+def chart_cell(board: ExpertBoard, player: Player) -> str:
+    """One chart's reading of one player for a table cell.
+
+    Distinguishes the three blanks a reader would otherwise have to guess
+    between: the chart isn't out yet (Boone posts Wednesday, and the Tuesday page
+    is built before then), the chart doesn't cover this format, and he simply
+    isn't on a chart that was read — which is itself a reading, since both
+    charts stop well above waiver-wire depth.
+    """
+    from ..boards.articles import not_posted
+    from ..output.board import waiver_cell
+    entry = board.entries.get(player.key)
+    if entry is not None:
+        return waiver_cell(entry, player.position)
+    reason = board.unavailable.get(ALL_POSITIONS) or board.unavailable.get(player.position)
+    if reason:
+        return "not posted yet" if not_posted(reason) else "n/a"
+    return "off chart"
+
+
+def sheet_cell(board: ExpertBoard, row: "ValueRow") -> str:
+    """A values-table cell: ``chart_cell`` for a writer's chart, so "off chart"
+    and "not posted yet" read differently from each other; FP ROS's overall rank
+    as the board renders it everywhere else."""
+    from ..output.board import waiver_cell
+    from .board import FP_ROS_ID, cell_position
+    if board.source_id == FP_ROS_ID:
+        return waiver_cell(row.entries.get(board.source_id), cell_position(board, row.player))
+    return chart_cell(board, row.player)
+
+
 def sheets_read(sheets) -> list[str]:
     """Chart sources and positions read in any league (for the retry marker)."""
     from .board import read_sources

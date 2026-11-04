@@ -14,6 +14,7 @@ from ..output.board import waiver_cell, waiver_legend
 from ..output.render import DEPTH_LEGEND, md_cell
 from .board import board_marker, board_reasons, bundles_read, cell_position
 from .models import WaiverBundle, WaiverTarget
+from .values import chart_cell, sheet_cell
 
 
 
@@ -105,15 +106,58 @@ def _drops_table(bundle: WaiverBundle) -> list[str]:
     # unsorted. It is also the only number here that means the same thing for a
     # quarterback and a tight end — the weekly finals came from separate
     # per-position min-max sets, so reading down that column compared nothing.
+    # Each writer's trade chart beside the ROS rank: what the people you trust
+    # say he is worth before you cut him. Display only — the drops were chosen
+    # on the ROS rank, and these columns change none of them.
+    charts = _chart_boards(bundle)
+    head = "".join(f" {md_cell(b.short)} |" for b in charts)
     lines = ["**Conditional drop candidates** (only for a verified upgrade)", "",
-             "| Player | Pos | ROS rank | Why |", "|---|---|---:|---|"]
+             f"| Player | Pos | ROS rank |{head} Why |",
+             "|---|---|---:|" + "---|" * len(charts) + "---|"]
     # IR cuts ride at the bottom, their reason saying why none is paired with
     # an add: the slot they free is an IR slot, not a roster spot.
     for d in list(bundle.drops) + list(bundle.ir_drops):
+        cells = "".join(f" {md_cell(chart_cell(b, d.score.player))} |" for b in charts)
         lines.append(f"| {md_cell(d.score.player.name)} | {md_cell(d.score.player.position)} "
-                     f"| {_ros(d.score.season_rank)} | {md_cell(d.reason)} |")
+                     f"| {_ros(d.score.season_rank)} |{cells} {md_cell(d.reason)} |")
     lines.append("")
     return lines
+
+
+def _chart_boards(bundle: WaiverBundle) -> list:
+    from .values import chart_boards
+    return chart_boards(bundle.values) if bundle.values is not None else []
+
+
+def _value_table_lines(sheet) -> list[str]:
+    """A sheet's roster rows with every chart side by side, its legend and the
+    reasons any chart couldn't be read. Shared by the Wednesday values sheet and
+    the waiver page's "My roster" table, so the two can't disagree."""
+    lines: list[str] = []
+    if sheet.rows:
+        header = ["Player", "Pos", "Team", *[b.short for b in sheet.boards], "Charts"]
+        lines.append("| " + " | ".join(header) + " |")
+        lines.append("|" + "|".join("---" for _ in header) + "|")
+        for row in sheet.rows:
+            cells = [md_cell(row.player.name), row.player.position, row.player.team or "FA",
+                     *[md_cell(sheet_cell(b, row)) for b in sheet.boards],
+                     md_cell(row.charts_cell)]
+            lines.append("| " + " | ".join(cells) + " |")
+        lines.append("")
+    lines.append(f"_{md_cell(waiver_legend(sheet.boards))} Values are each writer's own "
+                 "scale, so they're never added across charts._")
+    for reason in board_reasons(sheet.boards):
+        lines.append(f"- {md_cell(reason)}")
+    lines.append("")
+    return lines
+
+
+def _roster_values_section(bundle: WaiverBundle) -> list[str]:
+    sheet = bundle.values
+    if sheet is None or not sheet.boards or not sheet.rows:
+        return []
+    return ["**My roster: rest-of-season value** (trade charts double as "
+            "rest-of-season rankings)", "", *_value_table_lines(sheet)]
 
 
 def _trades_section(bundle: WaiverBundle) -> list[str]:
@@ -251,6 +295,7 @@ def render_bundle(bundle: WaiverBundle, heading: str = "###") -> list[str]:
     lines += _adds_table(bundle)
     lines += _alternates_table(bundle)
     lines += _drops_table(bundle)
+    lines += _roster_values_section(bundle)
     lines += _trades_section(bundle)
     lines += _stash_section(bundle)
     lines += _bye_section(bundle)
@@ -311,7 +356,6 @@ def render_waiver_digest(week: int, bundles: Sequence[WaiverBundle],
 
 def _values_section(sheet, heading: str = "###") -> list[str]:
     from ..output.board import trade_line, verdict_text
-    from .board import board_reasons, cell_position
     title = f"{heading} {sheet.label}" if sheet.label else f"{heading} Your team"
     lines = [f"{title} · {sheet.scoring.upper()}", ""]
     if sheet.banner:
@@ -320,22 +364,7 @@ def _values_section(sheet, heading: str = "###") -> list[str]:
         lines += [f"> ⚠️ {sheet.caveat}", ""]
     if not sheet.boards:
         return lines
-    if sheet.rows:
-        header = ["Player", "Pos", "Team", *[b.short for b in sheet.boards], "Charts"]
-        lines.append("| " + " | ".join(header) + " |")
-        lines.append("|" + "|".join("---" for _ in header) + "|")
-        for row in sheet.rows:
-            cells = [md_cell(row.player.name), row.player.position, row.player.team or "FA",
-                     *[md_cell(waiver_cell(row.entries.get(b.source_id), cell_position(b, row.player)))
-                       for b in sheet.boards],
-                     md_cell(row.charts_cell)]
-            lines.append("| " + " | ".join(cells) + " |")
-        lines.append("")
-    lines.append(f"_{md_cell(waiver_legend(sheet.boards))} Values are each writer's own "
-                 "scale, so they're never added across charts._")
-    for reason in board_reasons(sheet.boards):
-        lines.append(f"- {md_cell(reason)}")
-    lines.append("")
+    lines += _value_table_lines(sheet)
     lines.append(f"{heading}# Trade ideas, judged on each chart")
     lines.append("")
     if sheet.verdicts:
