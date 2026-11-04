@@ -122,15 +122,35 @@ jobs:
             echo "No decision log on $LOG_BRANCH yet — starting a fresh one."
           fi
 
+      # Scheduled passes compare their lineups with what this week's issue
+      # already published, and Discord stays quiet when nothing moved (the
+      # issue still gets its short note below). The newest open start/sit issue
+      # is enough: its ff-lineup marker carries season and week, so last week's
+      # issue simply isn't compared. Manual runs always send.
+      - name: Fetch this week's published report (scheduled runs)
+        if: ${{ github.event_name == 'schedule' && !inputs.artifact_only }}
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          NUM=$(gh issue list --state open --search 'in:title "start/sit"' \
+                --json number --jq '.[0].number // empty')
+          if [ -n "$NUM" ]; then
+            gh issue view "$NUM" --json body,comments \
+              --jq '.body, (.comments[].body)' > previous.md
+          fi
+
       - name: Publish (one scoring pass -> digest + dashboard + Discord)
         run: |
           WEEK_ARGS=()
           if [ -n "$INPUT_WEEK" ]; then WEEK_ARGS=(--week "$INPUT_WEEK"); fi
+          SINCE_ARGS=()
+          if [ "$GITHUB_EVENT_NAME" = "schedule" ]; then SINCE_ARGS=(--since previous.md); fi
           # Deterministic project Pages URL so the Discord link is valid even
           # though the notification fires before the deploy step below completes.
           OWNER="${GITHUB_REPOSITORY%%/*}"; REPO="${GITHUB_REPOSITORY##*/}"
           DASH_URL="https://${OWNER,,}.github.io/${REPO}/"
-          python -m ff_startsit.workflow run publish "${WEEK_ARGS[@]}" --all-leagues --log --discord \
+          python -m ff_startsit.workflow run publish "${WEEK_ARGS[@]}" "${SINCE_ARGS[@]}" --all-leagues --log --discord \
             --report report.md --dashboard ./site/index.html \
             --url "$DASH_URL"
           # Mirror the digest to the run summary (viewable in the GitHub mobile app).

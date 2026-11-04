@@ -182,6 +182,9 @@ def _build_parser() -> argparse.ArgumentParser:
                        help="append these decisions to the results log (feeds `calibrate`)")
     p_pub.add_argument("--all-leagues", action="store_true", dest="all_leagues",
                        help="one pass per configured league -> combined digest/dashboard/Discord")
+    p_pub.add_argument("--since", type=Path, default=None,
+                       help="the report already published this week (with --all-leagues); "
+                            "send Discord only if a lineup changed since it")
     p_pub.set_defaults(func=cmd_publish)
 
     p_wai = sub.add_parser("waivers", parents=[roster_parent],
@@ -846,6 +849,11 @@ def _league_bundles(args, settings: Settings, week: int) -> list:
     return finish_status(status, bundles)
 
 
+def _clip_content(text: str, limit: int = 2000) -> str:
+    """Discord's message ``content`` holds at most 2000 characters."""
+    return text if len(text) <= limit else text[:limit - 1] + "…"
+
+
 def _cmd_publish_all(args, settings: Settings) -> int:
     """Publish every configured league into one combined digest/dashboard/Discord."""
 
@@ -871,6 +879,20 @@ def _cmd_publish_all(args, settings: Settings) -> int:
         args.dashboard.write_text(html)
         print(f"Wrote dashboard ({len(bundles)} leagues) to {args.dashboard}")
 
+    # Four passes a week share one Discord channel. A later pass whose lineups
+    # match the latest published ones (report.lineup_changes_since, read off the
+    # issue's ff-lineup markers) has nothing to tell it; the issue still gets
+    # its short note. The week's first post, and any manual run (no --since),
+    # always sends.
+    changes = None
+    since = getattr(args, "since", None)
+    if args.discord and since is not None:
+        previous = since.read_text(encoding="utf-8") if since.exists() else ""
+        changes = report.lineup_changes_since(digest, previous)
+        if changes == []:
+            print("No lineup changes since this week's last post; skipping Discord.",
+                  file=sys.stderr)
+            return 0
     if args.discord:
         if not settings.discord_webhook_url:
             print("DISCORD_WEBHOOK_URL is not set — skipping Discord.", file=sys.stderr)
@@ -879,6 +901,10 @@ def _cmd_publish_all(args, settings: Settings) -> int:
             payload = build_multi_discord_payload(
                 week, bundles, dashboard_url=dashboard_url,
                 commands_url=_commands_url(settings))
+            if changes:
+                # A later pass: say what moved before the full summary.
+                payload["content"] = _clip_content(
+                    "**Update:** lineup changes since the last post:\n" + "\n".join(changes))
             try:
                 send_discord(settings.discord_webhook_url, payload)
                 print("Sent Discord notification.")

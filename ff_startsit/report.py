@@ -704,3 +704,46 @@ def render_journalists_markdown(view: JournalistView) -> str:
                 cells.append("—" if rank is None else f"{rank:.0f}")
             lines.append("| " + " | ".join(cells) + " |")
     return "\n".join(lines)
+
+
+def lineup_changes(before: dict, after: dict) -> list[str]:
+    """One line per league whose starters changed: who came in (and the slot
+    he fills) and who went out. Reshuffling the same players between slots
+    (RB to FLEX) isn't a change anyone acts on, so it isn't reported."""
+    lines: list[str] = []
+    for league in list(after) + [lg for lg in before if lg not in after]:
+        if league not in after:
+            lines.append(f"- **{league}:** not in this run (see Data status).")
+            continue
+        if league not in before:
+            lines.append(f"- **{league}:** new in this run.")
+            continue
+        was = {name for _, name in before[league] if name}
+        now = [(slot, name) for slot, name in after[league] if name]
+        came = [f"{name} ({slot})" for slot, name in now if name not in was]
+        went = sorted(was - {name for _, name in now})
+        if came or went:
+            parts = []
+            if came:
+                parts.append("start " + ", ".join(came))
+            if went:
+                parts.append("bench " + ", ".join(went))
+            lines.append(f"- **{league}:** " + "; ".join(parts) + ".")
+    return lines
+
+
+def lineup_changes_since(current_text: str, previous_text: str) -> Optional[list[str]]:
+    """What changed between this digest's lineups and the latest ones published
+    for the same season and week: ``lineup_changes`` lines, ``[]`` for no
+    change, or ``None`` when nothing comparable was published (the week's first
+    post, or an issue from before the marker). One definition for the issue's
+    update note and the Discord gate, so the two agree about "changed"."""
+    current = lineup_markers(current_text)
+    if not current:
+        return None
+    season, week, after = current[-1]
+    earlier = [data for s_, w_, data in lineup_markers(previous_text)
+               if s_ == season and w_ == week]
+    if not earlier:
+        return None
+    return lineup_changes(earlier[-1], after)
