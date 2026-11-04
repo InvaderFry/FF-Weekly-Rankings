@@ -8,6 +8,7 @@ assembles the full phone-friendly report posted as a GitHub Issue.
 from __future__ import annotations
 
 from dataclasses import dataclass
+import re
 import sys
 from typing import Optional, Sequence
 
@@ -632,7 +633,46 @@ def render_multi_digest(week: int, bundles: Sequence[LeagueBundle]) -> str:
         lines += _digest_body(b.recs, banner=b.banner, journalists=b.journalists,
                               lineup=b.lineup)
         lines.append("")
+    # Invisible in the issue; read back by the next run's update note
+    # (workflow.startsit_update_note), which names who moved in or out.
+    lines += [lineup_marker(season_year(), week, bundles), ""]
     return "\n".join(lines)
+
+
+# --- the lineup marker -------------------------------------------------------
+#
+# Four passes a week (Thursday, Saturday, two on Sunday) post into one issue. A
+# later pass replaces the issue body and comments only what changed, which it
+# can only do if the published report says what the lineup *was*. The names
+# ride base64-encoded JSON so no player name can break the HTML comment.
+
+_LINEUP_MARKER = re.compile(r"<!-- ff-lineup season=(\d+) week=(\d+) data=([A-Za-z0-9_=-]*) -->")
+
+
+def lineup_marker(season: int, week: int, bundles: Sequence[LeagueBundle]) -> str:
+    """Every league's lineup as ``{league: [[slot, name-or-null], ...]}``."""
+    import base64
+    import json
+    data = {b.label: [[slot, pick.player.name if pick is not None else None]
+                      for slot, pick in b.lineup] for b in bundles}
+    blob = base64.urlsafe_b64encode(json.dumps(data, sort_keys=True).encode()).decode()
+    return f"<!-- ff-lineup season={season} week={week} data={blob} -->"
+
+
+def lineup_markers(text: str) -> list[tuple[int, int, dict]]:
+    """Every lineup marker in ``text``, in order, as (season, week, lineups).
+    A marker that doesn't decode is skipped rather than failing the run."""
+    import base64
+    import json
+    out = []
+    for m in _LINEUP_MARKER.finditer(text or ""):
+        try:
+            data = json.loads(base64.urlsafe_b64decode(m[3].encode()).decode())
+        except ValueError:
+            continue
+        if isinstance(data, dict):
+            out.append((int(m[1]), int(m[2]), data))
+    return out
 
 
 def render_journalists_markdown(view: JournalistView) -> str:
