@@ -450,3 +450,27 @@ def test_wednesday_posts_discord_only_when_the_adds_changed(monkeypatch, tmp_pat
                            settings) == 0
     assert len(sent) == 1                               # the summary only, no board
     assert sent[0]["content"].startswith("**Wednesday update:**")
+
+
+def test_a_boone_chart_url_reaches_the_waiver_pass(monkeypatch, tmp_path):
+    """values.yml hands a manual Boone chart URL to both passes; without it the
+    waiver page and its veto would read fewer charts than the values page."""
+    seen = {}
+
+    def charts(settings, urls=(), **kw):
+        seen["urls"] = list(urls)
+        return []
+    monkeypatch.setattr(cli, "build_roster_provider", lambda *a, **k: _FakeProvider())
+    monkeypatch.setattr(cli, "value_chart_sources", charts)
+    args = cli._build_parser().parse_args(["waivers", "--boone-chart", "https://x/chart"])
+    assert args.boone_chart == ["https://x/chart"]
+    assert cli.cmd_waivers(_Args(boone_chart=["https://x/chart"]), _settings(tmp_path)) == 0
+    assert seen["urls"] == ["https://x/chart"]
+
+
+def test_the_digest_header_carries_the_time(monkeypatch, tmp_path):
+    monkeypatch.setattr(cli, "build_roster_provider", lambda *a, **k: _FakeProvider())
+    monkeypatch.setattr(cli.season, "generated_stamp", lambda now=None: "2026-11-03 7:15 PM CST (01:15 UTC)")
+    page = tmp_path / "w.html"
+    assert cli.cmd_waivers(_Args(dashboard=page), _settings(tmp_path)) == 0
+    assert "Generated 2026-11-03 7:15 PM CST (01:15 UTC)" in page.read_text()

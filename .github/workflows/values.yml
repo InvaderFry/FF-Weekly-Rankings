@@ -113,14 +113,22 @@ jobs:
 
       # Wednesday also refreshes waivers.html: by now Boone's charts are up and
       # claims have processed, so the page shows who is still on the wire, who
-      # was dropped, and your roster on both charts. Page only — no Discord, no
-      # issue; Tuesday's post stands. The Odds API payload is disk-cached for
-      # 30 minutes and the values step above just fetched it, so this costs no
-      # extra credits. If it fails, the restore below keeps Tuesday's page.
+      # was dropped, and your roster on both charts. The Odds API payload is
+      # disk-cached for 30 minutes and the values step above just fetched it, so
+      # this costs no extra credits. If it fails, the restore below keeps
+      # Tuesday's page.
+      #
+      # Gated on its own record, not on the values report's news: a refresh that
+      # failed on the first pass must still run on the retry, which may find no
+      # new charts at all (workflow.refresh_needed).
+      - name: Has this week's waivers refresh run?
+        id: refresh_gate
+        run: python -m ff_startsit.workflow refresh-needed values.md previous.md
+
       # Tuesday's published waiver report, for the "did the adds change?" check
       # below (its latest ff-adds marker is what this run compares with).
       - name: Fetch this week's published waiver report
-        if: steps.news.outputs.news == 'true'
+        if: steps.news.outputs.news == 'true' || steps.refresh_gate.outputs.needed == 'true'
         continue-on-error: true
         env:
           GH_TOKEN: ${{ github.token }}
@@ -135,25 +143,35 @@ jobs:
 
       # Discord gets a short "Wednesday update" only when the claims themselves
       # changed since Tuesday's post (cmd_waivers --adds-changed-since); a
-      # Wednesday that agrees with Tuesday stays quiet.
+      # Wednesday that agrees with Tuesday stays quiet. A Boone chart URL given
+      # to this run reaches this pass too, so the page and the veto read the
+      # same charts the values page does.
       - name: Refresh the waivers page
-        if: steps.news.outputs.news == 'true'
+        id: refresh
+        if: steps.news.outputs.news == 'true' || steps.refresh_gate.outputs.needed == 'true'
         continue-on-error: true
         run: |
           WEEK_ARGS=()
           if [ -n "$INPUT_WEEK" ]; then WEEK_ARGS=(--week "$INPUT_WEEK"); fi
+          CHART_ARGS=()
+          if [ -n "$INPUT_BOONE_CHART" ]; then CHART_ARGS=(--boone-chart "$INPUT_BOONE_CHART"); fi
           OWNER="${GITHUB_REPOSITORY%%/*}"; REPO="${GITHUB_REPOSITORY##*/}"
           WAIVERS_URL="https://${OWNER,,}.github.io/${REPO}/waivers.html"
-          python -m ff_startsit.workflow run waivers "${WEEK_ARGS[@]}" \
+          python -m ff_startsit.workflow run waivers "${WEEK_ARGS[@]}" "${CHART_ARGS[@]}" \
             --all-leagues --report waivers.md --dashboard ./site/waivers.html \
             --discord --adds-changed-since previous-waivers.md --url "$WAIVERS_URL"
+
+      # Recorded in the values report, so a retry knows the refresh is done.
+      - name: Mark the waivers refresh done
+        if: steps.refresh.outcome == 'success'
+        run: python -m ff_startsit.workflow refreshed-marker values.md
 
       # Same decision as the Discord gate above. When it fired, record the
       # update on the waiver issue, so the 02:30 UTC retry compares with it
       # rather than with Tuesday's post and doesn't send the update twice.
       - name: Did the adds change?
         id: adds
-        if: steps.news.outputs.news == 'true'
+        if: steps.refresh.outcome == 'success'
         run: python -m ff_startsit.workflow adds-changed waivers.md previous-waivers.md
 
       - name: Record the Wednesday update on the waiver issue
@@ -167,12 +185,19 @@ jobs:
             gh issue comment "$(cat waiver-issue.txt)" --body-file wednesday.md
           fi
 
+      # The site deploys when the values report has news, or when a retry's
+      # waivers refresh finally succeeded with nothing new on the charts.
+      - name: Deploy the site?
+        id: deploy_gate
+        if: steps.news.outputs.news == 'true' || steps.refresh.outcome == 'success'
+        run: echo "deploy=true" >> "$GITHUB_OUTPUT"
+
       # The start/sit page (and waivers.html, if the refresh above failed) is
       # copied from the live site rather than re-scored; if a page can't be
       # fetched, the deploy below is skipped and the live site stays as it is
       # (workflow.restore_pages / verify_site).
       - name: Keep the published start/sit and waiver pages
-        if: steps.news.outputs.news == 'true'
+        if: steps.deploy_gate.outputs.deploy == 'true'
         run: |
           OWNER="${GITHUB_REPOSITORY%%/*}"; REPO="${GITHUB_REPOSITORY##*/}"
           python -m ff_startsit.workflow restore "https://${OWNER,,}.github.io/${REPO}" index.html waivers.html
@@ -202,7 +227,7 @@ jobs:
 
       - name: Verify the site is complete
         id: site
-        if: steps.news.outputs.news == 'true'
+        if: steps.deploy_gate.outputs.deploy == 'true'
         run: |
           python -m ff_startsit.workflow site
 

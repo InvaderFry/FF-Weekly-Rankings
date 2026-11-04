@@ -146,6 +146,26 @@ def central_today(now: Optional[datetime] = None) -> date:
         return (now.astimezone(timezone.utc) - timedelta(hours=6)).date()
 
 
+def generated_stamp(now: Optional[datetime] = None) -> str:
+    """When a report was generated, to the minute: "2026-11-03 7:15 PM CST (01:15 UTC)".
+
+    Every page used to say "Generated 2026-11-03" — a date alone, so a re-run
+    the same day looked identical to the run it replaced. Central first, since
+    that is where the owner and the waiver deadline are (see ``central_today``),
+    with UTC beside it to match the workflow logs and the Data status line.
+    """
+    now = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
+    utc = now.strftime("%H:%M UTC")
+    try:
+        from zoneinfo import ZoneInfo
+        local = now.astimezone(ZoneInfo("America/Chicago"))
+        zone = local.tzname() or "CT"
+    except Exception:
+        local, zone = now - timedelta(hours=6), "CST"
+    clock = local.strftime("%I:%M %p").lstrip("0")
+    return f"{local:%Y-%m-%d} {clock} {zone} ({utc})"
+
+
 def is_rehearsal_window(today: Optional[date] = None) -> bool:
     """True in the final week before kickoff — when Week 1 data actually exists.
 

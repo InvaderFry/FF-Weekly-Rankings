@@ -417,6 +417,18 @@ def _upgrade_over(add: PlayerScore, drop: DropCandidate, rules: LeagueRules,
     return _worth_adding(add, drop.score, rules)
 
 
+def _project(rostered: Optional[dict[str, int]], add_position: str,
+             drop_position: Optional[str]) -> None:
+    """Update projected roster counts in place for one accepted add."""
+    if rostered is None:
+        return
+    add = (add_position or "").upper()
+    rostered[add] = rostered.get(add, 0) + 1
+    if drop_position:
+        drop = drop_position.upper()
+        rostered[drop] = max(0, rostered.get(drop, 0) - 1)
+
+
 def _first_unvetoed(add: PlayerScore, drops: Sequence[DropCandidate], rules: LeagueRules,
                     rostered: Optional[dict[str, int]], veto
                     ) -> tuple[Optional[DropCandidate], Optional[str]]:
@@ -549,18 +561,23 @@ def pick_adds(index: dict[str, PlayerScore], pool: Sequence[PoolPlayer],
     available_drops = list(drops)
     counts: dict[str, int] = {}
     targets: list[WaiverTarget] = []
+    # The roster as it would stand after the adds already accepted: two QB adds
+    # each checked against the *original* two quarterbacks left a two-QB league
+    # with four, past the starters-plus-one-backup limit the check enforces.
+    projected = dict(rostered) if rostered is not None else None
     for ratio, score in _add_candidates(index, pool, rules):
         if len(targets) >= max_adds or not available_drops:
             break
         position = score.player.position.upper()
         if _capped(position, rules, counts):
             continue
-        drop, reason = _first_unvetoed(score, available_drops, rules, rostered, veto)
+        drop, reason = _first_unvetoed(score, available_drops, rules, projected, veto)
         if drop is None:
             if reason and held_back is not None:
                 held_back.append((score, reason))
             continue
         available_drops.remove(drop)
+        _project(projected, position, drop.score.player.position)
         counts[position] = counts.get(position, 0) + 1
         targets.append(_build_target(score, ratio, drop.score, pool_by_key, rules,
                                      faab_remaining, journalist_ranks, mentions,
@@ -608,9 +625,11 @@ def pick_alternates(index: dict[str, PlayerScore], pool: Sequence[PoolPlayer],
 
     taken = {t.score.player.key for t in targets}
     counts: dict[str, int] = {}
+    projected = dict(rostered) if rostered is not None else None
     for t in targets:
         pos = t.score.player.position.upper()
         counts[pos] = counts.get(pos, 0) + 1
+        _project(projected, pos, t.drop.player.position if t.drop else None)
 
     out: list[WaiverTarget] = []
     for ratio, score in _add_candidates(index, pool, rules):
@@ -621,13 +640,16 @@ def pick_alternates(index: dict[str, PlayerScore], pool: Sequence[PoolPlayer],
         position = score.player.position.upper()
         if _capped(position, rules, counts):
             continue
-        drop, reason = _first_unvetoed(score, drops, rules, rostered, veto)
+        drop, reason = _first_unvetoed(score, drops, rules, projected, veto)
         if drop is None:
             if reason and held_back is not None and all(
                     s.player.key != score.player.key for s, _ in held_back):
                 held_back.append((score, reason))
             continue
         counts[position] = counts.get(position, 0) + 1
+        # An alternate has no named drop, so only his own position grows: two
+        # "also consider" quarterbacks would still be two more quarterbacks.
+        _project(projected, position, None)
         out.append(_build_target(score, ratio, None, pool_by_key, rules,
                                  faab_remaining, journalist_ranks, mentions))
     return out
