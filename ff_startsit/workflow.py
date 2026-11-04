@@ -222,17 +222,23 @@ def _report_identity(report_text):
     return (int(match[1]), int(match[2])) if match else None
 
 
-def refreshed_marker(report_path):
+def refreshed_marker(report_path, append=False):
     """The marker that says this week's Wednesday waivers refresh succeeded.
 
     Appended to the values report (so it rides into the values issue) only when
-    the refresh step succeeded; ``refresh_needed`` looks for it.
+    the refresh step succeeded; ``refresh_needed`` looks for it. ``append``
+    writes it onto the report here, rather than the workflow redirecting this
+    command's output into the file it reads (shellcheck SC2094).
     """
-    identity = _report_identity(Path(report_path).read_text(encoding="utf-8"))
+    path = Path(report_path)
+    identity = _report_identity(path.read_text(encoding="utf-8"))
     if identity is None:
         return ""
     marker = _REFRESHED.format(season=identity[0], week=identity[1])
     print(marker)
+    if append:
+        with path.open("a", encoding="utf-8") as handle:
+            handle.write("\n" + marker + "\n")
     return marker
 
 
@@ -299,7 +305,7 @@ def main():
     elif sys.argv[1] == "refresh-needed":
         refresh_needed(sys.argv[2], sys.argv[3])
     elif sys.argv[1] == "refreshed-marker":
-        refreshed_marker(sys.argv[2])
+        refreshed_marker(sys.argv[2], append=True)
     elif sys.argv[1] == "restore":
         args = sys.argv[3:]
         optional = "--optional" in args

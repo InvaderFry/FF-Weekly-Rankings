@@ -164,7 +164,7 @@ jobs:
       # Recorded in the values report, so a retry knows the refresh is done.
       - name: Mark the waivers refresh done
         if: steps.refresh.outcome == 'success'
-        run: python -m ff_startsit.workflow refreshed-marker values.md >> values.md
+        run: python -m ff_startsit.workflow refreshed-marker values.md
 
       # Same decision as the Discord gate above. When it fired, record the
       # update on the waiver issue, so the 02:30 UTC retry compares with it

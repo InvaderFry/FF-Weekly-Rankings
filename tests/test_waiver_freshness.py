@@ -118,6 +118,9 @@ def test_a_failed_refresh_is_retried_even_with_no_new_charts(tmp_path):
     assert refresh_needed(report, previous, output=out)
     previous.write_text(report.read_text() + refreshed_marker(report))    # posted after a refresh
     assert not refresh_needed(report, previous, output=out)
+    # The workflow's form appends the marker to the report itself.
+    refreshed_marker(report, append=True)
+    assert not refresh_needed(report, report, output=out)
     # Last week's marker doesn't count for this week.
     previous.write_text("<!-- ff-waivers-refreshed season=2026 week=8 -->")
     assert refresh_needed(report, previous, output=out)
