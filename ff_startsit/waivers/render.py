@@ -13,7 +13,7 @@ from typing import Optional, Sequence
 from ..output.board import waiver_cell, waiver_legend
 from ..output.render import DEPTH_LEGEND, md_cell
 from .board import board_marker, board_reasons, bundles_read, cell_position
-from .models import WaiverBundle, WaiverTarget
+from .models import STREAM_TABLE_NOTE, WaiverBundle, WaiverTarget
 from .values import chart_cell, sheet_cell
 
 
@@ -89,6 +89,34 @@ def _alternates_table(bundle: WaiverBundle) -> list[str]:
             f"| {md_cell(why)} |"
         )
     lines.append("")
+    return lines
+
+
+def _held_back_section(bundle: WaiverBundle) -> list[str]:
+    """Adds the blend would have made that the writers didn't back."""
+    if not bundle.held_back:
+        return []
+    return ["**Held back: the experts don't back these**", "",
+            *[f"- {md_cell(line)}" for line in bundle.held_back], ""]
+
+
+def _stream_section(bundle: WaiverBundle) -> list[str]:
+    """Your kicker and defense beside the best free agents, experts side by side."""
+    if not bundle.stream_rows:
+        return []
+    cols = list(bundle.stream_columns)
+    head = ["Player", "Team", "Score", "FP", *cols, "This tool"]
+    lines = ["**Kicker and defense: this week's experts**", ""]
+    for pos, rows in bundle.stream_rows.items():
+        lines += [f"_{pos}_", "", "| " + " | ".join(head) + " |",
+                  "|---|---|---:|---|" + "---|" * len(cols) + "---|"]
+        for row in rows:
+            cells = [md_cell(c) for c in row.cells(cols)]
+            if row.mine:
+                cells[0] = f"**{cells[0]}** (yours)"
+            lines.append("| " + " | ".join(cells) + " |")
+        lines.append("")
+    lines += [f"_{STREAM_TABLE_NOTE}_", ""]
     return lines
 
 
@@ -294,6 +322,8 @@ def render_bundle(bundle: WaiverBundle, heading: str = "###") -> list[str]:
     lines += _expert_board_section(bundle)
     lines += _adds_table(bundle)
     lines += _alternates_table(bundle)
+    lines += _held_back_section(bundle)
+    lines += _stream_section(bundle)
     lines += _drops_table(bundle)
     lines += _roster_values_section(bundle)
     lines += _trades_section(bundle)

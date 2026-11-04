@@ -91,6 +91,10 @@ class _Args:
         self.__dict__.update(defaults)
 
 
+#: Captured before the autouse fixture stubs it, to test the real gate.
+_REAL_KDEF_BOARDS = cli.kdef_weekly_boards
+
+
 @pytest.fixture(autouse=True)
 def _offline(monkeypatch, tmp_path):
     """Pin every network edge: signals, schedule, week, roster and provider."""
@@ -111,6 +115,8 @@ def _offline(monkeypatch, tmp_path):
                         lambda today=None: False)
     monkeypatch.setattr(cli.season, "waiver_banner",
                         lambda rehearse=False, today=None: None)
+    # This week's K/DEF ranks (CBS, Boone) are real fetchers: stub them out.
+    monkeypatch.setattr(cli, "kdef_weekly_boards", lambda settings: None)
 
 
 def _settings(tmp_path, leagues=None):
@@ -426,5 +432,6 @@ def test_waivers_without_writers_fetches_no_charts(monkeypatch, tmp_path):
     monkeypatch.setattr(cli, "build_roster_provider", lambda *a, **k: _FakeProvider())
     report = tmp_path / "w.md"
     assert cli.value_chart_sources(_settings(tmp_path), only_enabled=True) == []
+    assert _REAL_KDEF_BOARDS(_settings(tmp_path)) is None     # nothing to fetch
     assert cli.cmd_waivers(_Args(report=report), _settings(tmp_path)) == 0
     assert "My roster: rest-of-season value" not in report.read_text()

@@ -467,8 +467,36 @@ and FAB bid; Eisenberg's priority and FAAB %; Richard's value and rank by
 value), FantasyPros' overall ROS rank, and what this tool's own pass decided
 ("add (drop X)", "also consider"). `FF_ANALYSTS=boone` enables Boone's column
 and `cbs` enables Eisenberg's and Richard's. It is a board, so the rules above
-hold: display only, no add/drop/bid changes (`test_board_changes_no_add_or_drop`),
-nothing in `results_log.jsonl`.
+hold: no weight, no add/drop/bid it creates or moves
+(`test_board_changes_no_add_or_drop`), nothing in `results_log.jsonl`.
+
+**The one exception is a veto** (`waivers/endorse.py`, chosen in the Week 9
+review). The boards can *remove* an add the blend would have made, never make,
+reorder or re-price one (`test_the_veto_only_removes`):
+
+- **Skill players** must be on a writer's radar: RB/WR on a trade chart
+  (Richard's or Boone's) or named in Boone's or Eisenberg's waiver column; QB/TE
+  on a trade chart, because a league starts one of each and a QB or TE no chart
+  values is a one-week streamer (Malik Willis was on none).
+- **K/DEF** are judged pairwise against the player they'd replace, on this
+  week's CBS consensus and Boone's weekly list (`cli.kdef_weekly_boards`). The
+  swap is held back when more of the experts who ranked either player prefer
+  yours; a tie goes to the blend. An expert listing only one of the two prefers
+  that one. A bye-week stream is never vetoed: no ranking argues for a player
+  who can't score.
+- **No reading is the blend's call, not a veto.** A chart not read at that
+  position, no column read, no weekly K/DEF list: the add stands and its reasons
+  say "the blend's call". An expert who wasn't read is not one who disagreed.
+- **A veto is always visible**: `WaiverBundle.held_back` renders as "Held back:
+  the experts don't back these" in all three renderers. A row that silently
+  went missing would be the distinguishable-failures bug again.
+
+Because the veto needs the boards before the pick, `build_bundle` now fetches
+the writer boards, the charts (`chart_sources`, over every candidate so the
+values sheet reuses them via `build_sheet(boards=...)`) and the weekly K/DEF
+lists (`weekly_boards`) *before* `pick_adds`. `bundle.stream_rows` is the
+K/DEF comparison table: your K/DEF and up to `STREAM_TABLE_ROWS` add candidates
+at the position, with blend score, FP, CBS and Boone side by side.
 
 - **Discovery and attribution** go through `boards/articles.py`: a link must
   name the week, and the article's JSON-LD byline, week, season and kind

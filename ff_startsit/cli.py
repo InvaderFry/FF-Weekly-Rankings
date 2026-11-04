@@ -882,7 +882,7 @@ def _cmd_publish_all(args, settings: Settings) -> int:
 
 
 def _waiver_bundles(args, settings: Settings, week: int, writers=None,
-                    on_bundle=None) -> list:
+                    on_bundle=None, bundle_kwargs=None) -> list:
     """Build one WaiverBundle per configured league.
 
     Modeled on ``_league_bundles``: a league that fails is skipped with a
@@ -937,6 +937,7 @@ def _waiver_bundles(args, settings: Settings, week: int, writers=None,
                 # detect the pre-kickoff window on its own.
                 rehearse=getattr(args, "rehearse", False) or None,
                 **({"writer_sources": writers} if writers else {}),
+                **(bundle_kwargs or {}),
             )
             if on_bundle is not None:
                 on_bundle(bundle, players)
@@ -991,19 +992,15 @@ def cmd_waivers(args, settings: Settings) -> int:
     # Richard's chart — a Tuesday column and a value source at once — is read
     # once per run, not once per role.
     from .boards.articles import ArticleFetcher
-    from .waivers.values import build_sheet, superflex_for
     fetcher = ArticleFetcher(settings.data_dir)
     writers = waiver_writer_sources(settings, fetcher)
+    # The charts price your roster (display) and, with the columns and this
+    # week's K/DEF lists, can veto an add the writers don't back (waivers/endorse.py).
     charts = value_chart_sources(settings, fetcher=fetcher, only_enabled=True)
-
-    def on_bundle(bundle, players):
-        # Your roster priced on each chart, for the drop table and the "My
-        # roster" table. Display only; the preseason refusal scored nothing.
-        if charts and not (bundle.banner and not bundle.recs):
-            bundle.values = build_sheet(bundle, players, charts, week,
-                                        superflex=superflex_for(bundle.rules))
-
-    bundles = _waiver_bundles(args, settings, week, writers=writers, on_bundle=on_bundle)
+    weekly = kdef_weekly_boards(settings)
+    bundles = _waiver_bundles(args, settings, week, writers=writers,
+                              bundle_kwargs={"chart_sources": charts,
+                                             "weekly_boards": weekly})
     if not bundles:
         print("No configured league could be scored for waivers.", file=sys.stderr)
         return 1
@@ -1052,6 +1049,32 @@ def cmd_waivers(args, settings: Settings) -> int:
                 except Exception as exc:
                     print(f"warning: Discord expert board failed: {exc}", file=sys.stderr)
     return 0
+
+
+def kdef_weekly_boards(settings: Settings):
+    """This week's K/DEF ranks from CBS's consensus (``cbs`` in FF_ANALYSTS) and
+    Boone's weekly lists (``boone``), as a ``(players, week, scoring) -> boards``
+    callable for ``build_bundle``; ``None`` with neither enabled. One fetcher of
+    each is shared across leagues, so each page is read once per run."""
+    want_cbs = settings.cbs_rankings
+    want_boone = settings.analysts == "boone"
+    if not want_cbs and not want_boone:
+        return None
+    from .boards.boone import BooneWeeklySource
+    from .boards.cbs import CbsFetcher
+    from .sources.analysts import AnalystFetcher
+    cbs = CbsFetcher(settings.data_dir) if want_cbs else None
+    boone = (BooneWeeklySource(AnalystFetcher(season.season_year(), settings.data_dir))
+             if want_boone else None)
+
+    def boards(players, week, scoring):
+        out = []
+        if cbs is not None:
+            out.append(cbs.fetch(players, week, scoring)[0])     # the consensus column
+        if boone is not None:
+            out.append(boone.fetch(players, week, scoring))
+        return out
+    return boards
 
 
 def value_chart_sources(settings: Settings, boone_urls=(), fetcher=None,
