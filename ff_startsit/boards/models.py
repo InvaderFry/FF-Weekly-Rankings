@@ -20,6 +20,12 @@ from typing import Optional
 #: Key in ``ExpertBoard.unavailable`` for a reason that covers every position.
 ALL_POSITIONS = "*"
 
+#: Column-header tag per board kind. One writer can fill three columns — Boone's
+#: weekly ranks, his waiver column and his trade chart — and a bare "Boone" over
+#: each read as the same thing (the waivers page's "Boone" was his waiver
+#: column, so his trade chart, which decided an add, was nowhere on the page).
+KIND_TAGS = {"weekly": "Wk", "waiver": "WW", "ros": "ROS"}
+
 
 @dataclass(frozen=True)
 class BoardEntry:
@@ -64,8 +70,12 @@ class ExpertBoard:
 
     @property
     def header(self) -> str:
-        """The column header, carrying a scoring mismatch when there is one."""
-        return f"{self.short} ({self.scoring_label})" if self.scoring_label else self.short
+        """The column header: ``short`` plus what kind of reading it is ("Boone
+        ROS"), and a scoring mismatch when there is one. Sentences use ``short``
+        ("Richard's trade chart values ..."), which already says which kind."""
+        tag = KIND_TAGS.get(self.kind)
+        base = self.short if not tag or self.short.endswith(tag) else f"{self.short} {tag}"
+        return f"{base} ({self.scoring_label})" if self.scoring_label else base
 
     def entry(self, key: str) -> Optional[BoardEntry]:
         return self.entries.get(key)

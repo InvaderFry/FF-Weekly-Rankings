@@ -103,7 +103,7 @@ def test_boone_source_never_raises_for_a_fetch_failure():
 
 def test_scoring_mismatch_is_in_the_header():
     board = ExpertBoard("cbs_consensus", "CBS", "CBS staff consensus", scoring_label="PPR")
-    assert board.header == "CBS (PPR)"
+    assert board.header == "CBS Wk (PPR)"
 
 
 def test_rank_formatting():
@@ -148,25 +148,25 @@ def test_markdown_section_shows_ranks_side_by_side(tmp_path):
     recs = ranked(Settings(data_dir=tmp_path, analysts="boone"), fetcher=Boone())
     md = render.render_markdown(recs["WR"], title="WR")
     header = next(line for line in md.splitlines() if line.startswith("| #"))
-    assert header.startswith("| # | Player | Pos | Team | Score | FP | Boone | ECR |")
+    assert header.startswith("| # | Player | Pos | Team | Score | FP Wk | Boone Wk | ECR |")
     alpha = next(line for line in md.splitlines() if "Alpha O'Neil" in line)
     cells = [c.strip() for c in alpha.strip("|").split("|")]
     assert cells[5:7] == ["1", "3"]          # FP has him 1st, Boone 3rd
-    assert "FP: FantasyPros consensus; Boone: Justin Boone (Yahoo)" in md
+    assert "FP Wk: FantasyPros consensus; Boone Wk: Justin Boone (Yahoo)" in md
 
 
 def test_digest_carries_the_boards(tmp_path):
     settings = Settings(data_dir=tmp_path, analysts="boone")
     recs = ranked(settings, fetcher=Boone())
     digest = report.render_digest(9, "ppr", recs)
-    assert "| FP | Boone |" in digest
+    assert "| FP Wk | Boone Wk |" in digest
 
 
 def test_dashboard_shows_ranks_side_by_side(tmp_path):
     recs = ranked(Settings(data_dir=tmp_path, analysts="boone"), fetcher=Boone())
     page = html._position_table(recs["WR"])
-    assert "<th class='num expert' title='FantasyPros consensus'>FP</th>" in page
-    assert "<th class='num expert' title='Justin Boone (Yahoo)'>Boone</th>" in page
+    assert "<th class='num expert' title='FantasyPros consensus'>FP Wk</th>" in page
+    assert "<th class='num expert' title='Justin Boone (Yahoo)'>Boone Wk</th>" in page
     assert "Ranks by position" in page
 
 

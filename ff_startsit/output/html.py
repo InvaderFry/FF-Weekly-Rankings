@@ -474,7 +474,7 @@ def _waiver_stream_table(bundle) -> str:
     out = ["<h3>Kicker and defense: this week's experts</h3>"]
     for pos, rows in bundle.stream_rows.items():
         out.append(f"<table><thead><tr><th>{escape(pos)}</th><th>Team</th>"
-                   f"<th class='num'>Score</th><th>FP</th>{head}<th>This tool</th>"
+                   f"<th class='num'>Score</th><th>FP Wk</th>{head}<th>This tool</th>"
                    "</tr></thead><tbody>")
         for row in rows:
             name, team, score, fp, *rest = row.cells(cols)
@@ -498,7 +498,7 @@ def _waiver_drops_table(bundle) -> str:
     # waivers/render.py._drops_table.
     from ..waivers.values import chart_boards, chart_cell
     charts = chart_boards(bundle.values) if bundle.values is not None else []
-    head = "".join(f"<th title='{escape(b.label)}'>{escape(b.short)}</th>" for b in charts)
+    head = "".join(f"<th title='{escape(b.label)}'>{escape(b.header)}</th>" for b in charts)
     rows = ["<h3>Conditional drop candidates</h3>",
             "<table><thead><tr><th>Player</th><th>Pos</th>"
             f"<th class='num'>ROS rank</th>{head}<th>Why</th></tr></thead><tbody>"]
@@ -596,7 +596,7 @@ def _waiver_expert_board(bundle, uid: str = "0") -> str:
             out.append(f"<p class='note'>Showing {len(rows) - hidden} of {len(rows)}: "
                        "the top of the list, where the writers agree most, plus "
                        "every player this tool acted on.</p>")
-        head = "".join(f"<th title='{escape(b.label)}'>{escape(b.short)}</th>" for b in boards)
+        head = "".join(f"<th title='{escape(b.label)}'>{escape(b.header)}</th>" for b in boards)
         out.append(f"<table><thead><tr><th>Player</th><th>Pos</th><th>Team</th>{head}"
                    "<th>This tool</th></tr></thead><tbody>")
         for row in rows:
@@ -844,7 +844,7 @@ def _values_table_html(sheet) -> str:
     from ..waivers.values import sheet_cell
     out = []
     if sheet.rows:
-        head = "".join(f"<th title='{escape(b.label)}'>{escape(b.short)}</th>" for b in sheet.boards)
+        head = "".join(f"<th title='{escape(b.label)}'>{escape(b.header)}</th>" for b in sheet.boards)
         out.append(f"<table><thead><tr><th>Player</th><th>Pos</th><th>Team</th>{head}"
                    "<th>Charts</th></tr></thead><tbody>")
         for row in sheet.rows:

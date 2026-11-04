@@ -15,6 +15,7 @@ from ff_startsit.waivers.base import LeagueViewProvider
 from ff_startsit.waivers.build import _lineup_keys, build_bundle
 from ff_startsit.waivers.models import (ACQ_FAAB, FantasyTeam, LeagueRules,
                                         PoolPlayer)
+from ._kinds import kind_of  # noqa: F401
 
 # Deliberately complementary rosters: I'm three deep at RB and thin at TE; the
 # rival is the mirror. A league where nobody has surplus produces no trades —
@@ -485,7 +486,7 @@ class _WriterSource:
     def fetch(self, players, week, scoring, superflex=False):
         from ff_startsit.boards.models import ALL_POSITIONS, ExpertBoard
         self.seen = (sorted(p.key for p in players), week, scoring, superflex)
-        board = ExpertBoard(self.id, self.short, self.label, url="https://example.test/a")
+        board = ExpertBoard(self.id, self.short, self.label, kind=kind_of(self.id), url="https://example.test/a")
         if self.reason:
             board.unavailable[ALL_POSITIONS] = self.reason
             return board

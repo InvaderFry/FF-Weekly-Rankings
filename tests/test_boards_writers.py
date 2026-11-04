@@ -19,6 +19,7 @@ from ff_startsit.models import Player
 from ff_startsit.output.board import waiver_cell
 from ff_startsit.waivers.board import (board_marker, build_board, fp_ros_board, has_news,
                                        report_has_news)
+from ._kinds import kind_of  # noqa: F401
 
 FIX = Path(__file__).parent / "fixtures" / "boards"
 
@@ -233,7 +234,7 @@ def test_an_unreadable_source_is_an_empty_board_with_its_reason():
 # --- the board -------------------------------------------------------------------
 
 def _board(sid, entries, short=None):
-    return ExpertBoard(sid, short or sid, sid, entries=entries)
+    return ExpertBoard(sid, short or sid, sid, kind=kind_of(sid), entries=entries)
 
 
 def test_rows_are_free_agents_writers_named_best_supported_first():
@@ -362,7 +363,7 @@ def test_markdown_board_and_marker():
     from ff_startsit.waivers.render import render_waiver_digest
     md = render_waiver_digest(9, [bundle_with_board()], generated_on="2026-11-03")
     assert "### What the writers say" in md
-    assert "| Player | Pos | Team | Boone | Eisenberg | Richard | FP ROS | This tool |" in md
+    assert "| Player | Pos | Team | Boone WW | Eisenberg WW | Richard ROS | FP ROS | This tool |" in md
     assert "| D'Andre 1 | RB | LV | RB1 · $9 | — | — | — | add (drop My Rb3) |" in md
     assert "Eisenberg's Week 9 waiver column not posted yet" in md
     assert "<!-- ff-board season=" in md and "week=9 mode=live read=boone_waivers,richard_chart -->" in md
@@ -385,7 +386,7 @@ def test_discord_board_is_one_message_per_league_split_into_25_field_embeds():
     first = payloads[0]["embeds"]
     assert [len(e["fields"]) for e in first] == [25, 5]
     assert first[0]["fields"][0]["name"] == "1. D'Andre 1 (RB, LV)"
-    assert first[0]["fields"][0]["value"] == ("Boone RB1 · $9 | Eisenberg — | Richard — | FP ROS —"
+    assert first[0]["fields"][0]["value"] == ("Boone WW RB1 · $9 | Eisenberg WW — | Richard ROS — | FP ROS —"
                                              "\nThis tool: add (drop My Rb3)")
     assert "not posted yet" in first[0]["description"]
 

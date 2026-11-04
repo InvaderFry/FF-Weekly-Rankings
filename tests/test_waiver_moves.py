@@ -85,7 +85,7 @@ def test_the_card_and_claims_come_before_the_research_tables():
     b = _bundle()
     from types import SimpleNamespace
     # Board on, with no rows: renders its heading and its own note.
-    b.expert_boards = [SimpleNamespace(short="Boone", label="Boone's column",
+    b.expert_boards = [SimpleNamespace(short="Boone", header="Boone WW", label="Boone's column",
                                        unavailable={}, source_id="boone")]
     html = build_waivers_html(9, [b], "2026-11-04")
     order = [html.index(s) for s in ("Your moves", "<h3>Claims</h3>",

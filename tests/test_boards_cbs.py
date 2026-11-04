@@ -164,7 +164,8 @@ def test_a_missing_page_costs_that_position_only_and_never_raises():
 def test_half_ppr_reads_the_ppr_list_and_says_so():
     _, session, (cbs, eisenberg, richard) = fetch("half")
     assert all("/ppr/" in url for url in session.urls)
-    assert (cbs.header, eisenberg.header, richard.header) == ("CBS (PPR)", "Eisenberg (PPR)", "Richard (PPR)")
+    assert (cbs.header, eisenberg.header, richard.header) == ("CBS Wk (PPR)", "Eisenberg Wk (PPR)",
+                                                              "Richard Wk (PPR)")
 
 
 def test_standard_reads_the_standard_list():
@@ -215,7 +216,7 @@ def test_report_shows_fp_then_the_cbs_columns(tmp_path):
     rb = recs["RB"]
     assert [b.short for b in rb.expert_boards] == ["FP", "CBS", "Eisenberg", "Richard"]
     header = next(l for l in render.render_markdown(rb).splitlines() if l.startswith("| #"))
-    assert "| FP | CBS | Eisenberg | Richard |" in header
+    assert "| FP Wk | CBS Wk | Eisenberg Wk | Richard Wk |" in header
     assert any(identity[:2] == ("board", "cbs") for identity, _ in rb.source_status)
 
 

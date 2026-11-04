@@ -21,6 +21,7 @@ from .test_waiver_build import (MINE, RANKS, THEIRS, _NoSchedule, _p, _Provider,
 from .test_waiver_build import _no_journalists  # noqa: F401
 from ff_startsit.config import Settings
 from ff_startsit.waivers.build import build_bundle
+from ._kinds import kind_of  # noqa: F401
 
 
 def _score(key, name, pos):
@@ -28,7 +29,8 @@ def _score(key, name, pos):
 
 
 def _board(sid, short, entries=(), unavailable=None):
-    return ExpertBoard(sid, short, short, entries={k: BoardEntry(pos_rank=r) for k, r in entries},
+    return ExpertBoard(sid, short, short, kind=kind_of(sid),
+                       entries={k: BoardEntry(pos_rank=r) for k, r in entries},
                        unavailable=dict(unavailable or {}))
 
 
@@ -271,10 +273,10 @@ def test_the_kicker_table_and_veto(tmp_path):
     b = _bundle(tmp_path, pool, ranks, weekly_boards=weekly)
     assert "f4" not in {t.score.player.key for t in b.adds}
     assert b.held_back == ["Free K (K): CBS ranks My K higher this week"]
-    assert b.stream_columns == ["CBS", "Boone"]
+    assert b.stream_columns == ["CBS Wk", "Boone Wk"]
     rows = {r.player.key: r for r in b.stream_rows["K"]}
     assert rows["m9"].mine and rows["m9"].status == "yours: keep"
-    assert rows["f4"].ranks == {"CBS": 14, "Boone": None}
+    assert rows["f4"].ranks == {"CBS Wk": 14, "Boone Wk": None}
     assert rows["f4"].status.startswith("held back: CBS ranks")
     md = render_waiver_digest(9, [b])
     assert "Kicker and defense: this week's experts" in md

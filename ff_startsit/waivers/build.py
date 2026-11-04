@@ -366,7 +366,7 @@ def build_bundle(settings: Settings, label: str, provider: LeagueViewProvider,
                 target.reasons = (*target.reasons, note)
         bundle.held_back = [f"{s.player.name} ({s.player.position}): {why}" for s, why in held]
     if weekly:
-        bundle.stream_columns = [b.short for b in weekly]
+        bundle.stream_columns = [b.header for b in weekly]
         bundle.weekly_boards = list(weekly)
         bundle.stream_rows = _stream_rows(index, pool, my_scores, rules, bundle, weekly,
                                           bye_teams, held)
@@ -444,6 +444,7 @@ def _fetch_boards(sources: Sequence, players: Sequence[Player], week: int,
         except Exception as exc:
             print(f"warning: {source.label} unavailable: {exc}", file=sys.stderr)
             boards.append(ExpertBoard(source.id, source.short, source.label,
+                                      kind=getattr(source, "kind", "weekly"),
                                       unavailable={ALL_POSITIONS: f"{source.label}: {exc}"}))
     return boards
 
@@ -471,10 +472,10 @@ def _stream_rows(index: dict, pool: Sequence[PoolPlayer], my_scores: Sequence[Pl
         out = {}
         for b in weekly:
             if ALL_POSITIONS in b.unavailable or player.position in b.unavailable:
-                out[b.short] = None
+                out[b.header] = None
                 continue
             e = b.entries.get(player.key)
-            out[b.short] = e.pos_rank if e is not None else None
+            out[b.header] = e.pos_rank if e is not None else None
         return out
 
     def ecr(score):

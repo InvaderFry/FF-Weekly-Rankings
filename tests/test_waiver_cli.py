@@ -13,6 +13,7 @@ from ff_startsit.sources.schedule import ScheduleProvider
 from ff_startsit.waivers.base import LeagueViewProvider
 from ff_startsit.waivers.models import (ACQ_FAAB, FantasyTeam, LeagueRules,
                                         PoolPlayer)
+from ._kinds import kind_of  # noqa: F401
 
 RANKS = {"m1": 3, "m2": 5, "m3": 8, "m4": 60, "m5": 12, "m6": 30, "m7": 9,
          "m8": 6, "m9": 4, "m10": 85, "t1": 25, "t2": 40, "t3": 7,
@@ -296,7 +297,7 @@ def _board_on(monkeypatch, read):
             self.id, self.short, self.label = sid, sid, sid
 
         def fetch(self, players, week, scoring, superflex=False):
-            board = ExpertBoard(self.id, self.short, self.label)
+            board = ExpertBoard(self.id, self.short, self.label, kind=kind_of(self.id))
             if self.id not in read:
                 board.unavailable[ALL_POSITIONS] = "not posted yet"
             return board
@@ -370,7 +371,7 @@ def _charts(monkeypatch, read=("richard_chart", "boone_trade_values")):
             self.id, self.short, self.label = sid, short, short
 
         def fetch(self, players, week, scoring, superflex=False):
-            board = ExpertBoard(self.id, self.short, self.label)
+            board = ExpertBoard(self.id, self.short, self.label, kind=kind_of(self.id))
             if self.id not in read:
                 board.unavailable[ALL_POSITIONS] = "not posted yet"
                 return board
@@ -390,7 +391,7 @@ def test_values_writes_digest_page_and_discord(monkeypatch, tmp_path, capsys):
     args = _Args(discord=True, report=report, dashboard=page, boone_chart=[], since=None)
     assert cli.cmd_values(args, settings) == 0
     md = report.read_text()
-    assert "Week 9 trade values" in md and "| Richard | Boone | FP ROS |" in md
+    assert "Week 9 trade values" in md and "| Richard ROS | Boone ROS | FP ROS |" in md
     # The issue step titles the post from the Data status line; it must be there.
     from ff_startsit.workflow import issue_title
     assert issue_title(md, "trade values").endswith("Week 9 trade values")
@@ -443,10 +444,10 @@ def test_waivers_prices_the_roster_on_each_chart(monkeypatch, tmp_path):
     assert cli.cmd_waivers(_Args(report=report, dashboard=page), settings) == 0
     md = report.read_text()
     assert "My roster: rest-of-season value" in md
-    assert "| Richard | Boone | FP ROS | Charts |" in md
+    assert "| Richard ROS | Boone ROS | FP ROS | Charts |" in md
     assert "not posted yet" in md                      # Boone's reason, not a bare dash
     if "Conditional drop candidates" in md:
-        assert "| Player | Pos | ROS rank | Richard | Boone | Why |" in md
+        assert "| Player | Pos | ROS rank | Richard ROS | Boone ROS | Why |" in md
     assert "My roster: rest-of-season value" in page.read_text()
 
 

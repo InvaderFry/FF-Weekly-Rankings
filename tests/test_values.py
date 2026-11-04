@@ -10,6 +10,7 @@ from ff_startsit.boards.writers import BooneTradeValues, parse_boone_chart
 from ff_startsit.models import Player, PlayerScore
 from ff_startsit.waivers.models import TradeIdea, WaiverBundle
 from ff_startsit.waivers.values import TradeVerdict, build_sheet, chart_split
+from ._kinds import kind_of  # noqa: F401
 
 FIX = Path(__file__).parent / "fixtures" / "boards"
 
@@ -133,9 +134,9 @@ def idea(send, get):
 def test_verdict_is_per_chart_and_never_mixed():
     from ff_startsit.waivers.values import _net
     t = idea([_score("s", "Sender", "RB")], [_score("r", "Receiver", "WR")])
-    richard = ExpertBoard("richard_chart", "Richard", "R", entries={
+    richard = ExpertBoard("richard_chart", "Richard", "R", kind="ros", entries={
         "s": BoardEntry(value=20), "r": BoardEntry(value=26)})
-    boone = ExpertBoard("boone_trade_values", "Boone", "B", entries={
+    boone = ExpertBoard("boone_trade_values", "Boone", "B", kind="ros", entries={
         "s": BoardEntry(value=60), "r": BoardEntry(value=51)})
     v = TradeVerdict(t, {"Richard": _net(t, richard), "Boone": _net(t, boone)})
     assert v.net == {"Richard": 6.0, "Boone": -9.0} and v.split
@@ -153,7 +154,7 @@ class Chart:
 
     def fetch(self, players, week, scoring, superflex=False):
         self.asked = sorted(p.key for p in players)
-        return ExpertBoard(self.id, self.short, self.label, entries={
+        return ExpertBoard(self.id, self.short, self.label, kind=kind_of(self.id), entries={
             k: BoardEntry(value=self.values[k], pos_rank=self.ranks[k])
             for k in self.asked if k in self.values})
 
@@ -192,7 +193,7 @@ def test_an_unread_chart_neither_agrees_nor_prices_a_trade():
 
     class NotUp(Chart):
         def fetch(self, *a, **k):
-            board = ExpertBoard(self.id, self.short, self.label)
+            board = ExpertBoard(self.id, self.short, self.label, kind=kind_of(self.id))
             board.unavailable[ALL_POSITIONS] = "not posted yet"
             return board
     sheet = build_sheet(b, players, [NotUp("richard_chart", "Richard", {}, {}),
@@ -220,7 +221,7 @@ def sheet():
 def test_markdown_sheet_verdicts_and_marker():
     from ff_startsit.waivers.render import render_values_digest
     md = render_values_digest(9, [sheet()], generated_on="2026-11-04")
-    assert "| Player | Pos | Team | Richard | Boone | FP ROS | Charts |" in md
+    assert "| Player | Pos | Team | Richard ROS | Boone ROS | FP ROS | Charts |" in md
     assert "| My Qb | QB | KC | 10 · QB14 | 30 · QB4 | #40 | Boone much higher (QB4 vs QB14) |" in md
     assert "Send Gibbs to Rival FC for Their Wr — Richard −16 · Boone −14" in md
     assert ("read=boone_trade_values:QB,boone_trade_values:RB,boone_trade_values:TE,"
@@ -240,7 +241,7 @@ def test_discord_values_has_every_player_and_trade():
     payloads = build_values_payloads(9, [sheet()])
     fields = [f for p in payloads for e in p["embeds"] for f in e["fields"]]
     assert fields[0]["name"] == "My Qb (QB, KC)"
-    assert fields[0]["value"] == "Richard 10 · QB14 | Boone 30 · QB4 | FP ROS #40\n⚠️ Boone much higher (QB4 vs QB14)"
+    assert fields[0]["value"] == "Richard ROS 10 · QB14 | Boone ROS 30 · QB4 | FP ROS #40\n⚠️ Boone much higher (QB4 vs QB14)"
     assert fields[-1]["name"].startswith("🤝 Send Gibbs")
 
 
@@ -342,15 +343,15 @@ def test_a_retry_that_finds_a_missing_boone_chart_is_news():
         def __init__(self, boards):
             self.boards = boards
 
-    partial = ExpertBoard("boone_values", "Boone", "Boone", unavailable={"TE": "not found"})
-    full = ExpertBoard("boone_values", "Boone", "Boone")
+    partial = ExpertBoard("boone_values", "Boone", "Boone", kind="ros", unavailable={"TE": "not found"})
+    full = ExpertBoard("boone_values", "Boone", "Boone", kind="ros")
     first = board_marker(2026, 9, sheets_read([Sheet([partial])]))
     retry = board_marker(2026, 9, sheets_read([Sheet([full])]))
     assert first != retry
     assert report_has_news(retry, first)
     assert not report_has_news(first, retry)             # fewer: keep the better post
     assert not report_has_news(retry, retry)
-    gone = ExpertBoard("boone_values", "Boone", "Boone", unavailable={ALL_POSITIONS: "down"})
+    gone = ExpertBoard("boone_values", "Boone", "Boone", kind="ros", unavailable={ALL_POSITIONS: "down"})
     assert sheets_read([Sheet([gone])]) == []
 
 
