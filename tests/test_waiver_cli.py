@@ -295,7 +295,7 @@ def _board_on(monkeypatch, read):
                 board.unavailable[ALL_POSITIONS] = "not posted yet"
             return board
     monkeypatch.setattr(cli, "waiver_writer_sources",
-                        lambda s: [Src("boone_waivers"), Src("eisenberg_waivers")])
+                        lambda s, *a, **k: [Src("boone_waivers"), Src("eisenberg_waivers")])
 
 
 def _sent(monkeypatch):
@@ -347,7 +347,7 @@ def _charts(monkeypatch, read=("richard_chart", "boone_trade_values")):
                 return board
             board.entries = {p.key: BoardEntry(value=10.0, pos_rank=5) for p in players}
             return board
-    monkeypatch.setattr(cli, "value_chart_sources", lambda s, urls=(): [
+    monkeypatch.setattr(cli, "value_chart_sources", lambda s, urls=(), **k: [
         Chart("richard_chart", "Richard"), Chart("boone_trade_values", "Boone")])
 
 
@@ -399,3 +399,32 @@ def test_the_values_parser_has_no_log_flag():
     parser = cli._build_parser()
     with pytest.raises(SystemExit):
         parser.parse_args(["values", "--log"])
+
+
+# --- trade values on the waivers page --------------------------------------
+def test_waivers_prices_the_roster_on_each_chart(monkeypatch, tmp_path):
+    """With a writer enabled, the waivers page carries your roster on both
+    charts and puts each chart beside the drop candidates."""
+    from dataclasses import replace
+    monkeypatch.setattr(cli, "build_roster_provider", lambda *a, **k: _FakeProvider())
+    _charts(monkeypatch, read=("richard_chart",))        # Tuesday: Boone not out yet
+    settings = replace(_settings(tmp_path), analysts="boone", cbs_rankings=True)
+    monkeypatch.setattr(cli, "waiver_writer_sources", lambda s, *a, **k: [])
+    report, page = tmp_path / "w.md", tmp_path / "site" / "waivers.html"
+    assert cli.cmd_waivers(_Args(report=report, dashboard=page), settings) == 0
+    md = report.read_text()
+    assert "My roster: rest-of-season value" in md
+    assert "| Richard | Boone | FP ROS | Charts |" in md
+    assert "not posted yet" in md                      # Boone's reason, not a bare dash
+    if "Conditional drop candidates" in md:
+        assert "| Player | Pos | ROS rank | Richard | Boone | Why |" in md
+    assert "My roster: rest-of-season value" in page.read_text()
+
+
+def test_waivers_without_writers_fetches_no_charts(monkeypatch, tmp_path):
+    """FF_ANALYSTS unset: no chart requests, no roster-values table."""
+    monkeypatch.setattr(cli, "build_roster_provider", lambda *a, **k: _FakeProvider())
+    report = tmp_path / "w.md"
+    assert cli.value_chart_sources(_settings(tmp_path), only_enabled=True) == []
+    assert cli.cmd_waivers(_Args(report=report), _settings(tmp_path)) == 0
+    assert "My roster: rest-of-season value" not in report.read_text()

@@ -14,7 +14,7 @@ could not act on or a sentence that wasn't true:
 """
 
 from ff_startsit.config import Settings
-from ff_startsit.models import Player, SignalValue
+from ff_startsit.models import SignalValue
 from ff_startsit.roster.espn import IR_SLOT_ID, parse_team_reserve
 from ff_startsit.roster.sleeper import build_league_teams
 from ff_startsit.sources.base import Signal
@@ -25,7 +25,9 @@ from ff_startsit.waivers.render import render_waiver_digest
 from ff_startsit.waivers.score import must_swap_in_position
 
 from .test_waiver_build import (MINE, RANKS, RULES, THEIRS, _NoSchedule, _p,
-                                _Provider, _no_journalists)  # noqa: F401
+                                _Provider)
+# The autouse fixture applies only once imported into this module.
+from .test_waiver_build import _no_journalists  # noqa: F401
 
 
 
@@ -184,3 +186,34 @@ def test_nobody_droppable_is_not_reported_as_a_lost_comparison():
 def test_the_build_records_how_many_drops_were_available(tmp_path):
     b = _bundle(tmp_path, MINE, [PoolPlayer(_p("f1", "Free Wr", "WR", team="SF"))], RANKS)
     assert b.drop_pool and b.drop_pool >= len(b.drops)
+
+
+# --- trade-chart cells -------------------------------------------------------
+def test_a_chart_cell_says_which_blank_it_is():
+    from ff_startsit.boards.models import ALL_POSITIONS, BoardEntry, ExpertBoard
+    from ff_startsit.waivers.values import chart_cell
+    rb = _p("r1", "Some Rb", "RB")
+    read = ExpertBoard("richard_chart", "Richard", "Richard",
+                       entries={"r1": BoardEntry(value=12.0, pos_rank=31)})
+    assert chart_cell(read, rb) == "12 · RB31"
+    assert chart_cell(read, _p("r2", "Deep Rb", "RB")) == "off chart"
+    later = ExpertBoard("boone_trade_values", "Boone", "Boone",
+                        unavailable={ALL_POSITIONS: "Boone's charts: not posted yet, or too old"})
+    assert chart_cell(later, rb) == "not posted yet"
+    std = ExpertBoard("boone_trade_values", "Boone", "Boone",
+                      unavailable={"RB": "Boone publishes no standard-scoring values"})
+    assert chart_cell(std, rb) == "n/a"
+
+
+def test_drop_table_carries_each_chart(tmp_path):
+    from ff_startsit.boards.models import BoardEntry, ExpertBoard
+    from ff_startsit.waivers.values import ValueSheet
+    b = _bundle(tmp_path, MINE, [PoolPlayer(_p("f1", "Free Wr", "WR", team="SF"))], RANKS)
+    assert b.drops
+    first = b.drops[0].score.player
+    b.values = ValueSheet("work", "half", 9, boards=[
+        ExpertBoard("richard_chart", "Richard", "Richard",
+                    entries={first.key: BoardEntry(value=4.0, pos_rank=50)})])
+    md = render_waiver_digest(9, [b])
+    assert "| Player | Pos | ROS rank | Richard | Why |" in md
+    assert f"4 · {first.position}50" in md

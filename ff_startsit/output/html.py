@@ -385,15 +385,22 @@ def _waiver_drops_table(bundle) -> str:
         return ""
     # Ordered by overall rest-of-season rank, so that is the column shown —
     # see the note in waivers/render.py._drops_table.
+    # Trade-chart columns beside the ROS rank: display only, see
+    # waivers/render.py._drops_table.
+    from ..waivers.values import chart_boards, chart_cell
+    charts = chart_boards(bundle.values) if bundle.values is not None else []
+    head = "".join(f"<th title='{escape(b.label)}'>{escape(b.short)}</th>" for b in charts)
     rows = ["<h3>Conditional drop candidates</h3>",
             "<table><thead><tr><th>Player</th><th>Pos</th>"
-            "<th class='num'>ROS rank</th><th>Why</th></tr></thead><tbody>"]
+            f"<th class='num'>ROS rank</th>{head}<th>Why</th></tr></thead><tbody>"]
     for d in list(bundle.drops) + list(bundle.ir_drops):
         ros = "—" if d.score.season_rank is None else f"{d.score.season_rank:g}"
+        cells = "".join(f"<td class='expert'>{escape(chart_cell(b, d.score.player))}</td>"
+                        for b in charts)
         rows.append(
             f"<tr><td>{escape(d.score.player.name)}</td>"
             f"<td>{escape(d.score.player.position)}</td>"
-            f"<td class='num'>{ros}</td>"
+            f"<td class='num'>{ros}</td>{cells}"
             f"<td>{escape(d.reason)}</td></tr>"
         )
     rows.append("</tbody></table>")
@@ -505,6 +512,7 @@ def _waiver_body(bundle) -> list[str]:
     body.append(_waiver_adds_table(bundle))
     body.append(_waiver_alternates_table(bundle))
     body.append(_waiver_drops_table(bundle))
+    body.append(_waiver_roster_values(bundle))
     body.append(_waiver_trades(bundle))
     body.append(_waiver_lists(bundle))
     body.append(_waiver_roster(bundle))
@@ -582,16 +590,21 @@ def build_waivers_html(week: int, bundles: Sequence, generated_on: str) -> str:
 
 
 # --- the Wednesday values page --------------------------------------------
-def _values_sheet(sheet) -> str:
-    from ..waivers.board import board_reasons, cell_position
-    from .board import trade_line, verdict_text
+def _waiver_roster_values(bundle) -> str:
+    """"My roster: rest-of-season value" on the waivers page — the values
+    sheet's own table, so Tuesday's and Wednesday's pages read identically."""
+    sheet = bundle.values
+    if sheet is None or not sheet.boards or not sheet.rows:
+        return ""
+    return ("<h3>My roster: rest-of-season value</h3>"
+            "<p class='note'>Trade charts double as rest-of-season rankings.</p>"
+            + _values_table_html(sheet))
+
+
+def _values_table_html(sheet) -> str:
+    from ..waivers.board import board_reasons
+    from ..waivers.values import sheet_cell
     out = []
-    if sheet.banner:
-        out.append(f"<div class='callout'><strong>{escape(sheet.banner)}</strong></div>")
-    if sheet.caveat:
-        out.append(f"<div class='callout'>⚠️ {escape(sheet.caveat)}</div>")
-    if not sheet.boards:
-        return "".join(out)
     if sheet.rows:
         head = "".join(f"<th title='{escape(b.label)}'>{escape(b.short)}</th>" for b in sheet.boards)
         out.append(f"<table><thead><tr><th>Player</th><th>Pos</th><th>Team</th>{head}"
@@ -599,7 +612,7 @@ def _values_sheet(sheet) -> str:
         for row in sheet.rows:
             cls = " class='flagged'" if row.split else ""
             cells = "".join(f"<td class='expert'>"
-                            f"{escape(waiver_cell(row.entries.get(b.source_id), cell_position(b, row.player)))}</td>"
+                            f"{escape(sheet_cell(b, row))}</td>"
                             for b in sheet.boards)
             out.append(f"<tr{cls}><td>{escape(row.player.name)}</td><td>{escape(row.player.position)}</td>"
                        f"<td>{escape(row.player.team or 'FA')}</td>{cells}"
@@ -609,6 +622,19 @@ def _values_sheet(sheet) -> str:
                "writer's own scale, so they're never added across charts.</p>")
     for reason in board_reasons(sheet.boards):
         out.append(f"<p class='note'>{escape(reason)}</p>")
+    return "".join(out)
+
+
+def _values_sheet(sheet) -> str:
+    from .board import trade_line, verdict_text
+    out = []
+    if sheet.banner:
+        out.append(f"<div class='callout'><strong>{escape(sheet.banner)}</strong></div>")
+    if sheet.caveat:
+        out.append(f"<div class='callout'>⚠️ {escape(sheet.caveat)}</div>")
+    if not sheet.boards:
+        return "".join(out)
+    out.append(_values_table_html(sheet))
     out.append("<h3>Trade ideas, judged on each chart</h3>")
     if sheet.verdicts:
         out.append("<ul class='ideas'>")

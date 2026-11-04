@@ -1027,6 +1027,20 @@ and `on_bundle` hooks rather than copying it. Display only, no `--log`.
   `1QB-4`/`2QB`, others non/0.5/PPR. Superflex picks each chart's 2QB column.
 - `values.yml` runs Wednesday 22:30 UTC with a 02:30 UTC retry, gated by the
   same `ff-board` marker and `report_has_news` as the Tuesday board.
+- **The waivers page carries the same sheet.** When `FF_ANALYSTS` enables
+  either writer, `cmd_waivers` builds a `ValueSheet` per bundle
+  (`WaiverBundle.values`) from the same chart sources, through one shared
+  `ArticleFetcher` so Richard's chart is read once though it is both a Tuesday
+  column and a value source. It adds a Richard/Boone column to the drop table
+  (`values.chart_cell`) and a "My roster: rest-of-season value" table, which is
+  the values sheet's own table (`_value_table_lines` / `_values_table_html`),
+  so the two pages cannot disagree. A cell says which blank it is: "off chart"
+  (a chart that was read doesn't list him), "not posted yet" (Boone, on a
+  Tuesday), "n/a" (no values in this format). Display only: no drop moves.
+  `values.yml` then **rebuilds waivers.html** (page only, no Discord or issue)
+  after its own pass, so Wednesday's page shows Boone's charts and the
+  post-claims wire; the Odds payload is still inside its 30-minute disk cache,
+  and a failed rebuild falls back to restoring Tuesday's page.
 
 ### Output & delivery
 
