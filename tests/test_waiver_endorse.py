@@ -61,6 +61,77 @@ def test_nothing_read_is_the_blends_call_not_a_veto():
     assert "blend's call" in e.fallback_note(qb)
 
 
+def _chart(sid, short, values=(), unavailable=None):
+    return ExpertBoard(sid, short, short, kind="ros",
+                       entries={k: BoardEntry(value=v) for k, v in values},
+                       unavailable=dict(unavailable or {}))
+
+
+def test_the_charts_valuing_the_drop_higher_hold_a_swap_back():
+    """The live case: Greg Dulcich (Boone TE27, value 6; off Richard's chart)
+    for Jadarian Price (Boone 26, Richard 7). Being *on* a chart is not enough."""
+    dulcich, price = _score("gd", "Greg Dulcich", "TE"), _score("jp", "Jadarian Price", "RB")
+    charts = [_chart("richard_chart", "Richard", [("jp", 7)]),
+              _chart("boone_trade_values", "Boone", [("gd", 6), ("jp", 26)])]
+    e = Endorsements(boards=charts)
+    assert e.skill_veto(dulcich) is None                       # he is on a chart...
+    assert e.veto(dulcich, DropCandidate(price)) == (
+        "Richard's and Boone's trade charts value Jadarian Price higher rest of season")
+
+
+def test_one_chart_against_and_none_for_is_a_veto_a_split_is_not():
+    add, drop = _score("a", "Free Wr", "WR"), _score("d", "My Rb", "RB")
+    one = Endorsements(boards=[_chart("richard_chart", "Richard", [("a", 3), ("d", 9)])])
+    assert one.value_veto(add, DropCandidate(drop)) == (
+        "Richard's trade chart values My Rb higher rest of season")
+    split = Endorsements(boards=[_chart("richard_chart", "Richard", [("a", 3), ("d", 9)]),
+                                 _chart("boone_trade_values", "Boone", [("a", 20), ("d", 10)])])
+    assert split.value_veto(add, DropCandidate(drop)) is None   # a tie goes to the blend
+    tie = Endorsements(boards=[_chart("richard_chart", "Richard", [("a", 5), ("d", 5)])])
+    assert tie.value_veto(add, DropCandidate(drop)) is None
+
+
+def test_a_chart_listing_only_the_add_backs_him_and_neither_abstains():
+    add, drop = _score("a", "Free Wr", "WR"), _score("d", "My Rb", "RB")
+    assert Endorsements(boards=[_chart("richard_chart", "Richard", [("a", 2)])]
+                        ).value_veto(add, DropCandidate(drop)) is None
+    assert Endorsements(boards=[_chart("richard_chart", "Richard", [("x", 2)])]
+                        ).value_readings(add, drop) == ([], [])
+
+
+def test_a_chart_not_read_at_either_position_has_no_vote():
+    """Boone publishes no standard-scoring RB/WR/TE values: "off chart" there
+    means nothing, so his QB chart can't outvote a back."""
+    add, drop = _score("a", "Free Qb", "QB"), _score("d", "My Rb", "RB")
+    boone = _chart("boone_trade_values", "Boone", [("d", 30)],
+                   unavailable={"RB": "Boone publishes no standard-scoring values"})
+    assert Endorsements(boards=[boone]).value_readings(add, drop) == ([], [])
+
+
+def test_no_value_veto_for_ir_bye_or_streamers():
+    add, drop = _score("a", "Free Wr", "WR"), _score("d", "My Rb", "RB")
+    e = Endorsements(boards=[_chart("richard_chart", "Richard", [("d", 9)])])
+    assert e.value_veto(add, DropCandidate(drop, on_reserve=True)) is None
+    assert e.value_veto(add, DropCandidate(drop, bye_stream=True)) is None
+    k = _score("k", "Free K", "K")
+    assert e.value_veto(k, DropCandidate(_score("mk", "My K", "K"))) is None
+
+
+def test_both_reads_of_a_chart_are_merged():
+    """Richard's chart is read over the pool (Tuesday column) and over every
+    roster (value source). Keeping only the first read lost the drop's value."""
+    add, drop = _score("a", "Free Wr", "WR"), _score("d", "My Rb", "RB")
+    pool_read = _chart("richard_chart", "Richard", [("a", 3)])
+    roster_read = _chart("richard_chart", "Richard", [("a", 3), ("d", 9)])
+    e = Endorsements(boards=[pool_read, roster_read])
+    assert len(e.charts) == 1 and set(e.charts[0].entries) == {"a", "d"}
+    assert e.value_veto(add, DropCandidate(drop))
+    # A position either read covered is read.
+    half = _chart("richard_chart", "Richard", unavailable={"TE": "missing"})
+    assert "TE" not in Endorsements(boards=[half, _chart("richard_chart", "Richard")]
+                                    ).charts[0].unavailable
+
+
 # --- kickers and defenses ---------------------------------------------------
 def test_a_kicker_swap_the_experts_disagree_with_is_held_back():
     add, mine = _score("fa", "Free K", "K"), _score("me", "My K", "K")
@@ -144,6 +215,32 @@ def test_a_quarterback_on_no_chart_is_held_back_and_listed(tmp_path, monkeypatch
     assert vetoed.held_back == ["Free Qb (QB): not on Richard's trade chart"]
     md = render_waiver_digest(9, [vetoed])
     assert "Held back: the experts don't back these" in md and "Free Qb (QB)" in md
+
+
+def test_a_swap_the_charts_value_lower_is_held_back(tmp_path, monkeypatch):
+    """Through build_bundle: the free QB is on Richard's chart, so the old
+    on-a-chart test passes, but the chart values the back he'd replace higher."""
+    _season(monkeypatch, {"f3": 90, "m4": 260})
+    pool = [PoolPlayer(_p("f3", "Free Qb", "QB"))]
+    ranks = dict(RANKS, f3=5)
+    # m4 and m7 are the two drops on offer; the veto is per pairing, so a drop
+    # the chart doesn't list would still take him (he's the only one listed).
+    both = {"f3": BoardEntry(value=2), "m4": BoardEntry(value=7), "m7": BoardEntry(value=4)}
+    low = _bundle(tmp_path, pool, ranks,
+                  chart_sources=[_WriterSource("richard_chart", "Richard", both)])
+    assert "f3" not in {t.score.player.key for t in low.adds + low.alternates}
+    assert low.held_back == [
+        "Free Qb (QB): Richard's trade chart values My Rb3 higher rest of season"]
+    one = {"f3": BoardEntry(value=2), "m4": BoardEntry(value=7)}
+    moved = _bundle(tmp_path, pool, ranks,
+                    chart_sources=[_WriterSource("richard_chart", "Richard", one)])
+    assert [(t.score.player.key, t.drop.player.key) for t in moved.adds
+            if t.score.player.key == "f3"] == [("f3", "m7")]
+    high = dict(both, f3=BoardEntry(value=9))
+    kept = _bundle(tmp_path, pool, ranks,
+                   chart_sources=[_WriterSource("richard_chart", "Richard", high)])
+    assert [(t.score.player.key, t.drop.player.key) for t in kept.adds
+            if t.score.player.key == "f3"] == [("f3", "m4")]
 
 
 def test_the_veto_only_removes(tmp_path, monkeypatch):

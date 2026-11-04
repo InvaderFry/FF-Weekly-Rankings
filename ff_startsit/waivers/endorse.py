@@ -7,7 +7,7 @@ nothing reaches ``results_log.jsonl``. A recommendation the experts don't back
 is held back and listed with its reason, so the veto is visible rather than a
 row that silently went missing.
 
-Two rules, chosen in the Week 9 review:
+Three rules, the first two chosen in the Week 9 review:
 
 * **Skill players** must be on a writer's radar. A running back or receiver
   must be on a trade chart (Richard's or Boone's) *or* named in Boone's or
@@ -16,6 +16,14 @@ Two rules, chosen in the Week 9 review:
   TE no chart values is a one-week streamer, and the roster-aware cap
   (``score.must_swap_in_position``) already governs those. "Malik Willis, drop
   Jadarian Price" was a QB on no chart.
+* **Trade values decide a skill-player swap** the charts disagree with. Every
+  trade chart read at both players' positions votes for whichever it values
+  higher (one that lists only one of the two prefers him; one that lists
+  neither abstains), and the swap is held back when more charts prefer the
+  player you'd drop. Being *on* a chart is a low bar — "Greg Dulcich, drop
+  Jadarian Price" cleared it at TE27 of Boone's 30 while both charts valued
+  Price several times higher. Trade charts are the one cross-position scale
+  this tool reads that was built for exactly this comparison.
 * **Kickers and defenses** are judged pairwise against the player they'd
   replace, on this week's CBS consensus and Boone's weekly list. The swap is
   held back when more of the experts who ranked either player prefer the one
@@ -69,13 +77,38 @@ class Endorsements:
 
     @property
     def charts(self) -> list[ExpertBoard]:
-        # One per source: Richard's chart arrives both as a Tuesday column and
-        # as a value source, and the second read is the same article.
-        seen: dict[str, ExpertBoard] = {}
+        """One board per chart source, merged across its reads.
+
+        Richard's chart arrives both as a Tuesday column (read over the
+        free-agent pool) and as a value source (read over every rostered player
+        too). Same article, different players: keeping only the first read lost
+        every rostered player's value, which the trade-value rule needs for the
+        drop side of the comparison. A position counts as read if any read of
+        the chart covered it.
+        """
+        grouped: dict[str, list[ExpertBoard]] = {}
         for b in self.boards:
             if b.source_id in CHART_IDS:
-                seen.setdefault(b.source_id, b)
-        return list(seen.values())
+                grouped.setdefault(b.source_id, []).append(b)
+        merged = []
+        for reads in grouped.values():
+            if len(reads) == 1:
+                merged.append(reads[0])
+                continue
+            first = reads[0]
+            entries: dict = {}
+            for b in reads:
+                for key, entry in b.entries.items():
+                    entries.setdefault(key, entry)
+            unavailable = {pos: why for pos, why in first.unavailable.items()
+                           if all(pos in b.unavailable for b in reads)}
+            merged.append(ExpertBoard(first.source_id, first.short, first.label,
+                                      kind=first.kind, entries=entries,
+                                      scoring_label=first.scoring_label, url=first.url,
+                                      published=first.published,
+                                      fetched_at=first.fetched_at,
+                                      unavailable=unavailable))
+        return merged
 
     @property
     def columns(self) -> list[ExpertBoard]:
@@ -102,6 +135,48 @@ class Endorsements:
             return None
         read = _names(charts + columns) or "the waiver columns"
         return f"not on a trade chart or in a waiver column ({read} read)"
+
+    def value_readings(self, add: PlayerScore, drop: PlayerScore
+                       ) -> tuple[list[str], list[str]]:
+        """(charts valuing the add higher, charts valuing the drop higher).
+
+        Only a chart read at *both* positions votes: "off chart" means something
+        only where the chart was read. A chart listing just one of the two
+        prefers him — the list stops above the other. Equal values abstain.
+        """
+        pos_a = (add.player.position or "").upper()
+        pos_d = (drop.player.position or "").upper()
+        prefer_add: list[str] = []
+        prefer_drop: list[str] = []
+        for chart in self.charts:
+            if not (_read_at(chart, pos_a) and _read_at(chart, pos_d)):
+                continue
+            ea = chart.entries.get(add.player.key)
+            ed = chart.entries.get(drop.player.key)
+            va = ea.value if ea is not None else None
+            vd = ed.value if ed is not None else None
+            if va is None and vd is None:
+                continue
+            if vd is None or (va is not None and va > vd):
+                prefer_add.append(chart.short)
+            elif va is None or vd > va:
+                prefer_drop.append(chart.short)
+        return prefer_add, prefer_drop
+
+    def value_veto(self, add: PlayerScore, drop: DropCandidate) -> Optional[str]:
+        """Why a skill-player swap is held back on trade value, or ``None``."""
+        positions = {(add.player.position or "").upper(),
+                     (drop.score.player.position or "").upper()}
+        if positions & STREAM_POSITIONS or drop.on_reserve or drop.bye_stream:
+            return None
+        prefer_add, prefer_drop = self.value_readings(add, drop.score)
+        if len(prefer_drop) > len(prefer_add):
+            name = drop.score.player.name
+            if len(prefer_drop) == 1:
+                return f"{prefer_drop[0]}'s trade chart values {name} higher rest of season"
+            who = " and ".join(f"{w}'s" for w in prefer_drop)
+            return f"{who} trade charts value {name} higher rest of season"
+        return None
 
     def skill_unread(self, add: PlayerScore) -> bool:
         """True when no writer could be consulted for this add's position."""
@@ -159,7 +234,8 @@ class Endorsements:
 
     # --- the hook pick_adds calls ----------------------------------------
     def veto(self, add: PlayerScore, drop: DropCandidate) -> Optional[str]:
-        return self.skill_veto(add) or self.stream_veto(add, drop)
+        return (self.skill_veto(add) or self.value_veto(add, drop)
+                or self.stream_veto(add, drop))
 
     def fallback_note(self, add: PlayerScore) -> Optional[str]:
         """The reason line for an add no expert could weigh in on."""
