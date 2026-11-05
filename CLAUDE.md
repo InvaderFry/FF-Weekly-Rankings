@@ -254,6 +254,30 @@ without touching the pure engine.
   real (unquantized-away) spread remains, this method can still call it out.
   Both halves route around `normalize.to_0_100` on purpose — see above.
 
+  **Injury and weather are blended on their own scale** (`Signal.fixed_scale`,
+  `normalize.fixed_0_100`), found on HailMeowy's Week 9 WR table: Keon Coleman,
+  FantasyPros' WR53 and the lowest of five, ranked third at 40.0, every point
+  of it from team context. Both signals' raw values already *are* absolute
+  0-100 scores (availability 100/75/35/0, conditions on 5-point steps), so
+  min-max added nothing but distortion: a 5-point weather gap between two
+  clear games became a full 0-vs-100 swing, and Questionable-vs-healthy cost
+  injury's whole weight instead of a quarter of it. Together they outweighed an
+  18-spot consensus edge. Now a `fixed_scale` signal's raw value is its
+  normalized value (clamped), the blend says which via `fixed_scale=`, and
+  `Recommendation.flat_signals` skips those columns, since an absolute column
+  cannot overstate its gap. ECR (a rank) and Vegas (implied points) stay
+  min-max: in their units there is no absolute 0-100 to read.
+
+  This is deliberately **not** a change to `to_0_100`, which is untouched and
+  pinned (`tests/test_fixed_scale.py`). What does change is what gets *logged*
+  for these two signals from here on: rows before this change carry min-max
+  injury/weather `normalized` values and rows after carry absolute ones.
+  Replay is unaffected (each row re-blends the values it logged, under the
+  weights it used), but a grid search over a corpus spanning the change mixes
+  the two scales for injury and weather. It was made mid-2026, when the corpus
+  was still under the `calibrate --write` floors; if a later fit looks odd on
+  those two weights, that boundary is the first place to look.
+
 ### The self-calibration loop (#7)
 
 Every `rank`/`compare` run appends a row to `.cache/results_log.jsonl`

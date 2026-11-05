@@ -198,6 +198,7 @@ def recommend(
         unavailable_keys=unavailable_keys,
         disagree_exempt=settings.disagree_exempt,
         dead_heat_exempt=settings.presentational_gaps,
+        fixed_scale={s.name for s in signals if getattr(s, "fixed_scale", False)},
     )
     rec.sample_data = any(getattr(s, "is_sample", False) for s in signals)
     if exclude_unavailable and ruled_out:

@@ -136,6 +136,7 @@ def select_at_kickoff(parsed: dict[str, tuple[float, float]],
 class WeatherSignal(Signal):
     name = "weather"
     higher_is_better = True  # better conditions = better place to score
+    fixed_scale = True       # score_conditions is already an absolute 0-100
 
     def __init__(self, enabled: bool = True, session: Optional[requests.Session] = None,
                  timeout: int = 20, schedule: Optional[ScheduleProvider] = None):

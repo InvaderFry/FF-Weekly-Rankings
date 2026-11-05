@@ -146,6 +146,10 @@ class Recommendation:
     #: into config. Empty for callers that pass no gaps, which keeps every
     #: existing construction of this class valid.
     raw_gaps: dict[str, float] = field(default_factory=dict)
+    #: Signals blended on their own absolute 0-100 scale rather than min-max
+    #: within the set (``Signal.fixed_scale``). Their column can't overstate a
+    #: gap, so ``flat_signals`` leaves them out.
+    fixed_scale: frozenset = frozenset()
     #: ``(identity, line)`` pairs describing which source served this run, one
     #: per (transport, week). The identity travels with the line so a consumer
     #: can keep the newest version of a source's status instead of every
@@ -251,6 +255,8 @@ class Recommendation:
         scored = [s for s in self.scores if s.final is not None]
         flat: list[tuple[str, float, float]] = []
         for name, gap in sorted(self.raw_gaps.items()):
+            if name in self.fixed_scale:
+                continue  # an absolute 0-100 column shows the raw gap as-is
             values = []
             for s in scored:
                 sv = s.raw.get(name)

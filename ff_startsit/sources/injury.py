@@ -136,6 +136,7 @@ def assign(players: Iterable[Player], rows: list[ExternalRow],
 class InjurySignal(Signal):
     name = "injury"
     higher_is_better = True  # a higher availability score is better
+    fixed_scale = True       # 100 healthy / 75 Q / 35 D / 0 out, absolute
 
     def __init__(self, data_dir: Path, enabled: bool = True,
                  client: Optional[SleeperClient] = None):
