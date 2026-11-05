@@ -376,3 +376,89 @@ def test_score_league_wires_espn_projections_and_a_fresh_wire_read(monkeypatch, 
     assert hole.options[0].player.name == "Ranked Eleven"
     status = [line for rec in ws.recs.values() for _, line in rec.source_status]
     assert any("ESPN weekly projections for 1/1 roster players" in s for s in status)
+
+
+# --- byes ----------------------------------------------------------------------
+
+class _PooledFakeECR(_FakeECR):
+    """Also serves the pooled FLEX pass, so the FLEX slot is decided the way
+    a live run decides it."""
+
+    def pooled(self):
+        return self
+
+
+def _merrier(monkeypatch, tmp_path, check_byes):
+    """LOTMerrier, Week 9: Pittsburgh on bye. Warren has no ECR, no line and no
+    forecast, only a "healthy" injury reading, and a teammate's Questionable
+    tag is enough spread for that one reading to normalize to the top."""
+    players = [_p("qb", "Trevor Lawrence", "JAX", "QB"),
+               _p("rb1", "D'Andre Swift", "CHI", "RB"),
+               _p("rb2", "Jonah Coleman", "DEN", "RB"),
+               _p("rb3", "Rhamondre Stevenson", "NE", "RB"),
+               _p("rb4", "Jaylen Warren", "PIT", "RB"),
+               _p("wr1", "Ja'Marr Chase", "CIN", "WR"),
+               _p("wr2", "Nico Collins", "HOU", "WR"),
+               _p("te", "Brock Bowers", "LV", "TE")]
+    ranks = {"qb": 12.0, "rb1": 9.0, "rb2": 15.0, "rb3": 14.0,
+             "wr1": 1.0, "wr2": 12.0, "te": 2.0}
+    meta = {str(i): {"full_name": p.name, "position": p.position, "team": p.team,
+                     "injury_status": "Questionable" if p.key == "wr2" else ""}
+            for i, p in enumerate(players)}
+    playing = {"JAX", "CHI", "DEN", "NE", "CIN", "HOU", "LV"}       # no PIT
+    signals = [_PooledFakeECR(ranks, _Schedule(playing)),
+               InjurySignal(data_dir=tmp_path, client=_MetaClient(meta))]
+    monkeypatch.setattr(report, "build_signals", lambda settings: signals)
+    settings = Settings(data_dir=tmp_path, weights={"ecr": 0.6, "injury": 0.12})
+    ws = report.score_week(settings, players, 9, check_byes=check_byes)
+    return ws, report.lineup_from(ws)
+
+
+def _slot(lineup, slot):
+    return next(pick for s, pick in lineup if s == slot)
+
+
+def test_the_bye_bug_as_it_reached_the_live_page(monkeypatch, tmp_path):
+    """Without the bye check, the one reading he has left wins him the FLEX."""
+    ws, lineup = _merrier(monkeypatch, tmp_path, check_byes=False)
+    pooled = {s.player.key: s for s in ws.flex.scores}["rb4"]
+    assert pooled.final == 100.0 and set(pooled.normalized) == {"injury"}
+    assert "Jaylen Warren" in _starters(lineup)
+
+
+def _starters(lineup):
+    return {pick.player.name for _, pick in lineup if pick is not None}
+
+
+def test_a_bye_week_player_is_benched_and_says_why(monkeypatch, tmp_path):
+    ws, lineup = _merrier(monkeypatch, tmp_path, check_byes=True)
+    starters = _starters(lineup)
+    assert "Jaylen Warren" not in starters
+    assert {"D'Andre Swift", "Jonah Coleman", "Rhamondre Stevenson"} <= starters
+    warren = {s.player.key: s for s in ws.recs["RB"].scores}["rb4"]
+    assert warren.final is None
+    assert warren.flags[0] == report.BYE_FLAG
+    assert ws.recs["RB"].scores[-1].player.key == "rb4"   # sinks, not dropped
+    flex_warren = {s.player.key: s for s in ws.flex.scores}["rb4"]
+    assert flex_warren.final is None
+    report.check_availability(ws, lineup, 9, free_agents=lambda p: [])
+    assert [h.slot for h in lineup.holes if h.slot != "K" and h.slot != "DEF"] == []
+
+
+def test_a_bye_with_nobody_behind_him_is_a_hole(monkeypatch, tmp_path):
+    kicker = _p("k", "Chris Boswell", "PIT", "K")
+    _, lineup = _week(monkeypatch, tmp_path, [kicker], ranks={"k": 3.0}, statuses={},
+                      outlook=None, playing={"KC"})
+    # Through check_byes this time: the lone kicker is scored anyway (the
+    # all-ruled-out guard), starts, and the slot is flagged.
+    ws = report.score_week(Settings(data_dir=tmp_path, weights={"ecr": 0.6, "injury": 0.12}),
+                           [kicker], 9, check_byes=True)
+    lineup = report.lineup_from(ws)
+    report.check_availability(ws, lineup, 9, free_agents=None)
+    [hole] = [h for h in lineup.holes if h.slot == "K"]
+    assert hole.reason == "on bye" and hole.starter == "Chris Boswell"
+
+
+def test_no_schedule_rules_nobody_out():
+    assert report.bye_keys([_p("x", "X", "PIT", "RB")], None) == {}
+    assert report.bye_keys([_p("x", "X", None, "RB")], {"KC"}) == {}

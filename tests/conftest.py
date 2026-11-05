@@ -36,12 +36,12 @@ def offline_availability(monkeypatch):
 
     ``cli._score_league`` builds the league's real roster provider to read
     ESPN's weekly projections and, when a lineup has a hole, the free-agent
-    wire. Every CLI test that scores a week would otherwise send those two
-    requests. Tests of the check itself call ``report.check_availability`` and
+    wire, and reads the NFL schedule for byes. Every CLI test that scores a
+    week would otherwise send those requests. Tests of the check itself call ``report.check_availability`` and
     ``availability`` directly with fakes, or re-patch this.
     """
     monkeypatch.setattr("ff_startsit.cli._availability_view",
-                        lambda *a, **k: (None, None))
+                        lambda *a, **k: (None, None, False))
 
 
 @pytest.fixture

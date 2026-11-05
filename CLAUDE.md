@@ -780,8 +780,20 @@ path every start/sit command takes (digest, dashboard, Discord, `lineup`):
   carries a third `"hole"` element so a later pass where the same name now
   can't play still counts as news for the Discord gate.
 
-The check runs only with the ESPN view: `--offline`, preseason sample runs and
-Sleeper/manual leagues skip it rather than half-run it. Tests stay offline
+- **Byes are ruled out too** (`report.bye_keys`, `score_week(check_byes=True)`).
+  A bye-week player loses ECR, Vegas and weather but keeps injury ("healthy"),
+  and a blend of that one reading can outscore everyone who plays: in the
+  pooled FLEX pass a teammate's Questionable tag gave injury a spread, so
+  Jaylen Warren normalized to **100.0** and took LOTMerrier's FLEX on
+  Pittsburgh's Week 9 bye. `pipeline.recommend(ruled_out=...)` adds the bye
+  keys to the same excluded set an `Out` joins, and the player carries
+  `BYE_FLAG`. It goes through `recommend` rather than a signal because no
+  signal owns the schedule, and no weight changes. A lone player at a position
+  on bye is still scored (the all-ruled-out guard) and becomes a lineup hole.
+
+The check runs only on a live run: `--offline` and preseason sample runs skip
+it rather than half-run it, because it reads the schedule. Sleeper/manual
+leagues get the bye check and the hole warning but no outlook and no pickups. Tests stay offline
 through the autouse `offline_availability` fixture in `tests/conftest.py`;
 without it every CLI test sent both requests (the suite took 5x longer).
 

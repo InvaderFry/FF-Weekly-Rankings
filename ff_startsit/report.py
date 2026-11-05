@@ -134,7 +134,8 @@ def rank_each_position(settings: Settings, players: Sequence[Player], week: int,
                        log: bool = False,
                        signals: Optional[Sequence] = None,
                        analyst_fetcher: Optional[AnalystFetcher] = None,
-                       cbs_fetcher=None) -> dict[str, Recommendation]:
+                       cbs_fetcher=None,
+                       ruled_out: Optional[dict] = None) -> dict[str, Recommendation]:
     """Rank each position group once. One scoring pass = one set of API calls.
 
     The signal instances are built once and reused across positions so each
@@ -159,7 +160,8 @@ def rank_each_position(settings: Settings, players: Sequence[Player], week: int,
         recs[pos] = recommend(settings, cands, week, signals=signals,
                               command="report", log=log,
                               exclude_unavailable=True,
-                              defer_log=True)
+                              defer_log=True,
+                              **({"ruled_out": ruled_out} if ruled_out else {}))
     sample = any(getattr(signal, "is_sample", False) for signal in signals)
     boone_ranks = None
     if settings.analysts == "boone" and sample:
@@ -261,6 +263,7 @@ def attach_boards(recs, boone_ranks=None, extra_boards=()) -> None:
 
 def rank_pooled(settings: Settings, cands: Sequence[Player], week: int,
                 signals: Optional[Sequence], command: str,
+                ruled_out: Optional[dict] = None,
                 ) -> tuple[Optional[Recommendation], Optional[str]]:
     """Score a mixed RB/WR/TE set against one cross-position candidate pool.
 
@@ -286,7 +289,8 @@ def rank_pooled(settings: Settings, cands: Sequence[Player], week: int,
         return None, "no live ECR signal to pool"
 
     rec = recommend(settings, cands, week, signals=pooled_signals,
-                    command=command, log=False, exclude_unavailable=True)
+                    command=command, log=False, exclude_unavailable=True,
+                    **({"ruled_out": ruled_out} if ruled_out else {}))
 
     covered = sum(1 for s in rec.scores
                   if (v := s.raw.get("ecr")) is not None and v.available)
@@ -300,6 +304,7 @@ def rank_pooled(settings: Settings, cands: Sequence[Player], week: int,
 
 def rank_flex_pool(settings: Settings, players: Sequence[Player], week: int,
                    signals: Optional[Sequence] = None,
+                   ruled_out: Optional[dict] = None,
                    ) -> tuple[Optional[Recommendation], Optional[str]]:
     """Rank every flex-eligible player in one candidate set.
 
@@ -314,7 +319,8 @@ def rank_flex_pool(settings: Settings, players: Sequence[Player], week: int,
     value" for one fetch, rather than a re-rank per remaining candidate.
     """
     cands = [p for p in players if p.position in FLEX_POSITIONS]
-    return rank_pooled(settings, cands, week, signals, "report:flex")
+    return rank_pooled(settings, cands, week, signals, "report:flex",
+                       **({"ruled_out": ruled_out} if ruled_out else {}))
 
 
 def score_week(settings: Settings, players: Sequence[Player], week: int,
@@ -322,13 +328,19 @@ def score_week(settings: Settings, players: Sequence[Player], week: int,
                slots: Optional[Sequence[str]] = None,
                analyst_fetcher: Optional[AnalystFetcher] = None,
                cbs_fetcher=None,
-               outlook: Optional[dict] = None) -> WeekScores:
+               outlook: Optional[dict] = None,
+               check_byes: bool = False) -> WeekScores:
     """One signal set, one per-position pass, one pooled FLEX pass.
 
     ``outlook`` is ESPN's weekly read on the roster (``availability.Outlook``
     per key). A Questionable/Doubtful player it projects at zero on a week his
     team plays is handed to the injury signal as likely out, so he leaves the
     candidate set like an ``Out`` would and the lineup starts his backup.
+
+    ``check_byes`` reads the week's schedule and rules out every player whose
+    team isn't playing, the same way: his backup starts, and if there is none
+    the slot becomes a lineup hole. Off by default because it reads the
+    schedule, which only a live run should do.
 
     ``log`` appends the per-position decisions to the results log, so the
     whole-roster commands can feed the #7 calibrator the same way ``rank`` and
@@ -353,7 +365,8 @@ def score_week(settings: Settings, players: Sequence[Player], week: int,
     # Read only when there is something to check: the schedule is memoized and
     # live runs fetch it for Vegas and weather anyway, but a run with no ESPN
     # outlook (offline, Sleeper, manual) has no use for it.
-    playing = _playing_teams(signals, week) if outlook else None
+    playing = _playing_teams(signals, week) if (outlook or check_byes) else None
+    byes = bye_keys(players, playing) if check_byes else {}
     if outlook:
         from .availability import likely_out
         from .sources.injury import InjurySignal
@@ -365,8 +378,10 @@ def score_week(settings: Settings, players: Sequence[Player], week: int,
                               **({"analyst_fetcher": analyst_fetcher}
                                  if analyst_fetcher is not None else {}),
                               **({"cbs_fetcher": cbs_fetcher}
-                                 if cbs_fetcher is not None else {}))
-    flex, note = rank_flex_pool(settings, players, week, signals=signals)
+                                 if cbs_fetcher is not None else {}),
+                              **({"ruled_out": byes} if byes else {}))
+    flex, note = rank_flex_pool(settings, players, week, signals=signals,
+                                **({"ruled_out": byes} if byes else {}))
     ws = WeekScores(recs=recs, flex=flex, flex_note=note, signals=list(signals),
                     playing=playing)
     flag_starter_boundaries(settings, recs, build_lineup(
@@ -390,6 +405,22 @@ def _playing_teams(signals, week: int) -> Optional[set]:
     except Exception:  # pragma: no cover - for_week already never raises
         return None
     return teams or None
+
+
+#: The flag a bye-week player carries in every table.
+BYE_FLAG = "on bye this week"
+
+
+def bye_keys(players: Sequence[Player], playing: Optional[set]) -> dict[str, str]:
+    """``{key: flag}`` for every player whose team has no game this week.
+
+    Nothing without a schedule: an unread schedule is not evidence that every
+    team is on bye. A player with no NFL team is left alone too (a free agent
+    can't be on bye, and "no team" already reads as missing data).
+    """
+    if not playing:
+        return {}
+    return {p.key: BYE_FLAG for p in players if p.team and p.team not in playing}
 
 
 def check_availability(ws: WeekScores, lineup: Lineup, week: int,

@@ -1506,13 +1506,16 @@ def _score_league(args, settings: Settings, profile: Optional[LeagueProfile],
     roster's weekly projections (every run, one request) and the free-agent
     wire (only when a hole exists). Neither can fail the run.
     """
-    outlook, free_agents = _availability_view(args, settings, profile, players, week)
-    ws = report.score_week(settings, players, week, outlook=outlook, **score_kwargs)
+    outlook, free_agents, live = _availability_view(args, settings, profile,
+                                                     players, week)
+    ws = report.score_week(settings, players, week, outlook=outlook,
+                           check_byes=live, **score_kwargs)
     lineup = report.lineup_from(ws)
-    if outlook is not None:
-        # Only with the ESPN view: offline, preseason and non-ESPN runs skip the
-        # check rather than half-run it (it reads the schedule for byes).
+    if live:
+        # Offline and preseason runs skip the check rather than half-run it:
+        # it reads the schedule. Non-ESPN leagues get it without pickups.
         report.check_availability(ws, lineup, week, free_agents=free_agents)
+    if outlook is not None:
         line = _outlook_status(settings, players, outlook)
         for rec in ws.recs.values():
             rec.source_status.append(line)
@@ -1521,20 +1524,24 @@ def _score_league(args, settings: Settings, profile: Optional[LeagueProfile],
 
 def _availability_view(args, settings: Settings, profile: Optional[LeagueProfile],
                        players: Sequence[Player], week: int):
-    """``(outlook, free_agents)`` for this league; ``(None, None)`` when the
-    roster source has no ESPN league behind it, the run is offline, or it is a
-    preseason sample run."""
+    """``(outlook, free_agents, live)`` for this league.
+
+    ``live`` says the run may read the schedule (bye checks, lineup holes):
+    false offline and in preseason, when the other two are None as well. A
+    roster source with no ESPN league behind it is live with no outlook and no
+    wire read: its holes are still flagged, just without pickups.
+    """
     if getattr(args, "offline", False) or season.preseason_banner(settings):
-        return None, None
+        return None, None, False
     try:
         provider = build_roster_provider(settings, getattr(args, "source", None),
                                          getattr(args, "league", None),
                                          getattr(args, "team", None), profile=profile)
     except RosterError:
-        return None, None
+        return None, None, True
     get_outlook = getattr(provider, "get_week_outlook", None)
     if not callable(get_outlook):
-        return None, None
+        return None, None, True
     try:
         outlook = get_outlook(week, players)
     except Exception as exc:  # the provider already degrades; belt and braces
@@ -1543,7 +1550,7 @@ def _availability_view(args, settings: Settings, profile: Optional[LeagueProfile
 
     def free_agents(positions):
         return provider.get_free_agents(week, positions=positions)
-    return outlook, free_agents
+    return outlook, free_agents, True
 
 
 def _outlook_status(settings: Settings, players: Sequence[Player], outlook) -> tuple:
