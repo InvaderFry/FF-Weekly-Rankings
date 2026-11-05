@@ -745,6 +745,46 @@ sibling rebuilds are gone now (pages are carried by `workflow.py restore`, see
 below), so each run scores each league once; the cache still absorbs any
 repeat inside one run.
 
+### Availability: likely out and lineup holes (`availability.py`)
+
+Found on a live Week 9 roster: Kyler Murray was **Questionable** while ESPN
+had already projected him for **0.0** on the news that he would sit, and he
+was the league's only QB. The report said "Start: Kyler Murray" with nothing
+louder than an injury tag. Two fixes, both through `cli._score_league`, the one
+path every start/sit command takes (digest, dashboard, Discord, `lineup`):
+
+- **Likely out.** One fresh ESPN request per league per pass
+  (`ESPNProvider.get_week_outlook`: `kona_player_info` with `filterIds`, never
+  the roster cache, because the projection is what moves between Thursday and
+  Sunday) reads each roster player's weekly projection and ESPN designation.
+  A **Questionable/Doubtful** player projected at or under
+  `LIKELY_OUT_MAX_PROJECTION` (0.5) **on a week his team plays** is handed to
+  `InjurySignal.likely_out`, which scores him 0.0, the same value an `Out`
+  gets. So he leaves the candidate set through the existing `rules_out`
+  contract and the lineup starts his backup. No new `Signal`, no weight, and
+  `weighted_final` is untouched. All three readings are required: a bye also
+  projects exactly 0.0 (the live feed shows healthy starters at 0.0 on their
+  bye), so with no schedule nothing is claimed; a *healthy* player at 0.0 is
+  a backup, which is a depth-chart fact, not an injury.
+- **Lineup holes.** `report.check_availability` names each slot whose pick
+  won't play (ruled out, likely out, or on bye with no healthy spare that fits
+  the slot), and only then reads the league's free agents **fresh**
+  (`get_free_agents(positions=...)`, one request covering every hole). The
+  Tuesday waiver pass is days stale by Thursday. It suggests up to three per
+  hole, filtered (bye, OUT/IR, projected out) and ordered by the FantasyPros
+  pages the pass already fetched, so ranking costs nothing; a FLEX hole uses
+  the pooled list and a SUPER_FLEX hole streams a QB. An empty K or DEF slot
+  is **not** a hole: the start/sit template has one of each and many leagues
+  play without kickers, so it would alarm every week. Every renderer leads its
+  league with the holes (`report.hole_lines`), and the `ff-lineup` marker
+  carries a third `"hole"` element so a later pass where the same name now
+  can't play still counts as news for the Discord gate.
+
+The check runs only with the ESPN view: `--offline`, preseason sample runs and
+Sleeper/manual leagues skip it rather than half-run it. Tests stay offline
+through the autouse `offline_availability` fixture in `tests/conftest.py`;
+without it every CLI test sent both requests (the suite took 5x longer).
+
 ### The lineup builder and the FLEX slot
 
 `report.score_week` does one scoring pass per roster: `rank_each_position` ranks

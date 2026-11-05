@@ -21,7 +21,7 @@ from __future__ import annotations
 
 import json
 import sys
-from typing import Any, Optional
+from typing import Any, Optional, Sequence
 
 import requests
 
@@ -239,12 +239,15 @@ def parse_league_rules(payload: dict) -> LeagueRules:
                        roster_slots=slots, flex_slots=flex)
 
 
-def parse_free_agents(payload: dict) -> list[PoolPlayer]:
+def parse_free_agents(payload: dict, week: Optional[int] = None,
+                      season: Optional[int] = None) -> list[PoolPlayer]:
     """Turn a ``kona_player_info`` response into an addable pool (pure).
 
     ESPN nests the player blob differently here than in ``mRoster``, and has
-    shipped both shapes over time, so try each rather than assume one.
+    shipped both shapes over time, so try each rather than assume one. With a
+    ``week``, each player also carries ESPN's projected points for it.
     """
+    from ..availability import week_projection
     out: list[PoolPlayer] = []
     seen: set[str] = set()
     for entry in payload.get("players") or []:
@@ -260,11 +263,23 @@ def parse_free_agents(payload: dict) -> list[PoolPlayer]:
             player=player,
             percent_owned=round(float(owned), 1) if isinstance(owned, (int, float)) else None,
             injury_status=str(info.get("injuryStatus") or "").upper(),
+            projection=week_projection(info, week, season) if week is not None else None,
         ))
     return out
 
 
-def free_agent_filter(week: int, limit: int) -> dict[str, Any]:
+#: Our position code -> ESPN lineupSlotId, for asking the free-agent endpoint
+#: about one position (the start/sit pass's streamer check).
+POS_TO_SLOT_ID = {pos: slot for slot, pos in SLOT_ID_TO_POS.items()}
+
+
+def roster_outlook_filter(player_ids: Sequence[int]) -> dict[str, Any]:
+    """The ``x-fantasy-filter`` body asking for specific players by ESPN id."""
+    return {"players": {"filterIds": {"value": [int(i) for i in player_ids]}}}
+
+
+def free_agent_filter(week: int, limit: int,
+                      slot_ids: Optional[Sequence[int]] = None) -> dict[str, Any]:
     """The ``x-fantasy-filter`` body for the free-agent query.
 
     Sorting by percent-owned descending is what keeps this to the players anyone
@@ -274,7 +289,7 @@ def free_agent_filter(week: int, limit: int) -> dict[str, Any]:
     return {
         "players": {
             "filterStatus": {"value": ["FREEAGENT", "WAIVERS"]},
-            "filterSlotIds": {"value": FREE_AGENT_SLOT_IDS},
+            "filterSlotIds": {"value": list(slot_ids) if slot_ids else FREE_AGENT_SLOT_IDS},
             "limit": int(limit),
             "offset": 0,
             "sortPercOwned": {"sortAsc": False, "sortPriority": 1},
@@ -326,21 +341,59 @@ class ESPNProvider(RosterProvider, LeagueViewProvider):
             print(f"warning: couldn't read ESPN league settings: {exc}", file=sys.stderr)
             return LeagueRules()
 
-    def get_free_agents(self, week: int, limit: int = 150) -> list[PoolPlayer]:
-        """Fetch the addable pool. Warns and returns ``[]`` on any failure."""
+    def get_free_agents(self, week: int, limit: int = 150,
+                        positions: Optional[Sequence[str]] = None) -> list[PoolPlayer]:
+        """Fetch the addable pool. Warns and returns ``[]`` on any failure.
+
+        Never cached: the start/sit pass calls this days after the Tuesday
+        waiver run precisely because the wire has changed since. ``positions``
+        narrows the request, so a QB hole isn't answered from the 150 most
+        rostered free agents at every position.
+        """
+        slot_ids = [POS_TO_SLOT_ID[p] for p in positions or () if p in POS_TO_SLOT_ID]
         try:
             payload = self._fetch(
                 params={"view": "kona_player_info", "scoringPeriodId": int(week)},
-                extra_headers={"x-fantasy-filter": json.dumps(free_agent_filter(week, limit))},
+                extra_headers={"x-fantasy-filter": json.dumps(
+                    free_agent_filter(week, limit, slot_ids or None))},
             )
         except (RosterError, requests.RequestException) as exc:
             print(f"warning: ESPN free-agent list unavailable: {exc}", file=sys.stderr)
             return []
         try:
-            return parse_free_agents(payload)
+            return parse_free_agents(payload, week=int(week), season=self._season_int())
         except (AttributeError, TypeError, ValueError) as exc:
             print(f"warning: couldn't parse ESPN free agents: {exc}", file=sys.stderr)
             return []
+
+    def get_week_outlook(self, week: int, players: Sequence[Player]) -> dict:
+        """ESPN's projection and designation for each roster player this week.
+
+        One fresh request (never the roster cache: a projection is the thing
+        that moves between Thursday and Sunday). Returns ``{}`` with a warning
+        on any failure, which makes no availability claim at all.
+        """
+        from ..availability import parse_outlook
+        ids = [int(p.key.split("-", 1)[1]) for p in players
+               if p.key.startswith("espn-") and p.key.split("-", 1)[1].lstrip("-").isdigit()]
+        if not ids:
+            return {}
+        try:
+            payload = self._fetch(
+                params={"view": "kona_player_info", "scoringPeriodId": int(week)},
+                extra_headers={"x-fantasy-filter": json.dumps(roster_outlook_filter(ids))},
+            )
+            return parse_outlook(payload, int(week), self._season_int())
+        except (RosterError, requests.RequestException, AttributeError,
+                TypeError, ValueError) as exc:
+            print(f"warning: ESPN weekly projections unavailable: {exc}", file=sys.stderr)
+            return {}
+
+    def _season_int(self) -> Optional[int]:
+        try:
+            return int(self.season)
+        except (TypeError, ValueError):
+            return None
 
     # --- HTTP -------------------------------------------------------------
     def _league_payload(self) -> dict:

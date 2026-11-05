@@ -276,6 +276,23 @@ def _journalists_section(view: JournalistView) -> str:
     return "".join(parts)
 
 
+def _hole_callouts(lineup) -> list[str]:
+    """One callout per lineup hole, with its streamer suggestions."""
+    out: list[str] = []
+    for hole in getattr(lineup, "holes", None) or ():
+        body = f"🚨 <strong>{escape(hole.headline())}</strong>"
+        if hole.options:
+            body += ("<br><span class='note'>Pick up one of (fresh ESPN free-agent "
+                     "read, ordered by this week's FantasyPros rank):</span><ol>"
+                     + "".join(f"<li>{escape(o.describe())}</li>" for o in hole.options)
+                     + "</ol>")
+        elif hole.options_note:
+            body += (f"<br><span class='note'>No pickup suggested: "
+                     f"{escape(hole.options_note)}.</span>")
+        out.append(f"<div class='callout'>{body}</div>")
+    return out
+
+
 def _dashboard_body(lineup: Sequence[tuple[str, Optional[PlayerScore]]],
                     recs: dict[str, Recommendation],
                     banner: Optional[str] = None,
@@ -285,6 +302,7 @@ def _dashboard_body(lineup: Sequence[tuple[str, Optional[PlayerScore]]],
     sections: list[str] = []
     if banner:
         sections.append(f"<div class='callout'><strong>{escape(banner)}</strong></div>")
+    sections += _hole_callouts(lineup)
     sections += [
         "<h2>Suggested lineup</h2>",
         _lineup_table(lineup, unscored=lineup_unscored_keys(recs)),

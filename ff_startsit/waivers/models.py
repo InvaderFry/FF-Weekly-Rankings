@@ -115,6 +115,10 @@ class PoolPlayer:
     percent_owned: Optional[float] = None
     trending_adds: Optional[int] = None
     injury_status: str = ""
+    #: ESPN's projected points for the requested week, when the pool was read
+    #: with one (``parse_free_agents(week=...)``). Lets the start/sit pass's
+    #: streamer suggestions skip a free agent who isn't expected to play.
+    projection: Optional[float] = None
 
 
 @dataclass

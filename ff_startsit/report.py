@@ -7,7 +7,7 @@ assembles the full phone-friendly report posted as a GitHub Issue.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import re
 import sys
 from typing import Optional, Sequence
@@ -79,6 +79,9 @@ class Lineup:
     slots: list[tuple[str, Optional[PlayerScore]]]
     flex_basis: str = "positional"          # "pooled" | "positional"
     caveat: Optional[str] = None
+    #: Slots nobody playable can fill this week, with streamer suggestions
+    #: (``check_availability``). Every lineup renderer leads with these.
+    holes: list = field(default_factory=list)
 
     def __iter__(self):
         return iter(self.slots)
@@ -103,6 +106,11 @@ class WeekScores:
     recs: dict[str, Recommendation]
     flex: Optional[Recommendation] = None
     flex_note: Optional[str] = None
+    #: The run's signal instances, kept so the availability check can rank free
+    #: agents against the FantasyPros pages this pass already fetched.
+    signals: list = field(default_factory=list)
+    #: Teams with a game this week, or None when the schedule couldn't be read.
+    playing: Optional[set] = None
 
 
 @dataclass
@@ -313,8 +321,14 @@ def score_week(settings: Settings, players: Sequence[Player], week: int,
                log: bool = False,
                slots: Optional[Sequence[str]] = None,
                analyst_fetcher: Optional[AnalystFetcher] = None,
-               cbs_fetcher=None) -> WeekScores:
+               cbs_fetcher=None,
+               outlook: Optional[dict] = None) -> WeekScores:
     """One signal set, one per-position pass, one pooled FLEX pass.
+
+    ``outlook`` is ESPN's weekly read on the roster (``availability.Outlook``
+    per key). A Questionable/Doubtful player it projects at zero on a week his
+    team plays is handed to the injury signal as likely out, so he leaves the
+    candidate set like an ``Out`` would and the lineup starts his backup.
 
     ``log`` appends the per-position decisions to the results log, so the
     whole-roster commands can feed the #7 calibrator the same way ``rank`` and
@@ -336,18 +350,108 @@ def score_week(settings: Settings, players: Sequence[Player], week: int,
     was final would put a warning in the corpus that the report never showed.
     """
     signals = build_signals(settings)
+    # Read only when there is something to check: the schedule is memoized and
+    # live runs fetch it for Vegas and weather anyway, but a run with no ESPN
+    # outlook (offline, Sleeper, manual) has no use for it.
+    playing = _playing_teams(signals, week) if outlook else None
+    if outlook:
+        from .availability import likely_out
+        from .sources.injury import InjurySignal
+        flagged = likely_out(players, outlook, playing)
+        for sig in signals:
+            if isinstance(sig, InjurySignal):
+                sig.likely_out = dict(flagged)
     recs = rank_each_position(settings, players, week, log=log, signals=signals,
                               **({"analyst_fetcher": analyst_fetcher}
                                  if analyst_fetcher is not None else {}),
                               **({"cbs_fetcher": cbs_fetcher}
                                  if cbs_fetcher is not None else {}))
     flex, note = rank_flex_pool(settings, players, week, signals=signals)
-    ws = WeekScores(recs=recs, flex=flex, flex_note=note)
+    ws = WeekScores(recs=recs, flex=flex, flex_note=note, signals=list(signals),
+                    playing=playing)
     flag_starter_boundaries(settings, recs, build_lineup(
         scored(recs), flex_pool=scored_flex(ws), flex_note=note, slots=slots))
     for rec in recs.values():
         log_deferred(settings, rec, command="report")
     return ws
+
+
+def _playing_teams(signals, week: int) -> Optional[set]:
+    """Teams with a game this week, from the schedule the signals share.
+
+    None (not an empty set) when there is no schedule — a sample run, or a
+    failed read — because an empty set would read as "every team is on bye".
+    """
+    schedule = _signal_schedule(signals)
+    if schedule is None:
+        return None
+    try:
+        teams = set(schedule.for_week(week))
+    except Exception:  # pragma: no cover - for_week already never raises
+        return None
+    return teams or None
+
+
+def check_availability(ws: WeekScores, lineup: Lineup, week: int,
+                       free_agents=None) -> Lineup:
+    """Find the lineup's holes and suggest free agents for each. Never raises.
+
+    ``free_agents(positions)`` is a fresh read of the league's wire, called once
+    and only when a hole exists — a normal week costs no request. Suggestions
+    are ordered by the FantasyPros pages this pass already fetched, so ranking
+    them costs nothing either.
+    """
+    from .availability import fill_options, lineup_holes
+    if any(getattr(s, "is_sample", False) for s in ws.signals):
+        return lineup  # sample values say nothing about who plays this week
+    if ws.playing is None:
+        ws.playing = _playing_teams(ws.signals, week)
+    roster = [s for rec in ws.recs.values() for s in rec.scores if s.final is not None]
+    holes = lineup_holes(lineup, ws.playing, roster)
+    fill_options(holes, free_agents, _fa_ranker(ws.signals, week), ws.playing, week)
+    lineup.holes = holes
+    return lineup
+
+
+def _fa_ranker(signals, week: int):
+    """``rank(position, players)`` over this week's FantasyPros ranks, reusing
+    the ECR signal (and its page cache) the scoring pass used."""
+    ecr = next((s for s in signals if getattr(s, "name", "") == "ecr"
+                and not getattr(s, "is_sample", False)), None)
+    if ecr is None:
+        return None
+
+    def rank(position, players):
+        sig = ecr.pooled() if position == "FLEX" and callable(
+            getattr(ecr, "pooled", None)) else ecr
+        values = sig.fetch(week, players)
+        return {k: (v.raw if v.available else None) for k, v in values.items()}
+    return rank
+
+
+def hole_lines(lineup) -> list[str]:
+    """Plain-text lines for each hole: the warning, then up to three pickups.
+    Shared by every renderer so they cannot disagree about the wording."""
+    lines: list[str] = []
+    for hole in getattr(lineup, "holes", None) or ():
+        lines.append(f"🚨 {hole.headline()}")
+        if hole.options:
+            lines.append("Pick up one of (fresh ESPN free-agent read, ordered by "
+                         "this week's FantasyPros rank):")
+            lines += [f"  {i}. {o.describe()}" for i, o in enumerate(hole.options, 1)]
+        elif hole.options_note:
+            lines.append(f"No pickup suggested: {hole.options_note}.")
+    return lines
+
+
+def hole_markdown(lineup) -> list[str]:
+    """The holes as a markdown callout (with a trailing blank line), or []."""
+    out: list[str] = []
+    for line in hole_lines(lineup):
+        text = md_cell(line.strip()) if not line.startswith("🚨") else \
+            f"**{md_cell(line)}**"
+        out.append(f"> {text}  ")
+    return out + [""] if out else []
 
 
 def scored(recs: dict[str, Recommendation]) -> dict[str, list[PlayerScore]]:
@@ -555,6 +659,7 @@ def _digest_body(recs: dict[str, Recommendation],
     lines: list[str] = []
     if banner:
         lines += [f"> {banner}", ""]
+    lines += hole_markdown(lineup)
     lines += [
         "## Suggested lineup",
         "",
@@ -650,13 +755,31 @@ _LINEUP_MARKER = re.compile(r"<!-- ff-lineup season=(\d+) week=(\d+) data=([A-Za
 
 
 def lineup_marker(season: int, week: int, bundles: Sequence[LeagueBundle]) -> str:
-    """Every league's lineup as ``{league: [[slot, name-or-null], ...]}``."""
+    """Every league's lineup as ``{league: [[slot, name-or-null], ...]}``.
+
+    A slot the availability check found nobody playable for carries a third
+    element, ``"hole"``: the name in it may not have changed between passes,
+    but "he won't play and you have nobody" is exactly the news a later pass
+    has to post (``lineup_changes``).
+    """
     import base64
     import json
-    data = {b.label: [[slot, pick.player.name if pick is not None else None]
-                      for slot, pick in b.lineup] for b in bundles}
+    data = {b.label: _marker_rows(b.lineup) for b in bundles}
     blob = base64.urlsafe_b64encode(json.dumps(data, sort_keys=True).encode()).decode()
     return f"<!-- ff-lineup season={season} week={week} data={blob} -->"
+
+
+def _marker_rows(lineup) -> list[list]:
+    holes = [(h.slot, h.starter) for h in getattr(lineup, "holes", None) or ()]
+    rows: list[list] = []
+    for slot, pick in lineup:
+        name = pick.player.name if pick is not None else None
+        row: list = [slot, name]
+        if (slot, name) in holes:
+            holes.remove((slot, name))   # one hole per slot instance (RB, RB)
+            row.append("hole")
+        rows.append(row)
+    return rows
 
 
 def lineup_markers(text: str) -> list[tuple[int, int, dict]]:
@@ -718,16 +841,30 @@ def lineup_changes(before: dict, after: dict) -> list[str]:
         if league not in before:
             lines.append(f"- **{league}:** new in this run.")
             continue
-        was = {name for _, name in before[league] if name}
-        now = [(slot, name) for slot, name in after[league] if name]
+        was = {row[1] for row in before[league] if row[1]}
+        now = [(row[0], row[1]) for row in after[league] if row[1]]
         came = [f"{name} ({slot})" for slot, name in now if name not in was]
         went = sorted(was - {name for _, name in now})
-        if came or went:
-            parts = []
-            if came:
-                parts.append("start " + ", ".join(came))
-            if went:
-                parts.append("bench " + ", ".join(went))
+        # Older markers have no third element; a hole present now and not then
+        # is news even when the same name still fills the slot.
+        old_holes = [(row[0], row[1]) for row in before[league] if len(row) > 2]
+        new_holes = []
+        for row in after[league]:
+            if len(row) > 2:
+                if (row[0], row[1]) in old_holes:
+                    old_holes.remove((row[0], row[1]))
+                else:
+                    new_holes.append(row)
+        parts = []
+        if came:
+            parts.append("start " + ", ".join(came))
+        if went:
+            parts.append("bench " + ", ".join(went))
+        for slot, name, *_ in new_holes:
+            parts.append(f"no healthy player for {slot}"
+                         + (f" ({name} won't play)" if name else "")
+                         + ", see pickups")
+        if parts:
             lines.append(f"- **{league}:** " + "; ".join(parts) + ".")
     return lines
 

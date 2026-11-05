@@ -1,0 +1,128 @@
+{
+ "players": [
+  {
+   "id": 3917315,
+   "onTeamId": 0,
+   "player": {
+    "id": 3917315,
+    "fullName": "Kyler Murray",
+    "defaultPositionId": 1,
+    "proTeamId": 16,
+    "injuryStatus": "QUESTIONABLE",
+    "stats": [
+     {
+      "seasonId": 2026,
+      "scoringPeriodId": 10,
+      "statSourceId": 1,
+      "statSplitTypeId": 1,
+      "appliedTotal": 13.64636024
+     },
+     {
+      "seasonId": 2025,
+      "scoringPeriodId": 9,
+      "statSourceId": 1,
+      "statSplitTypeId": 1,
+      "appliedTotal": 0.0
+     },
+     {
+      "seasonId": 2026,
+      "scoringPeriodId": 9,
+      "statSourceId": 1,
+      "statSplitTypeId": 1,
+      "appliedTotal": 0.0
+     },
+     {
+      "seasonId": 2026,
+      "scoringPeriodId": 0,
+      "statSourceId": 1,
+      "statSplitTypeId": 0,
+      "appliedTotal": 140.06833108
+     },
+     {
+      "seasonId": 2025,
+      "scoringPeriodId": 9,
+      "statSourceId": 0,
+      "statSplitTypeId": 1,
+      "appliedTotal": 0.0
+     },
+     {
+      "seasonId": 2026,
+      "scoringPeriodId": 0,
+      "statSourceId": 0,
+      "statSplitTypeId": 0,
+      "appliedTotal": 73.58
+     },
+     {
+      "seasonId": 2026,
+      "scoringPeriodId": 0,
+      "statSourceId": 1,
+      "statSplitTypeId": 2,
+      "appliedTotal": 276.23113921
+     }
+    ]
+   }
+  },
+  {
+   "id": 4429795,
+   "onTeamId": 0,
+   "player": {
+    "id": 4429795,
+    "fullName": "Jahmyr Gibbs",
+    "defaultPositionId": 2,
+    "proTeamId": 8,
+    "injuryStatus": "ACTIVE",
+    "stats": [
+     {
+      "seasonId": 2026,
+      "scoringPeriodId": 10,
+      "statSourceId": 1,
+      "statSplitTypeId": 1,
+      "appliedTotal": 24.11895023
+     },
+     {
+      "seasonId": 2025,
+      "scoringPeriodId": 9,
+      "statSourceId": 0,
+      "statSplitTypeId": 1,
+      "appliedTotal": 5.8
+     },
+     {
+      "seasonId": 2025,
+      "scoringPeriodId": 9,
+      "statSourceId": 1,
+      "statSplitTypeId": 1,
+      "appliedTotal": 19.18648401
+     },
+     {
+      "seasonId": 2026,
+      "scoringPeriodId": 9,
+      "statSourceId": 1,
+      "statSplitTypeId": 1,
+      "appliedTotal": 26.54151986
+     },
+     {
+      "seasonId": 2026,
+      "scoringPeriodId": 0,
+      "statSourceId": 1,
+      "statSplitTypeId": 0,
+      "appliedTotal": 247.12899584
+     },
+     {
+      "seasonId": 2026,
+      "scoringPeriodId": 0,
+      "statSourceId": 0,
+      "statSplitTypeId": 0,
+      "appliedTotal": 195.8
+     },
+     {
+      "seasonId": 2026,
+      "scoringPeriodId": 0,
+      "statSourceId": 1,
+      "statSplitTypeId": 2,
+      "appliedTotal": 386.30141912
+     }
+    ]
+   }
+  }
+ ]
+}

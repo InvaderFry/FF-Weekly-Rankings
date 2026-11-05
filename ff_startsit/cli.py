@@ -426,8 +426,7 @@ def cmd_lineup(args, settings: Settings) -> int:
     week = _resolve_week(args, settings)
     _print_preseason_banner(settings, md=args.md)
 
-    ws = report.score_week(settings, players, week)
-    lineup = report.lineup_from(ws)
+    ws, lineup = _score_league(args, settings, profile, players, week)
     # The same presentation fact the digest, the dashboard and the Discord embed
     # already honour: a slot with fewer than two scored candidates blends to an
     # exact 50.0 with nothing behind it, and printing that reads as a score.
@@ -441,7 +440,8 @@ def cmd_lineup(args, settings: Settings) -> int:
     suffix = f" · {label}" if label else ""
     if args.md:
         lines = [f"### Suggested Week {week} lineup ({settings.scoring.upper()}){suffix}",
-                 "", "| Slot | Player | Team | Score |", "|---|---|---|---|"]
+                 "", *report.hole_markdown(lineup),
+                 "| Slot | Player | Team | Score |", "|---|---|---|---|"]
         for slot, pick in lineup:
             if pick is None:
                 lines.append(f"| {slot} | _(no option)_ | | |")
@@ -463,6 +463,8 @@ def cmd_lineup(args, settings: Settings) -> int:
         return 0
 
     print(f"Suggested Week {week} lineup ({settings.scoring.upper()}){suffix}:")
+    for line in report.hole_lines(lineup):
+        print(f"  {line}")
     for slot, pick in lineup:
         if pick is None:
             print(f"  {slot:5} (no option)")
@@ -484,8 +486,13 @@ def cmd_report(args, settings: Settings) -> int:
     settings, profile = _league_context(args, settings)
     players = _get_roster(args, settings, profile)
     week = _resolve_week(args, settings)
-    digest = report.build_digest(settings, players, week, label=_league_label(profile),
-                                 log=getattr(args, "log", False))
+    ws, lineup = _score_league(args, settings, profile, players, week,
+                               log=getattr(args, "log", False))
+    digest = report.render_digest(week, settings.scoring, ws.recs,
+                                  banner=season.preseason_banner(settings),
+                                  journalists=report.build_journalist_view(
+                                      settings, players, week),
+                                  label=_league_label(profile), lineup=lineup)
     print(digest)
     if args.out:
         args.out.parent.mkdir(parents=True, exist_ok=True)
@@ -697,9 +704,8 @@ def cmd_dashboard(args, settings: Settings) -> int:
     settings, profile = _league_context(args, settings)
     players = _get_roster(args, settings, profile)
     week = _resolve_week(args, settings)
-    ws = report.score_week(settings, players, week)
+    ws, lineup = _score_league(args, settings, profile, players, week)
     recs = ws.recs
-    lineup = report.lineup_from(ws)
     html = build_dashboard_html(week, settings.scoring, lineup, recs,
                                 generated_on=season.generated_stamp(),
                                 banner=season.preseason_banner(settings),
@@ -722,9 +728,8 @@ def cmd_notify(args, settings: Settings) -> int:
     settings, profile = _league_context(args, settings)
     players = _get_roster(args, settings, profile)
     week = _resolve_week(args, settings)
-    ws = report.score_week(settings, players, week)
+    ws, lineup = _score_league(args, settings, profile, players, week)
     recs = ws.recs
-    lineup = report.lineup_from(ws)
     dashboard_url = args.url or settings.dashboard_url or None
     payload = build_discord_payload(week, settings.scoring, lineup, recs, dashboard_url,
                                     banner=season.preseason_banner(settings),
@@ -760,10 +765,9 @@ def cmd_publish(args, settings: Settings) -> int:
         print(f"warning: {banner}", file=sys.stderr)
 
     # The single scoring pass shared by every output.
-    ws = report.score_week(settings, players, week,
-                           log=getattr(args, "log", False))
+    ws, lineup = _score_league(args, settings, profile, players, week,
+                               log=getattr(args, "log", False))
     recs = ws.recs
-    lineup = report.lineup_from(ws)
     # One journalist pass too, shared by digest and dashboard (display-only).
     journalists = report.build_journalist_view(settings, players, week)
 
@@ -830,14 +834,13 @@ def _league_bundles(args, settings: Settings, week: int) -> list:
                             league_label=profile.name)
         try:
             players = _get_roster(args, lsettings, profile)
-            ws = report.score_week(lsettings, players, week,
+            ws, lineup = _score_league(args, lsettings, profile, players, week,
                                    log=getattr(args, "log", False),
                                    **({"analyst_fetcher": analyst_fetcher}
                                       if analyst_fetcher is not None else {}),
                                    **({"cbs_fetcher": cbs_fetcher}
                                       if cbs_fetcher is not None else {}))
             recs = ws.recs
-            lineup = report.lineup_from(ws)
             journalists = report.build_journalist_view(lsettings, players, week)
         except (RosterError, SleeperError) as exc:
             status.skipped[profile.name] = str(exc)
@@ -1490,6 +1493,73 @@ def _league_context(args, settings: Settings) -> tuple[Settings, LeagueProfile]:
     scoring = profile.scoring if profile.scoring else settings.scoring
     settings = replace(settings, scoring=scoring, league_label=profile.name)
     return settings, profile
+
+
+
+def _score_league(args, settings: Settings, profile: Optional[LeagueProfile],
+                  players: Sequence[Player], week: int, **score_kwargs):
+    """``score_week`` + lineup + the availability check, for one league.
+
+    The one path every start/sit command takes, so the digest, the dashboard,
+    Discord and ``lineup`` all see the same likely-out benching and the same
+    lineup holes. Two ESPN reads ride along, each fresh and each optional: the
+    roster's weekly projections (every run, one request) and the free-agent
+    wire (only when a hole exists). Neither can fail the run.
+    """
+    outlook, free_agents = _availability_view(args, settings, profile, players, week)
+    ws = report.score_week(settings, players, week, outlook=outlook, **score_kwargs)
+    lineup = report.lineup_from(ws)
+    if outlook is not None:
+        # Only with the ESPN view: offline, preseason and non-ESPN runs skip the
+        # check rather than half-run it (it reads the schedule for byes).
+        report.check_availability(ws, lineup, week, free_agents=free_agents)
+        line = _outlook_status(settings, players, outlook)
+        for rec in ws.recs.values():
+            rec.source_status.append(line)
+    return ws, lineup
+
+
+def _availability_view(args, settings: Settings, profile: Optional[LeagueProfile],
+                       players: Sequence[Player], week: int):
+    """``(outlook, free_agents)`` for this league; ``(None, None)`` when the
+    roster source has no ESPN league behind it, the run is offline, or it is a
+    preseason sample run."""
+    if getattr(args, "offline", False) or season.preseason_banner(settings):
+        return None, None
+    try:
+        provider = build_roster_provider(settings, getattr(args, "source", None),
+                                         getattr(args, "league", None),
+                                         getattr(args, "team", None), profile=profile)
+    except RosterError:
+        return None, None
+    get_outlook = getattr(provider, "get_week_outlook", None)
+    if not callable(get_outlook):
+        return None, None
+    try:
+        outlook = get_outlook(week, players)
+    except Exception as exc:  # the provider already degrades; belt and braces
+        print(f"warning: ESPN weekly projections unavailable: {exc}", file=sys.stderr)
+        outlook = {}
+
+    def free_agents(positions):
+        return provider.get_free_agents(week, positions=positions)
+    return outlook, free_agents
+
+
+def _outlook_status(settings: Settings, players: Sequence[Player], outlook) -> tuple:
+    """One Data status line saying whether ESPN's projections were read."""
+    from datetime import datetime, timezone
+    label = settings.league_label or "This league"
+    got = sum(1 for p in players
+              if (o := outlook.get(p.key)) is not None and o.projection is not None)
+    if not got:
+        line = (f"{label}: ESPN weekly projections unavailable, so no player "
+                "was checked for a likely-out status")
+    else:
+        line = (f"{label}: ESPN weekly projections for {got}/{len(players)} roster "
+                f"players, read {datetime.now(timezone.utc):%Y-%m-%d %H:%M} UTC "
+                "(fetch time, not ESPN's update time)")
+    return ("availability", "espn", settings.league_label), line
 
 
 def _read_roster_cache(path: Path) -> Optional[list[Player]]:
