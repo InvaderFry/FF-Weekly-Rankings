@@ -120,13 +120,15 @@ def render_table(rec: Recommendation, title: str = "") -> None:
     if rec.unranked and rec.scores:
         _console.print(f"[dim]{unranked_note(rec)}[/dim]")
 
-    if rec.close_call:
+    # pick_blocker first: a close call between players who won't play is not a
+    # decision, and two OUT players scoring the same 0.0 is exactly how one arises.
+    if rec.pick_blocker:
+        _console.print(f"[bold red]{no_playable_line(rec)}[/bold red]",
+                       markup=True, highlight=False)
+    elif rec.close_call:
         _console.print("[bold yellow]⚠ Close call[/bold yellow] — lean, don't bank on it:")
         for note in rec.notes:
             _console.print(f"  • {note}")
-    elif rec.pick_blocker:
-        _console.print(f"[bold red]{no_playable_line(rec)}[/bold red]",
-                       markup=True, highlight=False)
     elif rec.scores and rec.scores[0].final is not None:
         _console.print(f"[bold green]✓ Start:[/bold green] {rec.scores[0].player.name}")
 
@@ -292,12 +294,12 @@ def render_markdown(rec: Recommendation, title: str = "") -> str:
     if rec.analyst_note:
         lines.append(f"_{md_cell(rec.analyst_note)}_")
         lines.append("")
-    if rec.close_call:
+    if rec.pick_blocker:  # before close_call: see render_table
+        lines.append(f"🚫 **{md_cell(no_playable_line(rec))}**")
+    elif rec.close_call:
         lines.append("> ⚠️ **Close call** — lean, don't bank on it:")
         for note in rec.notes:
             lines.append(f"> - {note}")
-    elif rec.pick_blocker:
-        lines.append(f"🚫 **{md_cell(no_playable_line(rec))}**")
     elif rec.scores and rec.scores[0].final is not None:
         lines.append(f"✅ **Start:** {rec.scores[0].player.name}")
     return "\n".join(lines)

@@ -545,3 +545,25 @@ def test_a_playable_pick_still_says_start(monkeypatch, tmp_path):
 def render_markdown_for(rec):
     from ff_startsit.output.render import render_markdown
     return render_markdown(rec, title="QB")
+
+
+def test_a_close_call_between_two_players_who_wont_play_is_not_a_close_call(
+        monkeypatch, tmp_path):
+    """Review of f574c8e: two OUT quarterbacks with no ECR both score 0.0,
+    which sets close_call, and every renderer checked close_call first — so the
+    section said "lean, don't bank on it" and never "No playable QB"."""
+    import html as _html
+    from ff_startsit.output.html import _position_section
+    a, b = _p("qa", "Out One", "MIN"), _p("qb", "Out Two", "DET")
+    ws, _ = _week(monkeypatch, tmp_path, [a, b], ranks={},
+                  statuses={"qa": "Out", "qb": "Out"}, outlook=None,
+                  playing={"MIN", "DET"})
+    rec = ws.recs["QB"]
+    assert rec.close_call and rec.pick_blocker == "Out"   # the reviewer's state
+    md = render_markdown_for(rec)
+    page = _html.unescape(_position_section("QB", rec))
+    for out in (md, page):
+        assert "No playable QB: Out" in out
+        assert "Close call" not in out
+    from ff_startsit.output.discord import _alerts
+    assert not [a for a in _alerts([], {"QB": rec}) if "Too close" in a]

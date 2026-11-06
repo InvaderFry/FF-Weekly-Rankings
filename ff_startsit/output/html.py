@@ -241,12 +241,12 @@ def _position_table(rec: Recommendation) -> str:
 
 def _position_section(pos: str, rec: Recommendation) -> str:
     parts = [f"<h2>{escape(pos)}</h2>"]
-    if rec.close_call:
-        notes = "".join(f"<div>• {escape(n)}</div>" for n in rec.notes)
-        parts.append(f"<div class='callout'>⚠️ <strong>Close call</strong>{notes}</div>")
-    elif rec.pick_blocker:
+    if rec.pick_blocker:  # before close_call: see render.render_table
         parts.append(f"<div class='callout'>🚫 <strong>"
                      f"{escape(no_playable_line(rec))}</strong></div>")
+    elif rec.close_call:
+        notes = "".join(f"<div>• {escape(n)}</div>" for n in rec.notes)
+        parts.append(f"<div class='callout'>⚠️ <strong>Close call</strong>{notes}</div>")
     elif rec.scores and rec.scores[0].final is not None:
         parts.append(f"<div class='start'>✅ Start: {escape(rec.scores[0].player.name)}</div>")
     parts.append(_position_table(rec))
