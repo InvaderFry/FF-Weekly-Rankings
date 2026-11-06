@@ -29,7 +29,7 @@ from __future__ import annotations
 from typing import Callable, Iterable, Mapping, Optional
 
 from ..models import Player, PlayerScore, Recommendation, SignalValue, _fmt_raw
-from .normalize import to_0_100
+from .normalize import fixed_0_100, to_0_100
 
 #: The flag on a player held out of the blend as unable to play. Renderers
 #: test for it rather than inferring "ruled out" from a missing score.
@@ -69,6 +69,7 @@ def blend(
     unavailable_keys: Iterable[str] = (),
     disagree_exempt: Iterable[str] = (),
     dead_heat_exempt: Iterable[str] = (),
+    fixed_scale: Iterable[str] = (),
 ) -> Recommendation:
     """Combine per-signal readings into a ranked, flagged recommendation.
 
@@ -114,12 +115,20 @@ def blend(
     if not playable:
         ruled_out = set()
 
-    # 1. Normalize each signal within the candidate set (ruled-out players excluded).
+    # 1. Normalize each signal within the candidate set (ruled-out players
+    # excluded). A ``fixed_scale`` signal's raw value is already an absolute
+    # 0-100 reading and is used as-is: rescaling it within the set is what let
+    # a 5-point weather gap and a Questionable tag each swing a full 0-to-100,
+    # ranking FantasyPros' WR53 above its WR35 on team context alone.
+    fixed = frozenset(fixed_scale)
     normalized: dict[str, dict[str, float]] = {}
     for sig_name, values in signal_values.items():
         raw = {pk: sv.raw if sv.available else None
                for pk, sv in values.items() if pk not in ruled_out}
-        normalized[sig_name] = to_0_100(raw, higher_is_better.get(sig_name, True))
+        if sig_name in fixed:
+            normalized[sig_name] = fixed_0_100(raw)
+        else:
+            normalized[sig_name] = to_0_100(raw, higher_is_better.get(sig_name, True))
 
     # 2. Build a PlayerScore per player.
     scores: list[PlayerScore] = []
@@ -148,7 +157,8 @@ def blend(
     scores.sort(key=lambda s: (s.final is not None, s.final), reverse=True)
 
     rec = Recommendation(week=week, scoring=scoring, weights=dict(weights),
-                         scores=scores, raw_gaps=dict(close_call_raw_gaps or {}))
+                         scores=scores, raw_gaps=dict(close_call_raw_gaps or {}),
+                         fixed_scale=fixed)
     _flag_close_call(rec, normalized, close_call_threshold, min_disagree_weight,
                      close_call_raw_gaps, disagree_exempt, dead_heat_exempt)
     return rec

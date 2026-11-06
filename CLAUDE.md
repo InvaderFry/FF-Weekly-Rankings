@@ -254,6 +254,30 @@ without touching the pure engine.
   real (unquantized-away) spread remains, this method can still call it out.
   Both halves route around `normalize.to_0_100` on purpose — see above.
 
+  **Injury and weather are blended on their own scale** (`Signal.fixed_scale`,
+  `normalize.fixed_0_100`), found on HailMeowy's Week 9 WR table: Keon Coleman,
+  FantasyPros' WR53 and the lowest of five, ranked third at 40.0, every point
+  of it from team context. Both signals' raw values already *are* absolute
+  0-100 scores (availability 100/75/35/0, conditions on 5-point steps), so
+  min-max added nothing but distortion: a 5-point weather gap between two
+  clear games became a full 0-vs-100 swing, and Questionable-vs-healthy cost
+  injury's whole weight instead of a quarter of it. Together they outweighed an
+  18-spot consensus edge. Now a `fixed_scale` signal's raw value is its
+  normalized value (clamped), the blend says which via `fixed_scale=`, and
+  `Recommendation.flat_signals` skips those columns, since an absolute column
+  cannot overstate its gap. ECR (a rank) and Vegas (implied points) stay
+  min-max: in their units there is no absolute 0-100 to read.
+
+  This is deliberately **not** a change to `to_0_100`, which is untouched and
+  pinned (`tests/test_fixed_scale.py`). What does change is what gets *logged*
+  for these two signals from here on: rows before this change carry min-max
+  injury/weather `normalized` values and rows after carry absolute ones.
+  Replay is unaffected (each row re-blends the values it logged, under the
+  weights it used), but a grid search over a corpus spanning the change mixes
+  the two scales for injury and weather. It was made mid-2026, when the corpus
+  was still under the `calibrate --write` floors; if a later fit looks odd on
+  those two weights, that boundary is the first place to look.
+
 ### The self-calibration loop (#7)
 
 Every `rank`/`compare` run appends a row to `.cache/results_log.jsonl`
@@ -744,6 +768,66 @@ run. The Odds API bills **two credits per call**, one per market, against a
 sibling rebuilds are gone now (pages are carried by `workflow.py restore`, see
 below), so each run scores each league once; the cache still absorbs any
 repeat inside one run.
+
+### Availability: likely out and lineup holes (`availability.py`)
+
+Found on a live Week 9 roster: Kyler Murray was **Questionable** while ESPN
+had already projected him for **0.0** on the news that he would sit, and he
+was the league's only QB. The report said "Start: Kyler Murray" with nothing
+louder than an injury tag. Two fixes, both through `cli._score_league`, the one
+path every start/sit command takes (digest, dashboard, Discord, `lineup`):
+
+- **Likely out.** One fresh ESPN request per league per pass
+  (`ESPNProvider.get_week_outlook`: `kona_player_info` with `filterIds`, never
+  the roster cache, because the projection is what moves between Thursday and
+  Sunday) reads each roster player's weekly projection and ESPN designation.
+  A **Questionable/Doubtful** player projected at or under
+  `LIKELY_OUT_MAX_PROJECTION` (0.5) **on a week his team plays** is handed to
+  `InjurySignal.likely_out`, which scores him 0.0, the same value an `Out`
+  gets. So he leaves the candidate set through the existing `rules_out`
+  contract and the lineup starts his backup. No new `Signal`, no weight, and
+  `weighted_final` is untouched. All three readings are required: a bye also
+  projects exactly 0.0 (the live feed shows healthy starters at 0.0 on their
+  bye), so with no schedule nothing is claimed; a *healthy* player at 0.0 is
+  a backup, which is a depth-chart fact, not an injury.
+  ESPN's own **OUT/IR/suspension** is passed through as well, needing
+  neither projection nor schedule (found in review): the injury signal reads
+  Sleeper's player blob, which caches for 24h, so when ESPN moved a player
+  from Questionable to OUT the stale Questionable brought him back into the
+  lineup. Sleeper's designation still wins when it is the stricter one.
+- **Lineup holes.** `report.check_availability` names each slot whose pick
+  won't play (ruled out, likely out, or on bye with no healthy spare that fits
+  the slot), and only then reads the league's free agents **fresh**
+  (`get_free_agents(positions=...)`, one request covering every hole). The
+  Tuesday waiver pass is days stale by Thursday. It suggests up to three per
+  hole, filtered (bye, OUT/IR, projected out) and ordered by the FantasyPros
+  pages the pass already fetched, so ranking costs nothing; a FLEX hole uses
+  the pooled list and a SUPER_FLEX hole streams a QB. An empty K or DEF slot
+  is **not** a hole: the start/sit template has one of each and many leagues
+  play without kickers, so it would alarm every week. Every renderer leads its
+  league with the holes (`report.hole_lines`), and the `ff-lineup` marker
+  carries a third `"hole"` element so a later pass where the same name now
+  can't play still counts as news for the Discord gate. So does a hole that
+  *clears* with the same name in the slot ("expected to play after all"):
+  nothing else in the change lines mentions it, and the earlier "see
+  pickups" warning would stand uncorrected.
+
+- **Byes are ruled out too** (`report.bye_keys`, `score_week(check_byes=True)`).
+  A bye-week player loses ECR, Vegas and weather but keeps injury ("healthy"),
+  and a blend of that one reading can outscore everyone who plays: in the
+  pooled FLEX pass a teammate's Questionable tag gave injury a spread, so
+  Jaylen Warren normalized to **100.0** and took LOTMerrier's FLEX on
+  Pittsburgh's Week 9 bye. `pipeline.recommend(ruled_out=...)` adds the bye
+  keys to the same excluded set an `Out` joins, and the player carries
+  `BYE_FLAG`. It goes through `recommend` rather than a signal because no
+  signal owns the schedule, and no weight changes. A lone player at a position
+  on bye is still scored (the all-ruled-out guard) and becomes a lineup hole.
+
+The check runs only on a live run: `--offline` and preseason sample runs skip
+it rather than half-run it, because it reads the schedule. Sleeper/manual
+leagues get the bye check and the hole warning but no outlook and no pickups. Tests stay offline
+through the autouse `offline_availability` fixture in `tests/conftest.py`;
+without it every CLI test sent both requests (the suite took 5x longer).
 
 ### The lineup builder and the FLEX slot
 

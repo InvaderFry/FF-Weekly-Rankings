@@ -65,6 +65,15 @@ def _lineup_lines(lineup: Sequence[tuple[str, Optional[PlayerScore]]],
     return "\n".join(lines)
 
 
+def _hole_text(lineup) -> str:
+    """The lineup holes and their pickups, bolded, for the embed description."""
+    from ..report import hole_lines
+    out = []
+    for line in hole_lines(lineup):
+        out.append(f"**{line}**" if line.startswith("🚨") else line)
+    return "\n".join(out)
+
+
 def _alerts(lineup: Sequence[tuple[str, Optional[PlayerScore]]],
             recs: dict[str, Recommendation]) -> list[str]:
     """Flags on your starters first, then close-call positions."""
@@ -101,13 +110,18 @@ def _build_embed(week: int, scoring: str,
     caveat = getattr(lineup, "caveat", None)
     if caveat:
         description = f"{description}\n\n-# ⚠️ {caveat}"
+    holes = _hole_text(lineup)
+    if holes:
+        # Above the lineup: a slot nobody can play is the one thing on the card
+        # the owner has to act on before kickoff.
+        description = f"{holes}\n\n{description}"
     if banner:
         description = f"**{banner}**\n\n{description}"
     embed: dict = {
         "title": _clip(f"🏈 Week {week} start/sit — {scoring.upper()}{label_suffix}",
                        _TITLE_MAX),
         "description": _clip(description, 4096),
-        "color": _BANNER_COLOR if banner else _EMBED_COLOR,
+        "color": _BANNER_COLOR if (banner or holes) else _EMBED_COLOR,
         "fields": [],
     }
     alerts = _alerts(lineup, recs)

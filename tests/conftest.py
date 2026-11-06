@@ -3,6 +3,8 @@ from pathlib import Path
 
 import pytest
 
+from ff_startsit import cli as _cli
+
 FIXTURES = Path(__file__).parent / "fixtures"
 
 
@@ -22,6 +24,24 @@ def isolate_settings(monkeypatch, tmp_path):
     """
     monkeypatch.setattr("ff_startsit.config.load_dotenv", lambda *a, **k: False)
     monkeypatch.setenv("FF_DATA_DIR", str(tmp_path / "cache"))
+
+
+#: The unstubbed helper, for the tests that exercise it with a fake provider.
+REAL_AVAILABILITY_VIEW = _cli._availability_view
+
+
+@pytest.fixture(autouse=True)
+def offline_availability(monkeypatch):
+    """Keep the start/sit availability check off the network.
+
+    ``cli._score_league`` builds the league's real roster provider to read
+    ESPN's weekly projections and, when a lineup has a hole, the free-agent
+    wire, and reads the NFL schedule for byes. Every CLI test that scores a
+    week would otherwise send those requests. Tests of the check itself call ``report.check_availability`` and
+    ``availability`` directly with fakes, or re-patch this.
+    """
+    monkeypatch.setattr("ff_startsit.cli._availability_view",
+                        lambda *a, **k: (None, None, False))
 
 
 @pytest.fixture

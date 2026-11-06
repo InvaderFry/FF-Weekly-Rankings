@@ -22,6 +22,13 @@ class Signal(ABC):
     #: totals); False when lower is better (ECR rank). Drives normalization.
     higher_is_better: bool = True
 
+    #: True when ``raw`` is already an absolute 0-100 score (injury
+    #: availability, weather conditions). The blend then uses it as-is instead
+    #: of min-max rescaling it within the candidate set, which stretches any
+    #: gap, however small, to a full 0-vs-100. Leave False for a signal in its
+    #: own units (a rank, implied points): there min-max is the only scale.
+    fixed_scale: bool = False
+
     #: True only for the bundled preseason sample signals — runs built on them
     #: must never be written to the #7 results log (see pipeline.recommend).
     is_sample: bool = False

@@ -16,7 +16,7 @@ unit-tested against a small fixture.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Iterable, Optional
+from typing import Iterable, Mapping, Optional
 
 from ..data.matching import ExternalRow, match_rows
 from ..data.teams import normalize_team
@@ -38,6 +38,9 @@ INJURY_SCORES = {
     "DNR": 0.0,
 }
 HEALTHY_SCORE = 100.0
+#: A designation the official report hasn't caught up with yet — see
+#: ``availability.likely_out``. Zero, so it is ruled out exactly like ``Out``.
+LIKELY_OUT_SCORE = 0.0
 
 
 def score_for_status(status: Optional[str]) -> float:
@@ -98,13 +101,27 @@ def parse_injury_rows(meta: dict) -> list[ExternalRow]:
     return rows
 
 
-def assign(players: Iterable[Player], rows: list[ExternalRow]) -> dict[str, SignalValue]:
-    """Match injury rows onto the roster and build SignalValues (pure; tested)."""
+def assign(players: Iterable[Player], rows: list[ExternalRow],
+           likely_out: Optional[Mapping[str, str]] = None) -> dict[str, SignalValue]:
+    """Match injury rows onto the roster and build SignalValues (pure; tested).
+
+    ``likely_out`` maps a player key to a note (``availability.likely_out``):
+    a Questionable/Doubtful player whose weekly projection says he won't play.
+    He scores 0.0, the same "ruled out" value an ``Out`` gets, so
+    ``rules_out`` takes him out of the start/sit candidate set and the lineup
+    starts his backup. A player already ruled out keeps his own designation.
+    """
     players = list(players)
+    likely_out = likely_out or {}
     result = match_rows(players, rows)
     out: dict[str, SignalValue] = {}
     for p in players:
         row = result.matched.get(p.key)
+        override = likely_out.get(p.key)
+        if override and not (row is not None
+                             and is_ruled_out((row.extra or {}).get("status"))):
+            out[p.key] = SignalValue(raw=LIKELY_OUT_SCORE, available=True, note=override)
+            continue
         if row is None:
             # No injury record -> assume healthy, but don't fabricate a value:
             # mark unavailable so the blend falls back to the other signals.
@@ -119,12 +136,16 @@ def assign(players: Iterable[Player], rows: list[ExternalRow]) -> dict[str, Sign
 class InjurySignal(Signal):
     name = "injury"
     higher_is_better = True  # a higher availability score is better
+    fixed_scale = True       # 100 healthy / 75 Q / 35 D / 0 out, absolute
 
     def __init__(self, data_dir: Path, enabled: bool = True,
                  client: Optional[SleeperClient] = None):
         self.enabled = enabled
         self.client = client or SleeperClient(data_dir)
         self._meta: Optional[dict] = None  # per-run cache
+        #: ``{player key: note}`` set per league by ``report.score_week`` from
+        #: ESPN's weekly projections. Empty everywhere else (the waiver pass).
+        self.likely_out: dict[str, str] = {}
 
     def is_available(self) -> bool:
         return self.enabled
@@ -143,4 +164,4 @@ class InjurySignal(Signal):
         if self._meta is None:
             self._meta = self.client.load_player_metadata()
         rows = parse_injury_rows(self._meta)
-        return assign(players, rows)
+        return assign(players, rows, self.likely_out)

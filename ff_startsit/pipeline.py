@@ -7,7 +7,7 @@ fake signals.
 from __future__ import annotations
 
 import sys
-from typing import Iterable, Optional, Sequence
+from typing import Iterable, Optional, Sequence, Mapping
 
 from .config import Settings
 from .engine.blend import blend
@@ -102,6 +102,7 @@ def recommend(
     log: bool = True,
     exclude_unavailable: bool = False,
     defer_log: bool = False,
+    ruled_out: Optional[Mapping[str, str]] = None,
 ) -> Recommendation:
     """Fetch every available signal for ``players`` and blend into a ranking.
 
@@ -176,6 +177,13 @@ def recommend(
             for pkey, sv in signal_values.get(sig.name, {}).items():
                 if rules_out(sv):
                     unavailable_keys.add(pkey)
+        # Reasons no signal can see, decided by the caller (a bye week, read off
+        # the schedule by ``report.score_week``). Without this a bye player
+        # keeps one reading — injury, "healthy" — and a blend of that alone can
+        # outscore everyone who actually plays: Jaylen Warren took a FLEX slot
+        # at 100.0 on Pittsburgh's Week 9 bye.
+        unavailable_keys |= {k for k in (ruled_out or {}) if any(
+            p.key == k for p in players)}
 
     rec = blend(
         week=week,
@@ -190,8 +198,14 @@ def recommend(
         unavailable_keys=unavailable_keys,
         disagree_exempt=settings.disagree_exempt,
         dead_heat_exempt=settings.presentational_gaps,
+        fixed_scale={s.name for s in signals if getattr(s, "fixed_scale", False)},
     )
     rec.sample_data = any(getattr(s, "is_sample", False) for s in signals)
+    if exclude_unavailable and ruled_out:
+        for ps in rec.scores:
+            note = ruled_out.get(ps.player.key)
+            if note and note not in ps.flags:
+                ps.flags.insert(0, note)
 
     for sig in signals:
         _merge_source_status(rec, getattr(sig, "source_status", []))

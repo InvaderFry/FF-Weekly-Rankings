@@ -38,3 +38,17 @@ def to_0_100(values: dict[str, Optional[float]], higher_is_better: bool) -> dict
             frac = 1.0 - frac
         out[k] = round(100.0 * frac, 2)
     return out
+
+
+def fixed_0_100(values: dict[str, Optional[float]]) -> dict[str, float]:
+    """Pass through raw values that already *are* a 0-100 score (clamped).
+
+    For a signal whose native unit is an absolute 0-100 reading (injury
+    availability, weather conditions), min-max adds nothing but distortion: it
+    turns Questionable (75) against healthy (100) into 0 against 100, and a
+    5-point weather difference between two clear-sky games into a full swing.
+    A 75 here means the same thing whoever else is in the candidate set.
+    Keys whose value is None are omitted, as in ``to_0_100``.
+    """
+    return {k: round(max(0.0, min(100.0, float(v))), 2)
+            for k, v in values.items() if v is not None}
