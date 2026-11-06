@@ -888,3 +888,41 @@ def test_season_values_carry_the_positional_rank():
     assert pos_rank_number("WR38") == 38.0 and pos_rank_number("DST4") == 4.0
     assert pos_rank_number(None) is None and pos_rank_number("WR") is None
     assert pos_rank_number("WR0") is None
+
+
+def test_a_bye_players_injury_only_score_never_breaks_a_tie():
+    """Equal depth ratios used to fall to ``final``, and a healthy bye-week
+    player's is injury alone: 100. A bye QB then outranked an active QB with
+    the better ROS rank, and the one-QB cap took the active one off both lists."""
+    from ff_startsit.waivers.models import DropCandidate
+    from ff_startsit.waivers.score import _add_candidates
+    roster = [_p("q1", "My Qb", "QB"), _p("r1", "Bench Rb", "RB")]
+    bye_qb = _p("bq", "Bye Qb", "QB", team="PIT")
+    live_qb = _p("lq", "Live Qb", "QB")
+    pool = [PoolPlayer(bye_qb), PoolPlayer(live_qb)]
+    _, index = _score(roster + [bye_qb, live_qb], {"q1": 3, "r1": 60, "lq": 14})
+    index["bq"].on_bye, index["bq"].season_pos_rank, index["bq"].season_rank = True, 14, 120
+    index["lq"].season_pos_rank, index["lq"].season_rank = 14, 90
+    index["r1"].season_rank, index["r1"].season_pos_rank = 200, 70
+    rules = LeagueRules(team_count=12, roster_slots={"QB": 1, "RB": 2})
+    index["bq"].final = 100.0      # what a healthy bye player's injury-only blend reads
+    assert [s.player.key for _, s in _add_candidates(index, pool, rules)] == ["lq", "bq"]
+    adds = pick_adds(index, pool, [DropCandidate(index["r1"], "bench")], rules)
+    assert [a.score.player.key for a in adds] == ["lq"]
+
+
+def test_espn_ir_and_suspension_spellings_are_never_adds():
+    """ESPN says INJURY_RESERVE and SUSPENSION; the filter knew only IR and SUS.
+    With Sleeper's reading missing, the bye path admitted both as normal adds."""
+    for status in ("INJURY_RESERVE", "SUSPENSION", "IR", "OUT"):
+        index, pool, drops, rules = _bye_case()
+        index["bern"].raw.pop("injury", None)                # no Sleeper reading
+        pool = [PoolPlayer(pool[0].player, injury_status=status)]
+        assert pick_adds(index, pool, drops, rules) == [], status
+
+
+def test_an_espn_ir_free_agent_is_a_stash_under_the_short_label():
+    pool = [PoolPlayer(_p("f1", "Shelved", "RB"), injury_status="INJURY_RESERVE")]
+    _, index = _score([pool[0].player, _p("r1", "R", "RB")], {"f1": 40, "r1": 10})
+    stashes = find_stashes(index, pool, taken=set(), bye_teams=set())
+    assert stashes and stashes[0].reason.startswith("IR — stash")

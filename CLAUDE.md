@@ -1042,7 +1042,12 @@ reason a piece of it is shaped the way it is.
   `season_rank`; `SeasonValueProvider.pos_ranks`), that rank stands in for
   the weekly one: `ros_depth_ratio` orders him, and `_worth_adding` compares
   him ROS-to-ROS against the drop (his `final` is an injury-only artefact and
-  is never read, so no margin either). Not on bye, or no schedule, and he is
+  is never read, so no margin either, and it never breaks an ordering tie:
+  ties go to the overall ROS rank first, since a bye player's injury-only 100
+  once ranked him above an active player the one-QB cap then removed). The
+  status filter normalizes ESPN's `INJURY_RESERVE`/`SUSPENSION` to `IR`/`SUS`
+  (`score._status`), because this path has no weekly rank to catch a stale
+  Sleeper reading. Not on bye, or no schedule, and he is
   unranked as before. K/DEF never: a streamer on bye is the one who can't help.
   Drops are untouched; a rostered player with no weekly rank is still never cut.
 

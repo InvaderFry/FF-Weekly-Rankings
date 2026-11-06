@@ -91,6 +91,18 @@ MIN_BID_SHARE = 0.02
 #: Injury statuses worth stashing rather than starting.
 _STASH_STATUSES = {"IR", "OUT", "PUP", "SUS", "NA", "DNR", "COV"}
 
+#: ESPN spells two of those out. Sleeper's injury reading usually catches the
+#: player too, but it caches for 24h, and on the bye-week add path (which has no
+#: weekly rank to lean on) a stale one let ESPN's IR and suspended players
+#: through as ordinary adds.
+_STATUS_ALIASES = {"INJURY_RESERVE": "IR", "SUSPENSION": "SUS"}
+
+
+def _status(pp: PoolPlayer) -> str:
+    """The pool player's designation, in Sleeper's spelling."""
+    raw = (pp.injury_status or "").strip().upper()
+    return _STATUS_ALIASES.get(raw, raw)
+
 # ``STREAM_POSITIONS`` is defined in ``models`` (``WaiverBundle`` reasons about it
 # too) and imported above, so ``trades`` and ``build`` keep importing it from
 # here unchanged. It matters *in this module* because it is an exception to
@@ -334,7 +346,7 @@ def add_candidate_ratio(score: Optional[PlayerScore], pool_player: PoolPlayer,
     # is neither required nor read for him: ``ranked_on_bye`` is his reading.
     if not ranked_on_bye(score) and (score.final is None or not has_ecr(score)):
         return None
-    if (pool_player.injury_status or "").upper() in _STASH_STATUSES:
+    if _status(pool_player) in _STASH_STATUSES:
         return None
     injury = score.raw.get("injury")
     if injury is not None and injury.available and injury.raw == 0:
@@ -516,8 +528,18 @@ def _add_candidates(index: dict[str, PlayerScore], pool: Sequence[PoolPlayer],
         candidates.append((ratio, index[key]))
     # A bye-week add sorts on his ROS ratio among everyone else's weekly ones:
     # both are FantasyPros positional ranks over the same starter demand.
-    candidates.sort(key=lambda c: (c[1].player.position in STREAM_POSITIONS,
-                                   c[0], -(c[1].final or 0.0)))
+    # Ties go to the overall ROS rank, the one reading every candidate shares,
+    # and only then to ``final``. A bye player's ``final`` is injury alone (a
+    # healthy one reads 100), so it never breaks a tie: it ranked a bye QB
+    # above an active QB with the better ROS rank, and the one-QB cap then
+    # removed the active one from both lists.
+    def _key(c: tuple[float, PlayerScore]):
+        ratio, score = c
+        rank = score.season_rank if score.season_rank is not None else float("inf")
+        final = (float("-inf") if ranked_on_bye(score) or score.final is None
+                 else score.final)
+        return (score.player.position in STREAM_POSITIONS, ratio, rank, -final)
+    candidates.sort(key=_key)
     return candidates
 
 
@@ -856,7 +878,7 @@ def _stash_kind(pp: PoolPlayer, score: PlayerScore, bye_teams: set[str]) -> Opti
     ``no_adds_at_positions`` needed for ``add_candidate_ratio``, and for the
     same reason: "N were considered" is only honest while the two agree.
     """
-    if (pp.injury_status or "").upper() in _STASH_STATUSES:
+    if _status(pp) in _STASH_STATUSES:
         return "hurt"
     if pp.player.team and pp.player.team in bye_teams:
         return "bye"
@@ -872,7 +894,7 @@ def _stash_reason(pp: PoolPlayer, score: PlayerScore, kind: str) -> Optional[str
             # not evidence he plays again this season — the same discipline
             # `has_ecr` already applies to adds and drops.
             return None
-        status = (pp.injury_status or "").upper()
+        status = _status(pp)
         return f"{status} — stash while he's cheap (ROS rank {score.season_rank:g})"
     if not has_ecr(score):
         return None
