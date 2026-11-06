@@ -790,6 +790,11 @@ path every start/sit command takes (digest, dashboard, Discord, `lineup`):
   projects exactly 0.0 (the live feed shows healthy starters at 0.0 on their
   bye), so with no schedule nothing is claimed; a *healthy* player at 0.0 is
   a backup, which is a depth-chart fact, not an injury.
+  ESPN's own **OUT/IR/suspension** is passed through as well, needing
+  neither projection nor schedule (found in review): the injury signal reads
+  Sleeper's player blob, which caches for 24h, so when ESPN moved a player
+  from Questionable to OUT the stale Questionable brought him back into the
+  lineup. Sleeper's designation still wins when it is the stricter one.
 - **Lineup holes.** `report.check_availability` names each slot whose pick
   won't play (ruled out, likely out, or on bye with no healthy spare that fits
   the slot), and only then reads the league's free agents **fresh**
@@ -802,7 +807,10 @@ path every start/sit command takes (digest, dashboard, Discord, `lineup`):
   play without kickers, so it would alarm every week. Every renderer leads its
   league with the holes (`report.hole_lines`), and the `ff-lineup` marker
   carries a third `"hole"` element so a later pass where the same name now
-  can't play still counts as news for the Discord gate.
+  can't play still counts as news for the Discord gate. So does a hole that
+  *clears* with the same name in the slot ("expected to play after all"):
+  nothing else in the change lines mentions it, and the earlier "see
+  pickups" warning would stand uncorrected.
 
 - **Byes are ruled out too** (`report.bye_keys`, `score_week(check_byes=True)`).
   A bye-week player loses ECR, Vegas and weather but keeps injury ("healthy"),

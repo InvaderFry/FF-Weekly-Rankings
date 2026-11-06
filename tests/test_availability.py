@@ -75,7 +75,7 @@ def test_questionable_at_zero_on_a_game_week_is_likely_out():
     (Outlook(0.0, "QUESTIONABLE"), {"DET"}),       # his team is on bye: 0.0 is the bye
     (Outlook(0.0, "QUESTIONABLE"), None),          # no schedule: can't tell a bye apart
     (Outlook(0.0, "ACTIVE"), {"MIN"}),             # healthy at zero is a backup, not an injury
-    (Outlook(0.0, "OUT"), {"MIN"}),                # already ruled out on his own
+    # (An ESPN OUT is claimed on its own: see the review-findings tests below.)
     (Outlook(13.6, "QUESTIONABLE"), {"MIN"}),      # ESPN expects him to play
     (Outlook(None, "QUESTIONABLE"), {"MIN"}),      # no projection: no claim
 ])
@@ -462,3 +462,40 @@ def test_a_bye_with_nobody_behind_him_is_a_hole(monkeypatch, tmp_path):
 def test_no_schedule_rules_nobody_out():
     assert report.bye_keys([_p("x", "X", "PIT", "RB")], None) == {}
     assert report.bye_keys([_p("x", "X", None, "RB")], {"KC"}) == {}
+
+
+# --- review findings (811fd5b) -------------------------------------------------
+
+def test_a_fresh_espn_out_rules_him_out_even_if_sleeper_still_says_questionable(
+        monkeypatch, tmp_path):
+    """Sleeper's player blob caches for 24h. When ESPN moves Kyler from
+    QUESTIONABLE to OUT, the stale Questionable must not bring him back."""
+    kyler = _p(KYLER, "Kyler Murray", "MIN")
+    backup = _p("espn-9", "Backup Qb", "DET")
+    for espn_status in ("QUESTIONABLE", "OUT", "INJURY_RESERVE"):
+        ws, lineup = _week(monkeypatch, tmp_path, [kyler, backup],
+                           ranks={KYLER: 8.0, "espn-9": 25.0},
+                           statuses={KYLER: "Questionable"},   # stale Sleeper read
+                           outlook={KYLER: Outlook(0.0, espn_status),
+                                    "espn-9": Outlook(14.0, "ACTIVE")},
+                           playing={"MIN", "DET"})
+        assert _qb(lineup).player.key == "espn-9", espn_status
+
+
+def test_an_espn_out_needs_no_projection_or_schedule():
+    kyler = _p(KYLER, "Kyler Murray", "MIN")
+    out = likely_out([kyler], {KYLER: Outlook(None, "OUT")}, None)
+    assert out[KYLER] == "Out (ESPN)"
+    ir = likely_out([kyler], {KYLER: Outlook(12.0, "INJURY_RESERVE")}, {"MIN"})
+    assert ir[KYLER] == "Injury Reserve (ESPN)"
+
+
+def test_a_cleared_hole_is_news_for_discord():
+    """Thursday warned "won't play, see pickups"; Saturday he's back. The
+    name in the slot didn't change, but the warning has to be retracted."""
+    before = report.lineup_marker(2026, 9, [_bundle(_holed_lineup())])
+    after = report.lineup_marker(2026, 9, [_bundle(report.Lineup(
+        slots=[("QB", PlayerScore(player=_p(KYLER, "Kyler Murray", "MIN"), final=50.0))]))])
+    assert report.lineup_changes_since(after, before) == [
+        "- **HailMeowy:** Kyler Murray is expected to play at QB after all, "
+        "so ignore the earlier pickup warning."]

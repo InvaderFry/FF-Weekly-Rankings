@@ -895,6 +895,15 @@ def lineup_changes(before: dict, after: dict) -> list[str]:
             parts.append(f"no healthy player for {slot}"
                          + (f" ({name} won't play)" if name else "")
                          + ", see pickups")
+        # A hole that cleared with the same name still in the slot moved no
+        # starter, so nothing above mentions it — and the earlier "won't play,
+        # see pickups" would stand uncorrected. (A hole cleared by a new
+        # starter is already the start/bench line.)
+        now_rows = {(row[0], row[1]) for row in after[league]}
+        for slot, name in old_holes:
+            if name and (slot, name) in now_rows:
+                parts.append(f"{name} is expected to play at {slot} after all, "
+                             "so ignore the earlier pickup warning")
         if parts:
             lines.append(f"- **{league}:** " + "; ".join(parts) + ".")
     return lines

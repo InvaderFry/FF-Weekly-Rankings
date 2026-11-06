@@ -172,20 +172,30 @@ def _pretty(status: str) -> str:
 
 def likely_out(players: Iterable[Player], outlook: Mapping[str, Outlook],
                playing: Optional[set[str]]) -> dict[str, str]:
-    """``{player key: note}`` for each player ESPN has quietly ruled out.
+    """``{player key: note}`` for each player ESPN says won't play.
 
-    Needs all three of: an open designation (Questionable/Doubtful), a weekly
-    projection at or under ``LIKELY_OUT_MAX_PROJECTION``, and a schedule showing
-    his team plays. ``playing`` of ``None`` means the schedule couldn't be read,
-    and then nothing is claimed: a bye projects 0.0 too, and a false "likely
-    out" benches a healthy starter.
+    Two ways in. **ESPN's own ruled-out designation** (OUT, injury reserve,
+    suspension) counts on its own, needing neither a projection nor a
+    schedule: the injury signal reads Sleeper's player blob, which caches for
+    24 hours, so a player ESPN has already moved from Questionable to OUT can
+    still read Questionable there — and without this he started again the
+    moment ESPN confirmed what the projection had been saying.
+
+    Otherwise all three of: an open designation (Questionable/Doubtful), a
+    weekly projection at or under ``LIKELY_OUT_MAX_PROJECTION``, and a
+    schedule showing his team plays. ``playing`` of ``None`` means the schedule
+    couldn't be read, and then no projection-based claim is made: a bye
+    projects 0.0 too, and a false "likely out" benches a healthy starter.
     """
-    if not playing:
-        return {}
     out: dict[str, str] = {}
     for p in players:
         o = outlook.get(p.key)
-        if o is None or o.projection is None or o.status not in OPEN_STATUSES:
+        if o is None:
+            continue
+        if o.status in RULED_OUT_STATUSES:
+            out[p.key] = f"{_pretty(o.status)} (ESPN)"
+            continue
+        if not playing or o.projection is None or o.status not in OPEN_STATUSES:
             continue
         if o.projection > LIKELY_OUT_MAX_PROJECTION or p.team not in playing:
             continue
