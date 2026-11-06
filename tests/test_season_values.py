@@ -15,7 +15,7 @@ def _html(**updates):
     data = dict(year="2026", ranking_type_name="ros", position_id="ALL",
                 scoring="HALF", last_updated_ts=NOW.timestamp(), players=[
                     dict(player_name="Mike Evans", player_team_id="SF",
-                         player_position_id="WR", rank_ecr=35),
+                         player_position_id="WR", rank_ecr=35, pos_rank="WR14"),
                     dict(player_name="Seattle Seahawks", player_team_id="SEA",
                          player_position_id="DST", rank_ecr=180)])
     data.update(updates)
@@ -49,8 +49,12 @@ def test_current_overall_ranks_are_parsed_and_matched(monkeypatch):
     players = [Player("evans", "Mike Evans", "SF", "WR"),
                Player("sea", "Seahawks D/ST", "SEA", "DEF"),
                Player("unknown", "Unknown Player", "SF", "WR")]
-    values = SeasonValueProvider(session=Session()).fetch(players, "half")
+    provider = SeasonValueProvider(session=Session())
+    values = provider.fetch(players, "half")
     assert values == {"evans": 35, "sea": 180}
+    # The same page states each player's positional ROS rank; the waiver pass
+    # reads it for a free agent on bye, whom the weekly list leaves out.
+    assert provider.pos_ranks == {"evans": 14}
 
 
 def test_trade_rank_guards_require_both_values_and_a_small_gap():

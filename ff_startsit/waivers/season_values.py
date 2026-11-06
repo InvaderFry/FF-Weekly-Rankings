@@ -46,10 +46,19 @@ def parse_season_rows(html: str, scoring: str, now: datetime):
     return rows
 
 
+def pos_rank_number(label) -> Optional[float]:
+    """``"WR38"`` -> 38.0; anything else -> ``None``."""
+    m = re.fullmatch(r"\s*[A-Za-z]+\s*(\d+)\s*", str(label or ""))
+    return float(m.group(1)) if m and int(m.group(1)) > 0 else None
+
+
 class SeasonValueProvider:
     def __init__(self, session: Optional[requests.Session] = None, timeout: int = 20):
         self.session = session or requests.Session()
         self.timeout = timeout
+        #: Positional ROS ranks from the last ``fetch`` (the same page states
+        #: them), keyed like its result. Read by the waiver pass for bye weeks.
+        self.pos_ranks: dict[str, float] = {}
 
     def fetch(self, players: Sequence[Player], scoring: str) -> dict[str, float]:
         response = self.session.get(URLS[scoring], timeout=self.timeout,
@@ -57,6 +66,8 @@ class SeasonValueProvider:
         response.raise_for_status()
         rows = parse_season_rows(response.text, scoring, datetime.now(timezone.utc))
         matches = match_rows(players, rows)
+        self.pos_ranks = {key: rank for key, row in matches.matched.items()
+                          if (rank := pos_rank_number(row.extra.get("pos_rank"))) is not None}
         return {key: row.value for key, row in matches.matched.items()}
 
 

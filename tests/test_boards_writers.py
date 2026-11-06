@@ -98,6 +98,30 @@ def test_richard_values_per_format_and_dashes_mean_none():
     assert shough.values == {"2qb": 12.0}              # "--" in 1QB formats
 
 
+def test_richard_reads_the_live_markup():
+    # CBS wraps each table in TableBase divs and classes every <tr>. The older
+    # fixture had that stripped, so the parser passed while every live Week 8
+    # and Week 9 read failed as "layout not recognised".
+    body = page("richard_trade_chart_live.html")
+    listed = parse_richard(body)
+    assert {x.position for x in listed} == {"QB", "RB", "WR", "TE"}
+    r = {x.name: x for x in listed}
+    assert r["Josh Allen"].values == {"1qb-4": 21.0, "1qb-6": 21.0, "2qb": 46.0}
+    assert r["Kaelon Black"].position == "RB" and r["Kaelon Black"].values["ppr"] == 5.0
+    assert r["Germie Bernard"].values == {"ppr": 6.0}       # "--" outside PPR
+    assert verified_headline(body, "Dave Richard", 2026, 9, ("trade chart",))
+
+
+def test_richard_never_credits_a_table_to_an_earlier_heading():
+    body = ("<h2>Running back trade values</h2><p>no table here</p>"
+            "<h2>Wide receiver trade values</h2><div><table><tbody>"
+            "<tr><th>PLAYER</th><th>TM</th><th>NON</th><th>0.5</th><th>PPR</th></tr>"
+            "<tr><td>A Receiver</td><td>MIA</td><td>9</td><td>10</td><td>11</td></tr>"
+            "</tbody></table></div>")
+    listed = parse_richard(body)
+    assert [(x.name, x.position) for x in listed] == [("A Receiver", "WR")]
+
+
 def test_chart_column_by_scoring_and_superflex():
     assert chart_column("RB", "half") == "0.5" and chart_column("WR", "std") == "non"
     assert chart_column("TE", "ppr") == "ppr"

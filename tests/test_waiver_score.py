@@ -829,3 +829,100 @@ def test_only_one_kicker_is_ever_recommended():
     adds = pick_adds(index, pool, drops, rules)
     assert [t.score.player.key for t in adds] == ["f1"]
     assert pick_alternates(index, pool, drops, rules, adds) == []
+
+
+# --- a free agent on bye --------------------------------------------------
+def _bye_case():
+    """Week 9 SwiftWalkAaron in miniature: Germie Bernard (PIT, on bye, so
+    FantasyPros' weekly list skips him) is WR38 / #76 rest of season; the
+    roster's most droppable body is Kaelon Black, RB47 / #182."""
+    roster = [_p("r1", "Starter A", "RB"), _p("r2", "Starter B", "RB"),
+              _p("black", "Kaelon Black", "RB", team="SF")]
+    bernard = _p("bern", "Germie Bernard", "WR", team="PIT")
+    pool = [PoolPlayer(bernard, percent_owned=20.0)]
+    _, index = _score(roster + [bernard], {"r1": 5, "r2": 12, "black": 40})
+    index["black"].season_rank, index["black"].season_pos_rank = 182, 47
+    index["bern"].season_rank, index["bern"].season_pos_rank = 76, 38
+    index["bern"].on_bye = True
+    rules = LeagueRules(team_count=12, roster_slots={"RB": 2, "WR": 2})
+    drops = droppable([index[p.key] for p in roster], rules)
+    return index, pool, drops, rules
+
+
+def test_a_free_agent_on_bye_is_judged_on_his_rest_of_season_rank():
+    from ff_startsit.waivers.score import ranked_on_bye
+    index, pool, drops, rules = _bye_case()
+    assert not has_ecr(index["bern"]) and ranked_on_bye(index["bern"])
+    adds = pick_adds(index, pool, drops, rules)
+    assert [(a.score.player.key, a.drop.player.key) for a in adds] == [("bern", "black")]
+    assert adds[0].depth_ratio == 38 / 24        # ROS WR38 over the 24 WR the league starts
+    assert adds[0].margin is None                # his blend is injury-only: no number
+    assert any("on bye this week" in r and "WR38" in r for r in adds[0].reasons)
+
+
+def test_a_bye_week_add_still_has_to_beat_the_drop_rest_of_season():
+    index, pool, drops, rules = _bye_case()
+    index["bern"].season_pos_rank = 60           # ROS WR60: 2.5 > RB47's 1.96
+    assert pick_adds(index, pool, drops, rules) == []
+    index["bern"].season_pos_rank, index["bern"].season_rank = 38, 200
+    assert pick_adds(index, pool, drops, rules) == []   # worse overall ROS rank
+
+
+def test_a_player_off_the_weekly_list_but_not_on_bye_is_still_unranked():
+    index, pool, drops, rules = _bye_case()
+    index["bern"].on_bye = False                 # absent for no known reason
+    assert pick_adds(index, pool, drops, rules) == []
+
+
+def test_a_kicker_on_bye_is_never_an_add():
+    from ff_startsit.waivers.score import ranked_on_bye
+    index, *_ = _bye_case()
+    k = _p("k", "Bye Kicker", "K", team="PIT")
+    _, kindex = _score([k], {})
+    kindex["k"].on_bye, kindex["k"].season_pos_rank = True, 3
+    assert not ranked_on_bye(kindex["k"])
+
+
+def test_season_values_carry_the_positional_rank():
+    from ff_startsit.waivers.season_values import pos_rank_number
+    assert pos_rank_number("WR38") == 38.0 and pos_rank_number("DST4") == 4.0
+    assert pos_rank_number(None) is None and pos_rank_number("WR") is None
+    assert pos_rank_number("WR0") is None
+
+
+def test_a_bye_players_injury_only_score_never_breaks_a_tie():
+    """Equal depth ratios used to fall to ``final``, and a healthy bye-week
+    player's is injury alone: 100. A bye QB then outranked an active QB with
+    the better ROS rank, and the one-QB cap took the active one off both lists."""
+    from ff_startsit.waivers.models import DropCandidate
+    from ff_startsit.waivers.score import _add_candidates
+    roster = [_p("q1", "My Qb", "QB"), _p("r1", "Bench Rb", "RB")]
+    bye_qb = _p("bq", "Bye Qb", "QB", team="PIT")
+    live_qb = _p("lq", "Live Qb", "QB")
+    pool = [PoolPlayer(bye_qb), PoolPlayer(live_qb)]
+    _, index = _score(roster + [bye_qb, live_qb], {"q1": 3, "r1": 60, "lq": 14})
+    index["bq"].on_bye, index["bq"].season_pos_rank, index["bq"].season_rank = True, 14, 120
+    index["lq"].season_pos_rank, index["lq"].season_rank = 14, 90
+    index["r1"].season_rank, index["r1"].season_pos_rank = 200, 70
+    rules = LeagueRules(team_count=12, roster_slots={"QB": 1, "RB": 2})
+    index["bq"].final = 100.0      # what a healthy bye player's injury-only blend reads
+    assert [s.player.key for _, s in _add_candidates(index, pool, rules)] == ["lq", "bq"]
+    adds = pick_adds(index, pool, [DropCandidate(index["r1"], "bench")], rules)
+    assert [a.score.player.key for a in adds] == ["lq"]
+
+
+def test_espn_ir_and_suspension_spellings_are_never_adds():
+    """ESPN says INJURY_RESERVE and SUSPENSION; the filter knew only IR and SUS.
+    With Sleeper's reading missing, the bye path admitted both as normal adds."""
+    for status in ("INJURY_RESERVE", "SUSPENSION", "IR", "OUT"):
+        index, pool, drops, rules = _bye_case()
+        index["bern"].raw.pop("injury", None)                # no Sleeper reading
+        pool = [PoolPlayer(pool[0].player, injury_status=status)]
+        assert pick_adds(index, pool, drops, rules) == [], status
+
+
+def test_an_espn_ir_free_agent_is_a_stash_under_the_short_label():
+    pool = [PoolPlayer(_p("f1", "Shelved", "RB"), injury_status="INJURY_RESERVE")]
+    _, index = _score([pool[0].player, _p("r1", "R", "RB")], {"f1": 40, "r1": 10})
+    stashes = find_stashes(index, pool, taken=set(), bye_teams=set())
+    assert stashes and stashes[0].reason.startswith("IR — stash")
