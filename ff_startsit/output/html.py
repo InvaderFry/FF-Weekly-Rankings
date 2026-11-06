@@ -17,7 +17,7 @@ from typing import TYPE_CHECKING, Optional, Sequence
 from ..models import PlayerScore, Recommendation
 from .board import (board_cell, boards_legend, section_boards, waiver_cell,
                     waiver_legend)
-from .render import (DEPTH_LEGEND, LINEUP_UNSCORED_NOTE, unranked_note,
+from .render import (DEPTH_LEGEND, LINEUP_UNSCORED_NOTE, no_playable_line, unranked_note,
                      flat_signal_note, lineup_unscored_keys, conflict_lines, section_cell)
 from ..sources.journalists import JournalistView
 
@@ -176,6 +176,14 @@ def _position_table(rec: Recommendation) -> str:
         # condition — an empty table plus a note explaining it is not a reading.
         s = rec.scores[0]
         team = escape(s.player.team or "BYE")
+        if rec.pick_blocker:
+            # The verdict above already says he won't play and why; this line
+            # only says why the section is one row.
+            html = (f"<p class='lone'>{escape(s.player.name)} ({team}) is your only "
+                    f"{escape(s.player.position)} this week.</p>")
+            if s.flags:
+                html += f"<p class='flag'>{escape('; '.join(s.flags))}</p>"
+            return html
         html = (f"<p class='lone'>✅ <strong>{escape(s.player.name)}</strong> "
                 f"({team}) — your only {escape(s.player.position)} this week, so "
                 "there was nothing to rank him against and no signal could be "
@@ -236,6 +244,9 @@ def _position_section(pos: str, rec: Recommendation) -> str:
     if rec.close_call:
         notes = "".join(f"<div>• {escape(n)}</div>" for n in rec.notes)
         parts.append(f"<div class='callout'>⚠️ <strong>Close call</strong>{notes}</div>")
+    elif rec.pick_blocker:
+        parts.append(f"<div class='callout'>🚫 <strong>"
+                     f"{escape(no_playable_line(rec))}</strong></div>")
     elif rec.scores and rec.scores[0].final is not None:
         parts.append(f"<div class='start'>✅ Start: {escape(rec.scores[0].player.name)}</div>")
     parts.append(_position_table(rec))

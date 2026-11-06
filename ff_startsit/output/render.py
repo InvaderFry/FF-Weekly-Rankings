@@ -124,6 +124,9 @@ def render_table(rec: Recommendation, title: str = "") -> None:
         _console.print("[bold yellow]⚠ Close call[/bold yellow] — lean, don't bank on it:")
         for note in rec.notes:
             _console.print(f"  • {note}")
+    elif rec.pick_blocker:
+        _console.print(f"[bold red]{no_playable_line(rec)}[/bold red]",
+                       markup=True, highlight=False)
     elif rec.scores and rec.scores[0].final is not None:
         _console.print(f"[bold green]✓ Start:[/bold green] {rec.scores[0].player.name}")
 
@@ -139,14 +142,32 @@ def md_cell(text: str) -> str:
     return str(text).replace("|", "\\|").replace("\r\n", " ").replace("\n", " ")
 
 
+def no_playable_line(rec: Recommendation) -> str:
+    """The verdict when the top of the list won't play (``pick_blocker``).
+
+    Shared by every renderer, so the words can't drift between them. It names
+    the player and why, and points at the lineup-hole warning, which is where
+    the pickups are (that warning is printed only for a starting slot).
+    """
+    s = next(s for s in rec.scores if s.final is not None)
+    pos = s.player.position
+    return (f"No playable {pos}: {s.player.name} won't play "
+            f"({rec.pick_blocker}). Check the free-agent pickups in the "
+            "lineup warning above.")
+
+
 def _lone_candidate_markdown(rec: Recommendation) -> list[str]:
     """The whole section as one sentence, keeping every reading that was real."""
     s = rec.scores[0]
     team = s.player.team or "BYE"
-    lines = ["",
-             f"✅ **Start:** {s.player.name} ({team}) — your only "
-             f"{s.player.position} this week, so there was nothing to rank him "
-             "against and no signal could be scored."]
+    if rec.pick_blocker:
+        lines = ["", f"🚫 **{md_cell(no_playable_line(rec))}** He is your only "
+                 f"{md_cell(s.player.position)} this week."]
+    else:
+        lines = ["",
+                 f"✅ **Start:** {s.player.name} ({team}) — your only "
+                 f"{s.player.position} this week, so there was nothing to rank him "
+                 "against and no signal could be scored."]
     if s.flags:
         # The flags are the one thing here that is a real reading rather than a
         # placeholder, so they survive the collapse.
@@ -275,6 +296,8 @@ def render_markdown(rec: Recommendation, title: str = "") -> str:
         lines.append("> ⚠️ **Close call** — lean, don't bank on it:")
         for note in rec.notes:
             lines.append(f"> - {note}")
+    elif rec.pick_blocker:
+        lines.append(f"🚫 **{md_cell(no_playable_line(rec))}**")
     elif rec.scores and rec.scores[0].final is not None:
         lines.append(f"✅ **Start:** {rec.scores[0].player.name}")
     return "\n".join(lines)
