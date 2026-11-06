@@ -82,7 +82,9 @@ def _alerts(lineup: Sequence[tuple[str, Optional[PlayerScore]]],
         if pick is not None and pick.flags:
             alerts.append(f"{pick.player.name}: {'; '.join(pick.flags)}")
     for pos, rec in recs.items():
-        if rec.close_call:
+        # Not a decision when the top of the list won't play (pick_blocker);
+        # the starter's own flags above, and the lineup-hole warning, say so.
+        if rec.close_call and not rec.pick_blocker:
             for note in rec.notes:
                 alerts.append(f"[{pos}] {note}")
             comparison = close_call_comparison(rec)

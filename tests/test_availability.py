@@ -499,3 +499,71 @@ def test_a_cleared_hole_is_news_for_discord():
     assert report.lineup_changes_since(after, before) == [
         "- **HailMeowy:** Kyler Murray is expected to play at QB after all, "
         "so ignore the earlier pickup warning."]
+
+
+# --- the verdict under a hole (live Week 9 page, after #87) -----------------------
+
+def test_the_qb_section_no_longer_says_start_over_a_player_who_wont_play(
+        monkeypatch, tmp_path):
+    """HailMeowy's page opened with "🚨 No healthy QB ... Kyler Murray" and then
+    said "✅ Start: Kyler Murray" in the QB section below it."""
+    from ff_startsit.output.html import _dashboard_body
+    kyler = _p(KYLER, "Kyler Murray", "MIN")
+    ws, lineup = _week(monkeypatch, tmp_path, [kyler], ranks={KYLER: 8.0},
+                       statuses={KYLER: "Questionable"},
+                       outlook={KYLER: Outlook(0.0, "QUESTIONABLE")},
+                       playing={"MIN"})
+    assert ws.recs["QB"].pick_blocker.startswith("Likely out")
+    md = "\n".join(report._digest_body(ws.recs, lineup=lineup))
+    import html as _html
+    html = _html.unescape("".join(_dashboard_body(lineup, ws.recs)))
+    for page in (md, html):
+        assert "Start: Kyler" not in page.replace("**", "").replace("<strong>", "")
+        assert "No playable QB: Kyler Murray won't play (Likely out" in page
+    assert "✅" not in md.split("### QB")[1].split("###")[0]
+
+
+def test_every_player_out_at_a_position_gets_no_start_either(monkeypatch, tmp_path):
+    """Not only the lone-player case: two QBs both Out are still scored (the
+    all-ruled-out guard) and the better one used to read "Start"."""
+    a, b = _p("qa", "Out One", "MIN"), _p("qb", "Out Two", "DET")
+    ws, _ = _week(monkeypatch, tmp_path, [a, b], ranks={"qa": 8.0, "qb": 20.0},
+                  statuses={"qa": "Out", "qb": "Out"}, outlook=None,
+                  playing={"MIN", "DET"})
+    md = render_markdown_for(ws.recs["QB"])
+    assert "✅" not in md and "No playable QB: Out One won't play (Out)" in md
+
+
+def test_a_playable_pick_still_says_start(monkeypatch, tmp_path):
+    a, b = _p("qa", "Healthy One", "MIN"), _p("qb", "Out Two", "DET")
+    ws, _ = _week(monkeypatch, tmp_path, [a, b], ranks={"qa": 8.0, "qb": 20.0},
+                  statuses={"qb": "Out"}, outlook=None, playing={"MIN", "DET"})
+    assert ws.recs["QB"].pick_blocker is None
+    assert "✅ **Start:** Healthy One" in render_markdown_for(ws.recs["QB"])
+
+
+def render_markdown_for(rec):
+    from ff_startsit.output.render import render_markdown
+    return render_markdown(rec, title="QB")
+
+
+def test_a_close_call_between_two_players_who_wont_play_is_not_a_close_call(
+        monkeypatch, tmp_path):
+    """Review of f574c8e: two OUT quarterbacks with no ECR both score 0.0,
+    which sets close_call, and every renderer checked close_call first — so the
+    section said "lean, don't bank on it" and never "No playable QB"."""
+    import html as _html
+    from ff_startsit.output.html import _position_section
+    a, b = _p("qa", "Out One", "MIN"), _p("qb", "Out Two", "DET")
+    ws, _ = _week(monkeypatch, tmp_path, [a, b], ranks={},
+                  statuses={"qa": "Out", "qb": "Out"}, outlook=None,
+                  playing={"MIN", "DET"})
+    rec = ws.recs["QB"]
+    assert rec.close_call and rec.pick_blocker == "Out"   # the reviewer's state
+    md = render_markdown_for(rec)
+    page = _html.unescape(_position_section("QB", rec))
+    for out in (md, page):
+        assert "No playable QB: Out" in out
+        assert "Close call" not in out
+    from ff_startsit.output.discord import _alerts
+    assert not [a for a in _alerts([], {"QB": rec}) if "Too close" in a]

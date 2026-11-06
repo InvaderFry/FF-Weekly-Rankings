@@ -31,6 +31,15 @@ from .articles import verified_week
 UNIVERSAL_KINDS = frozenset({'QB', 'DST', 'K'})
 KINDS = ('QB', 'RB', 'WR', 'TE', 'DST', 'K', 'FLEX', 'OVERALL')
 TTL = 3 * 3600
+#: How long a *failure* is remembered. Shorter than ``TTL`` on purpose: the
+#: Week 9 lists failed for a few minutes right after Boone republished them
+#: (FantasyPros stamped them 01:10:44 UTC; the 01:11 run and a check at 01:22
+#: failed, every read from 01:23 on parsed), and a 3-hour memory of that turned a
+#: blip into an afternoon with no Boone column.
+FAILURE_TTL = 10 * 60
+#: A list that fails within this long of FantasyPros' publish stamp gets a
+#: note saying so, since a fresh republish is the likeliest reason it broke.
+REPUBLISH_WINDOW = 30 * 60
 PARTNER = 'https://partners.fantasypros.com/api/v1/consensus-rankings.php'
 WIDGET_PATH = '/external/widget/fp-widget.php'
 UA = HEADERS
@@ -247,13 +256,43 @@ def widget_sets(node: dict, week: int, season: int) -> dict[tuple[str, str], dic
     return result
 
 
+def _unparsed(detail: str) -> ValueError:
+    """``PARSE_REASON`` plus which check failed.
+
+    Every check used to raise the bare reason, so the Week 9 failure reached
+    Data status as "rankings table could not be parsed" four times with no way
+    to tell a truncated list from a repeated rank from a non-JSON body, and by
+    the time anyone looked the responses parsed again.
+    """
+    return ValueError(f'{PARSE_REASON} ({detail})')
+
+
+def republished_note(text: str, now: float) -> str:
+    """``"; Boone republished it at 01:10 UTC, ..."`` when the response says it
+    was published within ``REPUBLISH_WINDOW`` of ``now``, else ``""``."""
+    try:
+        data, _ = json.JSONDecoder().raw_decode(text[len('FPW.rankingsCB('):])
+        stamp = float(data['last_updated_ts'])
+    except (ValueError, TypeError, KeyError, IndexError):
+        return ''
+    age = now - stamp
+    if not 0 <= age <= REPUBLISH_WINDOW:
+        return ''
+    when = time.strftime('%H:%M', time.gmtime(stamp))
+    return (f'; Boone republished it at {when} UTC, {max(1, round(age / 60))} min '
+            'before this read, so FantasyPros may still have been updating it')
+
+
 def parse_rankings(text: str, node: dict, kind: str, scoring: str, week: int, season: int) -> list[ExternalRow]:
     prefix = 'FPW.rankingsCB('
     if not text.startswith(prefix):
-        raise ValueError(PARSE_REASON)
-    data, end = json.JSONDecoder().raw_decode(text[len(prefix):])
+        raise _unparsed('not a rankings response')
+    try:
+        data, end = json.JSONDecoder().raw_decode(text[len(prefix):])
+    except ValueError:
+        raise _unparsed('response is not complete JSON') from None
     if text[len(prefix) + end:].strip() not in {')', ');'} or not isinstance(data, dict):
-        raise ValueError(PARSE_REASON)
+        raise _unparsed('response has trailing data')
     contributor = node['proFilters']
     expected = {'sport': 'NFL', 'ranking_type_name': 'weekly', 'year': str(season),
                 'week': str(week), 'position_id': {'FLEX': 'FLX', 'OVERALL': 'ALL'}.get(kind, kind),
@@ -263,15 +302,20 @@ def parse_rankings(text: str, node: dict, kind: str, scoring: str, week: int, se
     if data.get('expert_names') != {contributor: 'Justin Boone'} or data.get('total_experts') != 1:
         raise ValueError('ranking response did not name Justin Boone as its sole contributor')
     players = data.get('players')
-    if not isinstance(players, list) or data.get('count') != len(players):
-        raise ValueError(PARSE_REASON)
+    if not isinstance(players, list):
+        raise _unparsed('no player list')
+    if data.get('count') != len(players):
+        raise _unparsed(f"count says {data.get('count')}, list has {len(players)}")
     rows = []
     for row in players:
         value = row.get('experts', {}).get(contributor)
         # No aggregate fallback, including for a player unranked by Boone.
-        if isinstance(value, bool):
-            raise ValueError(PARSE_REASON)
-        rank = float(value)
+        try:
+            if isinstance(value, bool):
+                raise TypeError
+            rank = float(value)
+        except (TypeError, ValueError):
+            raise _unparsed(f"no rank for {row.get('player_name', 'a player')}") from None
         rows.append(ExternalRow(row['player_name'], row.get('player_team_id'),
                                 row['player_position_id'], rank))
     validate_rows(rows, kind)
@@ -280,24 +324,31 @@ def parse_rankings(text: str, node: dict, kind: str, scoring: str, week: int, se
 
 def validate_rows(rows: list[ExternalRow], kind: str) -> None:
     minimum = 20 if kind in {'FLEX', 'OVERALL'} else 10
-    if len(rows) < minimum or rows[0].value != 1:
-        raise ValueError(PARSE_REASON)
+    if len(rows) < minimum:
+        raise _unparsed(f'only {len(rows)} players listed')
+    if rows[0].value != 1:
+        raise _unparsed(f'list starts at rank {rows[0].value:g}')
     last = 0
     seen = set()
     good = 0
     for row in rows:
-        if (not math.isfinite(row.value) or row.value <= last or row.value != int(row.value)
-                or row.key() in seen or not isinstance(row.name, str)):
-            raise ValueError(PARSE_REASON)
+        if not isinstance(row.name, str):
+            raise _unparsed('a row has no player name')
+        if not math.isfinite(row.value) or row.value != int(row.value):
+            raise _unparsed(f'rank {row.value} for {row.name} is not a whole number')
+        if row.value <= last:
+            raise _unparsed(f'rank {row.value:g} for {row.name} repeats or is out of order')
+        if row.key() in seen:
+            raise _unparsed(f'{row.name} is listed twice')
         last = row.value
         seen.add(row.key())
         good += bool(normalize_team(row.team) and len(row.name.split()) >= 2)
         if kind not in {'FLEX', 'OVERALL'} and row.position != kind:
-            raise ValueError(PARSE_REASON)
+            raise _unparsed(f'{row.name} is listed as {row.position} on the {kind} list')
         if kind == 'FLEX' and row.position not in {'RB', 'WR', 'TE'}:
-            raise ValueError(PARSE_REASON)
+            raise _unparsed(f'{row.name} is listed as {row.position} on the FLEX list')
     if good / len(rows) < .6:
-        raise ValueError(PARSE_REASON)
+        raise _unparsed('too few rows carry a team and a full name')
 
 
 class AnalystFetcher:
@@ -314,6 +365,8 @@ class AnalystFetcher:
         self._lists = {}
         self._overall_urls = {}
         self.unavailable = {}
+        #: Injectable clock for ``republished_note``.
+        self.now = time.time
 
     def _cached(self, key, build):
         path = self.data_dir / f'analyst-boone-widget-v1-{self.season}-{key}.json' if self.data_dir else None
@@ -321,7 +374,9 @@ class AnalystFetcher:
             stored = read_json_or_none(path)
             if isinstance(stored, dict):
                 stamp = stored.get('fetched')
-                if (isinstance(stamp, (int, float)) and 0 <= time.time() - stamp < TTL
+                value = stored.get('value')
+                ttl = FAILURE_TTL if isinstance(value, dict) and 'reason' in value else TTL
+                if (isinstance(stamp, (int, float)) and 0 <= time.time() - stamp < ttl
                         and isinstance(stored.get('value'), dict)
                         and any(isinstance(stored['value'].get(k), str)
                                 for k in ('body', 'text', 'reason'))):
@@ -460,12 +515,14 @@ class AnalystFetcher:
                           id=node['expert'], type='ST', scoring='PPR' if scoring == 'ppr' else 'HALF',
                           filters=node['proFilters'], widget='ST')
             def build():
+                text = ''
                 try:
                     text = self._get(PARTNER + '?' + urlencode(params))
                     parse_rankings(text, node, kind, scoring, week, self.season)
                     return {'text': text}
                 except (ValueError, TypeError, KeyError, AttributeError) as exc:
-                    return {'reason': str(exc) if isinstance(exc, ValueError) else PARSE_REASON}
+                    reason = str(exc) if isinstance(exc, ValueError) else PARSE_REASON
+                    return {'reason': reason + republished_note(text, self.now())}
                 except Exception:
                     return {'reason': 'ranking data unreachable'}
             data = self._cached(f'{week}-{kind}-{scoring or "universal"}', build)

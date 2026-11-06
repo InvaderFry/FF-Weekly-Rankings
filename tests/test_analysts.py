@@ -355,3 +355,69 @@ def test_overall_article_is_lazy_tabbed_fallback_not_invented_all_list():
     assert result.provenance['RB'] == ('RB', 'ppr')
     assert all('top-players' in r.url for r in result.lists)
     assert not any('position=ALL' in url for url in session.calls)
+
+
+# --- Week 9: transient failures right after a republish -------------------------
+
+def test_parse_failures_say_which_check_failed():
+    """Week 9's failures reached Data status as four bare "could not be
+    parsed" lines, and by the time anyone looked the lists parsed again."""
+    data = decoded('ppr_wr')
+    data['count'] = len(data['players']) + 3
+    with pytest.raises(ValueError, match=r'could not be parsed \(count says \d+, list has \d+\)'):
+        parse_rankings(wrapped(data), node('fullppr_wr'), 'WR', 'ppr', 1, 2026)
+    data = decoded('ppr_wr')
+    data['players'][2]['experts'] = {k: '2' for k in data['players'][2]['experts']}
+    with pytest.raises(ValueError, match=r'rank 2 for .* repeats or is out of order'):
+        parse_rankings(wrapped(data), node('fullppr_wr'), 'WR', 'ppr', 1, 2026)
+    with pytest.raises(ValueError, match=r'could not be parsed \(not a rankings response\)'):
+        parse_rankings('<html>busy</html>', node('fullppr_wr'), 'WR', 'ppr', 1, 2026)
+
+
+def test_a_failure_right_after_a_republish_says_so(tmp_path):
+    """FantasyPros stamped Boone's Week 9 lists 01:10:44 UTC; the run read
+    them about a minute later and three of four failed."""
+    stamp = 1_793_927_444  # 2026-11-06 01:10:44 UTC, from the live response
+
+    class Republishing(Session):
+        def get(self, url, **kwargs):
+            response = super().get(url, **kwargs)
+            if 'position=QB' in url:
+                data = decoded('half_qb')
+                data['count'] += 1
+                data['last_updated_ts'] = stamp
+                response.text = wrapped(data)
+            return response
+    f = AnalystFetcher(2026, tmp_path, Republishing())
+    f.now = lambda: stamp + 66
+    status = f.fetch([PLAYERS[-1]], 1, 'ppr').status(1, 'League')[1]
+    assert ('Boone republished it at 01:10 UTC, 1 min before this read, so '
+            'FantasyPros may still have been updating it') in status
+    # An old stamp is not blamed.
+    f2 = AnalystFetcher(2026, tmp_path / 'b', Republishing())
+    f2.now = lambda: stamp + 5 * 3600
+    assert 'republished' not in f2.fetch([PLAYERS[-1]], 1, 'ppr').status(1, 'League')[1]
+
+
+def test_a_failure_is_remembered_for_minutes_not_hours(tmp_path):
+    import ff_startsit.sources.analysts as A
+
+    class Truncated(Session):
+        def get(self, url, **kwargs):
+            response = super().get(url, **kwargs)
+            if 'position=QB' in url:
+                data = decoded('half_qb')
+                data['count'] += 1
+                response.text = wrapped(data)
+            return response
+    AnalystFetcher(2026, tmp_path, Truncated()).fetch([PLAYERS[-1]], 1, 'ppr')
+    # Age every cache file past the failure TTL but well inside the success TTL.
+    for path in tmp_path.glob('*.json'):
+        stored = json.loads(path.read_text())
+        stored['fetched'] -= A.FAILURE_TTL + 60
+        path.write_text(json.dumps(stored))
+    later = Session()
+    ranks = AnalystFetcher(2026, tmp_path, later).fetch([PLAYERS[-1]], 1, 'ppr')
+    assert [u for u in later.calls if 'position=QB' in u]   # the failure was retried
+    assert ranks.by_position.get('QB')
+    assert not [u for u in later.calls if '/author/' in u]  # successes still cached

@@ -408,7 +408,7 @@ def _playing_teams(signals, week: int) -> Optional[set]:
 
 
 #: The flag a bye-week player carries in every table.
-BYE_FLAG = "on bye this week"
+from .models import BYE_FLAG  # noqa: E402  (re-exported; defined in models)
 
 
 def bye_keys(players: Sequence[Player], playing: Optional[set]) -> dict[str, str]:

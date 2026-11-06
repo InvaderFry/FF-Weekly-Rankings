@@ -19,6 +19,11 @@ if TYPE_CHECKING:  # pragma: no cover - typing only; boards imports nothing from
     from .boards.models import ExpertBoard
 
 
+#: The flag a bye-week player carries in every table (``report.bye_keys``).
+#: Here rather than in ``report`` so ``Recommendation.pick_blocker`` can read it.
+BYE_FLAG = "on bye this week"
+
+
 def _fmt_raw(value: float) -> str:
     """Round a raw signal value to 2dp for display, without a trailing point/zeros.
 
@@ -207,6 +212,32 @@ class Recommendation:
         tight end still has to be startable.
         """
         return len([s for s in self.scores if s.final is not None]) < 2
+
+    @property
+    def pick_blocker(self) -> Optional[str]:
+        """Why the top scored player won't play, or None if he is expected to.
+
+        Normally a ruled-out player carries no score and can't be the pick.
+        But when *everyone* at a position is ruled out, ``blend`` scores them
+        anyway (an empty table answers "all my RBs are out" worse than a bad
+        one), so the top of the list is someone who won't play. Every renderer
+        used to print "✅ Start" over him: HailMeowy's Week 9 QB section read
+        "✅ Start: Kyler Murray" directly under the lineup-hole warning saying
+        he wouldn't play. Renderers ask this first and say so instead.
+
+        Reads the same two facts the availability check does: the injury
+        signal's 0.0 (OUT/IR/likely out) and the bye flag.
+        """
+        scored = [s for s in self.scores if s.final is not None]
+        if not scored:
+            return None
+        top = scored[0]
+        if BYE_FLAG in top.flags:
+            return BYE_FLAG
+        sv = top.raw.get("injury")
+        if sv is not None and sv.available and sv.raw == 0.0:
+            return sv.note or "ruled out"
+        return None
 
     @property
     def lone_candidate(self) -> bool:

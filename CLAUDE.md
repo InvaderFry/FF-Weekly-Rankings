@@ -675,6 +675,20 @@ position-specific — he has not posted *that list* yet — from the ones that a
 identical at every position and therefore belong in Data status once rather than
 repeated under every table.
 
+**A parse failure names its check, and is remembered briefly.** Week 9's run
+read every Boone list except one per scoring as "rankings table could not be
+parsed". FantasyPros stamped all of them `last_updated_ts` 01:10:44 UTC, the
+run fetched at 01:11:50, a check at 01:22 still failed, and every read from
+01:23 on (64 in a row) parsed. So the likeliest cause is lists served
+half-updated just after a republish, and the bare reason could not confirm it.
+Now each check raises `PARSE_REASON (detail)` ("count says 31, list has 30",
+"rank 2 for X repeats or is out of order"), a failure within
+`REPUBLISH_WINDOW` of the publish stamp says so (`republished_note`), and a
+cached failure lasts `FAILURE_TTL` (10 minutes), not `TTL`: three hours of
+remembered failure turned a few-minute blip into an afternoon without the
+column. Nothing is cached between Actions runs, so a scheduled pass already
+retried on its own; the short TTL matters for local and back-to-back runs.
+
 Two rules about what it may claim. `engine.analyst.detect_conflicts` compares
 the top two, and the **boundary pair only when a caller hands it one**
 (`boundary_pair`) — resolved from the built lineup by
