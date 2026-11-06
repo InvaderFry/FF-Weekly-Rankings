@@ -132,6 +132,11 @@ class PlayerScore:
     # Overall rest-of-season rank, only populated by the waiver pass. Never
     # enters the weekly blend or calibration corpus.
     season_rank: Optional[float] = None
+    # Rest-of-season *positional* rank (FantasyPros "WR38" -> 38), and whether
+    # his team is off this week. Waiver pass only. Together they stand in for
+    # the weekly rank on the add path, which FantasyPros leaves out on a bye.
+    season_pos_rank: Optional[float] = None
+    on_bye: bool = False
 
 
 @dataclass

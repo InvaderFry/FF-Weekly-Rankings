@@ -604,3 +604,25 @@ def test_board_sources_supply_the_quotes_and_columnfetcher_is_not_used(tmp_path,
     add = next((t for t in bundle.adds if t.score.player.key == "f1"), None)
     if add is not None:
         assert add.mentions[0].author == "Justin Boone"
+
+
+def test_a_free_agent_on_bye_reaches_the_adds_on_his_ros_rank(tmp_path):
+    """FantasyPros' weekly list leaves a bye-week player out, so he has no ECR;
+    build_bundle marks him on bye and hands the add path his ROS positional rank
+    (Germie Bernard, behind Pittsburgh's Week 9 bye)."""
+    bye_wr = PoolPlayer(_p("bern", "Bye Wr", "WR", team="PIT"), percent_owned=20.0)
+
+    class _Season:
+        pos_ranks = {"bern": 20, "m7": 90}
+
+        def fetch(self, players, scoring):
+            return {p.key: {"m4": 65, "t3": 68, "t4": 66, "m7": 240,
+                            "bern": 60}.get(p.key, 150) for p in players}
+
+    b = _build(tmp_path, provider=_Provider(pool=[bye_wr]), schedule=_Schedule(),
+               season_values=_Season())
+    assert [(a.score.player.key, a.drop.player.key) for a in b.adds] == [("bern", "m7")]
+    assert any("on bye this week" in r for r in b.adds[0].reasons)
+    # Without the schedule nobody is known to be on bye: he stays unranked.
+    assert _build(tmp_path, provider=_Provider(pool=[bye_wr]),
+                  season_values=_Season()).adds == []

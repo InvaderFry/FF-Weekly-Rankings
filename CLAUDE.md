@@ -556,7 +556,12 @@ at the position, with blend score, FP, CBS and Boone side by side.
   waiver column titled by week, which is why `never=("college",)` exists.
 - **Parsing fails closed.** Each parser raises on a page it doesn't recognise
   ("layout not recognised"), and the page shapes are pinned by trimmed live
-  fixtures in `tests/fixtures/boards/` (prose removed). Specific shapes worth not
+  fixtures in `tests/fixtures/boards/` (prose removed). Trim prose, **never markup**:
+  `richard_trade_chart.html` had CBS's `TableBase` wrapper divs and `<tr>`
+  classes stripped, so `parse_richard` passed its tests while every live Week 8
+  and 9 read failed as "layout not recognised" and the Richard column, his
+  value veto and his half of the values sheet went dark.
+  `richard_trade_chart_live.html` keeps the live markup. Specific shapes worth not
   rediscovering: Eisenberg's per-card position label can be off-offense (Travis
   Hunter is "CB"), so it falls back to the section's majority; Boone puts two
   players under one heading with one table ("$9/$4"), split in heading order;
@@ -1025,6 +1030,21 @@ reason a piece of it is shaped the way it is.
   anonymous backup looking excellent — which recommended adding him and dropping
   your bye-week RB1. So `score.has_ecr` gates both adds and drops; everything
   else is reported as unranked rather than ranked last.
+
+  **The one exception is a free agent on bye** (`score.ranked_on_bye`, found on
+  SwiftWalkAaron's Week 9 page). FantasyPros' weekly list drops a bye-week
+  player entirely, so the gate made the best skill player on the wire
+  invisible for a week: Germie Bernard, FantasyPros' WR38 rest of season and
+  28 on Boone's chart, behind Pittsburgh's bye, while a WR56 was the add. A
+  claim is a rest-of-season move, so when the schedule says his team is off
+  (`PlayerScore.on_bye`) and the ROS page gives a positional rank
+  (`PlayerScore.season_pos_rank`, read off the same FantasyPros page as
+  `season_rank`; `SeasonValueProvider.pos_ranks`), that rank stands in for
+  the weekly one: `ros_depth_ratio` orders him, and `_worth_adding` compares
+  him ROS-to-ROS against the drop (his `final` is an injury-only artefact and
+  is never read, so no margin either). Not on bye, or no schedule, and he is
+  unranked as before. K/DEF never: a streamer on bye is the one who can't help.
+  Drops are untouched; a rostered player with no weekly rank is still never cut.
 
   A note carrying a league's own numbers goes in **`WaiverBundle.league_notes`**
   and renders inside that league's section; `notes` is only for text that is

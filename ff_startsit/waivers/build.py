@@ -217,13 +217,16 @@ def build_bundle(settings: Settings, label: str, provider: LeagueViewProvider,
     signals = (list(signals) if signals is not None
                else build_signals(settings, preseason=False))
     recs, index = score_positions(settings, candidates, week, signals=signals)
+    season_provider = season_values or SeasonValueProvider()
     try:
-        season_ranks = (season_values or SeasonValueProvider()).fetch(candidates, settings.scoring)
+        season_ranks = season_provider.fetch(candidates, settings.scoring)
     except Exception as exc:
         print(f"warning: rest-of-season rankings unavailable: {exc}", file=sys.stderr)
         season_ranks = {}
+    season_pos_ranks = getattr(season_provider, "pos_ranks", None) or {}
     for key, score in index.items():
         score.season_rank = season_ranks.get(key)
+        score.season_pos_rank = season_pos_ranks.get(key)
     if season_ranks:
         # The scoring belongs in the *label*: the footer dedupes on (label, url),
         # so three leagues at two scorings rendered two links reading exactly
@@ -270,6 +273,12 @@ def build_bundle(settings: Settings, label: str, provider: LeagueViewProvider,
     schedule = schedule or ScheduleProvider(cache_dir=settings.data_dir)
     playing = _weeks_playing(schedule, week)
     bye_teams = _bye_teams(candidates, playing.get(week))
+    # FantasyPros' weekly page leaves a bye-week player out, so without this a
+    # free agent on bye could never be an add however good he is (Germie
+    # Bernard, WR38 rest of season, behind Pittsburgh's Week 9 bye). The add
+    # path ranks him on his rest-of-season positional rank instead.
+    for score in index.values():
+        score.on_bye = bool(score.player.team and score.player.team in bye_teams)
 
     protected = _lineup_keys(my_scores, rules)
     drops = droppable(my_scores, rules, protected=protected)

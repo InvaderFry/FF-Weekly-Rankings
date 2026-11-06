@@ -69,7 +69,7 @@ def parse_api_response(payload: dict) -> list[ExternalRow]:
                 position=(p.get("player_position_id") or "").upper(),
                 value=float(rank),
                 extra={"tier": p.get("tier"), "rank_min": p.get("rank_min"),
-                       "rank_max": p.get("rank_max")},
+                       "rank_max": p.get("rank_max"), "pos_rank": p.get("pos_rank")},
             )
         )
     return rows

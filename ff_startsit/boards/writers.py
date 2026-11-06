@@ -235,14 +235,20 @@ SCORING_COLUMN = {"std": "non", "half": "0.5", "ppr": "ppr"}
 
 def parse_richard(body: str) -> list[Listed]:
     """His four "<Position> trade values" tables: Player, tm, then a value per
-    format (QB: 1QB-4 / 1QB-6 / 2QB; others: non / 0.5 / PPR). "--" = no value."""
+    format (QB: 1QB-4 / 1QB-6 / 2QB; others: non / 0.5 / PPR). "--" = no value.
+
+    The live page wraps each table in CBS's ``TableBase`` divs and puts a class
+    on every ``<tr>``; only plain markup between the heading and its table is
+    allowed (no other ``<h2>``), so a table can't be credited to the heading
+    before it."""
     listed: list[Listed] = []
-    for heading, table in re.findall(r"<h2>\s*([^<]*?trade values)\s*</h2>\s*<table.*?>(.*?)</table>",
-                                     body, re.S | re.I):
+    for heading, table in re.findall(
+            r"<h2[^>]*>\s*([^<]*?trade values)\s*</h2>(?:(?!<h2|<table).)*<table\b[^>]*>(.*?)</table>",
+            body, re.S | re.I):
         pos = _CHART_POS.get(heading.lower().replace("trade values", "").strip())
         if pos is None:
             continue
-        rows = re.findall(r"<tr>(.*?)</tr>", table, re.S)
+        rows = re.findall(r"<tr\b[^>]*>(.*?)</tr>", table, re.S)
         if not rows:
             continue
         head = [_text(c).lower() for c in re.findall(r"<t[hd][^>]*>(.*?)</t[hd]>", rows[0], re.S)]

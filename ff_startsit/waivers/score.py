@@ -220,6 +220,35 @@ def depth_ratio(score: PlayerScore, rules: LeagueRules) -> Optional[float]:
     return float(value.raw) / starter_demand(score.player.position, rules)
 
 
+def ranked_on_bye(score: PlayerScore) -> bool:
+    """A skill player with no weekly rank *because* his team is off this week,
+    who has a rest-of-season positional rank to stand in for it.
+
+    FantasyPros' weekly list drops a bye-week player entirely, so ``has_ecr``
+    reads him exactly like an unranked backup, and on the add path that made
+    the best free agent on the wire invisible for a week (Germie Bernard,
+    FantasyPros' WR38 and 28 on Boone's chart, while a WR56 was recommended).
+    A waiver claim is a rest-of-season move, so the ROS rank is the honest
+    reading. Kickers and defenses are excluded: they are weekly streams, and
+    one on bye is the one who can't help this week.
+    """
+    return (score.on_bye and not has_ecr(score)
+            and score.season_pos_rank is not None
+            and (score.player.position or "").upper() not in STREAM_POSITIONS)
+
+
+def ros_depth_ratio(score: PlayerScore, rules: LeagueRules) -> Optional[float]:
+    """``depth_ratio`` on the rest-of-season positional rank, or ``None``."""
+    if score.season_pos_rank is None or score.season_pos_rank <= 0:
+        return None
+    return float(score.season_pos_rank) / starter_demand(score.player.position, rules)
+
+
+def _add_ratio(score: PlayerScore, rules: LeagueRules) -> Optional[float]:
+    """The ratio an add is judged on: weekly, or ROS for a player on bye."""
+    return ros_depth_ratio(score, rules) if ranked_on_bye(score) else depth_ratio(score, rules)
+
+
 def keep_counts(rules: LeagueRules) -> dict[str, int]:
     """How many players at each position must survive any drop suggestion.
 
@@ -299,14 +328,18 @@ def add_candidate_ratio(score: Optional[PlayerScore], pool_player: PoolPlayer,
     the table it explains — the same failure ``no_trades_reason`` avoided by
     moving its superflex test onto ``LeagueRules``.
     """
-    if score is None or score.final is None or not has_ecr(score):
+    if score is None:
+        return None
+    # A bye-week player's ``final`` is whatever injury alone blends to, so it
+    # is neither required nor read for him: ``ranked_on_bye`` is his reading.
+    if not ranked_on_bye(score) and (score.final is None or not has_ecr(score)):
         return None
     if (pool_player.injury_status or "").upper() in _STASH_STATUSES:
         return None
     injury = score.raw.get("injury")
     if injury is not None and injury.available and injury.raw == 0:
         return None
-    ratio = depth_ratio(score, rules)
+    ratio = _add_ratio(score, rules)
     if ratio is None or ratio > MAX_ADD_DEPTH_RATIO:
         return None  # too deep at his position to be worth a roster spot
     return ratio
@@ -481,8 +514,10 @@ def _add_candidates(index: dict[str, PlayerScore], pool: Sequence[PoolPlayer],
         if ratio is None:
             continue
         candidates.append((ratio, index[key]))
+    # A bye-week add sorts on his ROS ratio among everyone else's weekly ones:
+    # both are FantasyPros positional ranks over the same starter demand.
     candidates.sort(key=lambda c: (c[1].player.position in STREAM_POSITIONS,
-                                   c[0], -c[1].final))
+                                   c[0], -(c[1].final or 0.0)))
     return candidates
 
 
@@ -504,7 +539,7 @@ def _build_target(score: PlayerScore, ratio: float, drop: Optional[PlayerScore],
     # No margin for a bye-week stream: the player on bye has no ECR, so his
     # score is an artefact of the signals that remain (Boswell read 100.0 and
     # printed "+-13.5") and the difference measures nothing.
-    if (drop is not None and not bye_stream
+    if (drop is not None and not bye_stream and not ranked_on_bye(score)
             and drop.player.position == score.player.position
             and score.final is not None and drop.final is not None):
         margin = score.final - drop.final
@@ -680,6 +715,11 @@ def _worth_adding(add: PlayerScore, drop: PlayerScore, rules: LeagueRules) -> bo
         if (add.season_rank is None or drop.season_rank is None
                 or add.season_rank >= drop.season_rank):
             return False
+    if ranked_on_bye(add):
+        # No weekly reading to compare, and his ``final`` is an injury-only
+        # artefact: rest of season against rest of season, at any position.
+        add_ratio, drop_ratio = ros_depth_ratio(add, rules), ros_depth_ratio(drop, rules)
+        return add_ratio is not None and drop_ratio is not None and add_ratio < drop_ratio
     if add.player.position == drop.player.position:
         if add.final is None or drop.final is None:
             return False
@@ -734,6 +774,11 @@ def add_reasons(target: WaiverTarget) -> list[str]:
     # that used to be the only place this ratio reached the reader, but the
     # add table's Depth column now shows the same reading numerically, and a
     # "why" that repeats the row it sits in isn't a reason.
+    if ranked_on_bye(target.score):
+        reasons.append(
+            f"on bye this week, so FantasyPros' weekly list skips him: judged on his "
+            f"rest-of-season rank ({target.score.player.position}"
+            f"{target.score.season_pos_rank:g})")
     if target.journalist_avg is not None:
         reasons.append(f"preferred journalists average him {target.journalist_avg:.1f}")
     if target.mentions:
