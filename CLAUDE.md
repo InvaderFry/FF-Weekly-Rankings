@@ -1427,6 +1427,17 @@ missing-reading counts carrying the signal's *own* note (`venue unknown` and
 It is **never a scoring input** — `finish_status` only reads what the blend
 already produced.
 
+That per-league catch only works if a league's failure *is* a `RosterError`
+(or `SleeperError`). An HTTP 5xx used to leave `ESPNProvider._fetch` as a bare
+`requests.HTTPError`, and one league's 502 ended every league after it. So
+`_fetch` and `SleeperClient._get` wrap a bad status or a non-JSON body (naming
+the status), and both loops also catch `requests.RequestException`, so a
+provider that forgets to wrap still costs one league. The same applies one
+level down: when the FantasyPros page can't be reached, `ECRSignal` notes
+`ECR page unreachable` on each player (not `no ECR rank`, which means the page
+was read and didn't list him) and adds an `("ecr-unreachable", reason, week)`
+status entry naming the status code or exception class.
+
 Two things it must keep doing. It says explicitly that a generation or fetch
 time is **not** the provider's update time, because the one thing a status block
 must not do is imply a freshness it never measured; a cache-file mtime is
