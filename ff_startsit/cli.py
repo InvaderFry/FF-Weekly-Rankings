@@ -1349,7 +1349,7 @@ def cmd_backtest(args, settings: Settings, outcome_provider=None) -> int:
     provider = outcome_provider or _sleeper_outcome_provider(settings)
     result = run_backtest(decisions, provider, base_weights=settings.weights)
 
-    if not result.decisions_used:
+    if not result.decisions_used and not result.pick_did_not_play:
         print("Could not join any logged decision to an actual outcome yet — "
               "outcomes post after games are played.", file=sys.stderr)
         return 1
@@ -1364,6 +1364,10 @@ def _print_backtest(result) -> None:
     print(f"  top-pick hit-rate {result.hit_rate:.3f} "
           f"({result.hits}/{result.decisions_used})")
     print(f"  avg points left on bench per decision: {result.avg_points_lost:.2f}")
+    if result.pick_did_not_play:
+        print(f"  pick did not play: {result.pick_did_not_play} decision(s), excluded "
+              "from the hit-rate (the pick had no points while the week's stats "
+              "exist, usually a late scratch)")
     print("  close-call honesty:")
     if result.confident_n:
         print(f"    confident picks : hit-rate {result.confident_hit_rate:.3f} "

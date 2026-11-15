@@ -381,7 +381,13 @@ logged decision under **the weights that run actually used** (`Decision.weights`
 joins the pick to the same Sleeper outcomes, and reports top-pick hit-rate plus a
 **confident-vs-close-call hit-rate split** — the honesty check on close-call
 flagging. It reuses `weighted_final`, the `OutcomeProvider` seam, and `load_decisions`;
-it never writes weights.
+it never writes weights. The pick is decided **before** outcomes are joined
+(highest blended final among the scored candidates): joining first and taking
+the best of whoever had points promoted the runner-up whenever the pick was a
+late scratch, scoring a decision the tool never made. A pick with no points
+while another candidate in the decision joined goes to
+`BacktestResult.pick_did_not_play`, reported on its own line and excluded from
+every hit-rate; a decision where nobody joined is simply unjoinable.
 
 `sources/experts.py` is a **setup helper, not a signal** — it resolves analyst
 names to the FantasyPros expert ids `FF_PREFERRED_EXPERTS` wants.
