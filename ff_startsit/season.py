@@ -104,12 +104,20 @@ def is_preseason(today: Optional[date] = None) -> bool:
 
 
 def date_week(today: Optional[date] = None) -> int:
-    """Rough NFL week from a date — a fallback when Sleeper /state/nfl fails."""
+    """Rough NFL week from a date — a fallback when Sleeper /state/nfl fails.
+
+    Fantasy weeks turn over on **Tuesday**: Week 1 runs from kickoff to the
+    following Monday and each later week runs Tuesday to Monday. So the count is
+    anchored to the Tuesday on or before kickoff, not to kickoff itself —
+    counting 7-day blocks from a Wednesday (2026) or Thursday (2025) kickoff
+    read the Tuesday waiver day as the week just finished.
+    """
     today = today or date.today()
     kickoff = first_kickoff(season_year(today))
     if today < kickoff:
         return 1
-    return max(1, min(18, (today - kickoff).days // 7 + 1))
+    anchor = kickoff - timedelta(days=(kickoff.weekday() - 1) % 7)  # Tuesday
+    return max(1, min(18, (today - anchor).days // 7 + 1))
 
 
 def date_season(today: Optional[date] = None) -> str:
