@@ -63,7 +63,22 @@ concurrency:
   queue: max
 
 jobs:
+  # Scheduled runs publish only in season (the rehearsal week, then kickoff
+  # through the Monday that ends Week 18); a manual dispatch always runs. The
+  # decision is workflow.in_season, tested offline. Stdlib only, so the
+  # runner's own Python runs it with no install.
+  gate:
+    runs-on: ubuntu-latest
+    outputs:
+      run: ${{ steps.season.outputs.run }}
+    steps:
+      - uses: actions/checkout@v7
+      - id: season
+        run: python3 -m ff_startsit.workflow in-season "$GITHUB_EVENT_NAME"
+
   report:
+    needs: gate
+    if: needs.gate.outputs.run == 'true'
     runs-on: ubuntu-latest
     environment:
       name: ${{ inputs.artifact_only && 'publishing-test' || 'github-pages' }}

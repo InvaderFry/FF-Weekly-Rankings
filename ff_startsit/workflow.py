@@ -420,11 +420,36 @@ def startsit_update_note(report: str, previous: str, url: str = "",
     return "\n".join(lines + [""] + markers) + "\n"
 
 
+def in_season(event, today=None, output=None):
+    """Whether this run should do its work: ``run=true`` or ``run=false``.
+
+    A manual dispatch always runs; a scheduled run only inside
+    ``season.in_season_window``. Out of season the workflow ends green with
+    nothing published, rather than posting a refusal every week of the
+    offseason. Written to ``GITHUB_OUTPUT`` for the gate job.
+    """
+    from .season import in_season_window
+
+    run = event != "schedule" or in_season_window(today)
+    print(f"run={'true' if run else 'false'}")
+    if not run:
+        print("Scheduled run out of season (before the rehearsal week or after "
+              "Week 18): nothing to publish. Run it by hand to force it.")
+    output = output or os.environ.get("GITHUB_OUTPUT")
+    if output:
+        with open(output, "a") as handle:
+            handle.write(f"run={'true' if run else 'false'}\n")
+    return run
+
+
 def main():
     if sys.argv[1] == "chatops":
         reply = chatops_reply(os.environ.get("COMMENT_BODY", ""))
         if reply is not None:
             Path("reply.md").write_text(reply, encoding="utf-8")
+    elif sys.argv[1] == "in-season":
+        # in-season EVENT_NAME
+        in_season(sys.argv[2])
     elif sys.argv[1] == "identity":
         print(issue_title(Path(sys.argv[2]).read_text(), sys.argv[3]))
     elif sys.argv[1] == "run":

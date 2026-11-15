@@ -1572,6 +1572,19 @@ trade as the decision log, and as Discord. Note the titles are now season-aware
 (`2026 Week 1 start/sit`); pre-existing week-only issues are left standing as
 history and are never reused.
 
+**Scheduled runs publish only in season.** Every workflow with a cron runs a
+`gate` job first (`workflow.py in-season "$GITHUB_EVENT_NAME"`, stdlib only,
+so the runner's own Python runs it with no install), and its real job `needs`
+it and runs only on `run == 'true'`. The rule is `season.in_season_window`:
+the rehearsal week, then kickoff through `season.season_end` (the Monday that
+ends Week 18, on the Tuesday-anchored weeks `date_week` counts), on Central
+dates. A `workflow_dispatch` always runs. Out of season the run ends green
+with nothing posted, including the waiver refusal banner (owner's decision,
+2026-11). GitHub separately disables schedules after 60 days without
+repository activity, which an offseason exceeds; `docs/SETUP.md` carries the
+September re-enable checklist, since no code can prevent it.
+`tests/test_season_gate.py` checks every cron workflow is gated.
+
 `ARTIFACT_ONLY=true` (the `artifact_only` dispatch input) is the rehearsal for
 publishing, and like the waiver rehearsal it is a *real* run with its effects
 withheld rather than a mock: `run_cli` strips `--discord` and `--log`, and the
