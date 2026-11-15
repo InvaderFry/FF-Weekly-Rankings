@@ -319,6 +319,23 @@ more than it looks: because a learned file now *replaces* the weight set, a
 premature `--write` zeroes every signal the log happened not to contain rather
 than merely diluting it.
 
+**Clearing the floors is not enough to write either: the fit must hold up out
+of sample.** Four signals at step 0.05 is 1,771 trial vectors, and the best of
+that many beats the current weights *in sample* on almost any corpus, noise
+included. So `calibrate` also runs leave-one-week-out validation
+(`learner.holdout`): for each week, fit on every other week (`grid_best`) and
+score the held-out week, the current weights scored on the same week.
+`--write` requires the mean held-out gain to reach `--min-gain` (default 0.02)
+**and** the per-week gains to be consistent: their mean at least
+`MIN_HOLDOUT_T` (2) standard errors above zero (`holdout_shortfall` says which
+failed). The consistency half is not decoration. In simulation (40 pure-noise
+corpora, 8 weeks x 3 decisions x 4 candidates) the mean alone let about a third
+write: one extreme vector wins every fold, so in-sample luck carries straight
+into the held-out score. With both, 2 of 40 wrote, while a strong real signal
+wrote 40 of 40 (`tests/test_calibrate_holdout.py` pins both rates). A weak but
+real signal writes about half the time and waits for more weeks, which is the
+right direction to err: a learned file replaces the whole weight set.
+
 `dedupe_decisions` (`log_reader.py`) collapses rows sharing `(season, week,
 scoring)` and the same candidate keys — the Thursday and Sunday passes over one
 week are one piece of evidence, not two — keeping the latest, since a repeat run

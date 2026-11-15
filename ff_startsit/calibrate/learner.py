@@ -23,6 +23,14 @@ from typing import Callable, Iterator, Mapping, Optional, Sequence
 from ..engine.blend import weighted_final
 from .log_reader import Decision
 
+#: How consistent the held-out gain must be across weeks before ``--write``:
+#: mean per-week gain over its standard error. A mean alone let pure-noise
+#: corpora write about a third of the time in simulation (one extreme vector
+#: fits every fold the same way, so in-sample luck carries straight into the
+#: held-out score); requiring the gain to show up week after week cut that to
+#: about 1 in 20 while a strong real signal still wrote every time.
+MIN_HOLDOUT_T = 2.0
+
 # One logged decision reduced to the candidates that joined to a real outcome.
 # It keeps ``season``/``week`` because the --write gate has to count *independent*
 # evidence, and a bare list of rows cannot say which week it came from.
@@ -58,6 +66,55 @@ class CalibrationResult:
     #: ``enough_data`` is True. "30 pairs but only 1 week" is actionable; a bare
     #: "not enough data" leaves the user guessing what to go collect.
     shortfalls: list[str] = field(default_factory=list)
+    #: Leave-one-week-out validation (``holdout``): for each week, the weights
+    #: fitted on every *other* week, scored on that week, averaged across weeks.
+    #: ``None`` when no week could be held out (one week, or no pairs).
+    holdout_concordance: Optional[float] = None
+    #: The current weights scored on the same held-out weeks, for comparison.
+    holdout_current_concordance: Optional[float] = None
+    holdout_weeks: int = 0
+    #: Per held-out week, the fitted weights' concordance minus the current
+    #: weights' — what the consistency check reads.
+    holdout_gains: list[float] = field(default_factory=list)
+
+    def holdout_consistency(self) -> Optional[float]:
+        """Mean per-week held-out gain over its standard error, or None with
+        fewer than two held-out weeks. Identical positive gains every week are
+        perfectly consistent (``inf``); identical non-positive ones are not."""
+        gains = self.holdout_gains
+        if len(gains) < 2:
+            return None
+        mean = sum(gains) / len(gains)
+        var = sum((g - mean) ** 2 for g in gains) / (len(gains) - 1)
+        if var == 0:
+            return float("inf") if mean > 0 else 0.0
+        return mean / (var / len(gains)) ** 0.5
+
+    def holdout_gain(self) -> Optional[float]:
+        if self.holdout_concordance is None or self.holdout_current_concordance is None:
+            return None
+        return round(self.holdout_concordance - self.holdout_current_concordance, 4)
+
+    def holdout_shortfall(self, min_gain: float) -> Optional[str]:
+        """Why the held-out check refuses a write, or None when it passes."""
+        gain = self.holdout_gain()
+        if gain is None:
+            return ("no week could be held out to check the fit (needs at least "
+                    "two weeks with comparable pairs)")
+        if gain < min_gain:
+            return (f"on weeks it was not fitted to, the learned weights scored "
+                    f"{self.holdout_concordance:.3f} against the current weights' "
+                    f"{self.holdout_current_concordance:.3f} (gain {gain:+.3f}, "
+                    f"need +{min_gain:.3f})")
+        t = self.holdout_consistency()
+        if t is None:
+            return ("only one week could be held out, so there is no telling a "
+                    "consistent gain from one lucky week")
+        if t < MIN_HOLDOUT_T:
+            return (f"the held-out gain (mean {gain:+.3f}) was not consistent across "
+                    f"{self.holdout_weeks} weeks: {t:.1f} standard errors above zero, "
+                    f"need {MIN_HOLDOUT_T:.0f}")
+        return None
 
 
 def signals_in(decisions: Sequence[Decision]) -> list[str]:
@@ -203,20 +260,8 @@ def calibrate(decisions: Sequence[Decision], provider: OutcomeProvider, *,
     # denominator for every weighting — sound to report and to gate --write on.
     current_conc, pairs = concordance(joined, current)
     current_hr = hit_rate(joined, current)
-
-    best_weights = dict(current)
-    best_conc = current_conc
-    best_hr = current_hr
-    for trial in simplex(signals, step):
-        conc, _ = concordance(joined, trial)
-        if conc > best_conc:
-            best_conc, best_weights = conc, trial
-            best_hr = hit_rate(joined, trial)
-        elif conc == best_conc:
-            # Tie on the objective: prefer the more accurate top pick.
-            hr = hit_rate(joined, trial)
-            if hr > best_hr:
-                best_hr, best_weights = hr, trial
+    best_weights, best_conc, best_hr = grid_best(joined, signals, step, current)
+    held, held_current, gains = holdout(joined, signals, step, current)
 
     weeks = len({(j.season, j.week) for j in joined})
     shortfalls = []
@@ -240,4 +285,65 @@ def calibrate(decisions: Sequence[Decision], provider: OutcomeProvider, *,
         weeks_used=weeks,
         enough_data=not shortfalls,
         shortfalls=shortfalls,
+        holdout_concordance=None if held is None else round(held, 4),
+        holdout_current_concordance=None if held_current is None else round(held_current, 4),
+        holdout_weeks=len(gains),
+        holdout_gains=[round(g, 4) for g in gains],
     )
+
+
+def grid_best(joined: Sequence[JoinedDecision], signals: Sequence[str], step: float,
+              current: Mapping[str, float]) -> tuple[dict[str, float], float, float]:
+    """``(weights, concordance, hit_rate)`` of the best grid vector on ``joined``.
+
+    Starts from ``current``, so a trial must strictly beat it on concordance
+    (or tie it and beat its hit-rate) to replace it.
+    """
+    best_weights = dict(current)
+    best_conc, _ = concordance(joined, current)
+    best_hr = hit_rate(joined, current)
+    for trial in simplex(signals, step):
+        conc, _ = concordance(joined, trial)
+        if conc > best_conc:
+            best_conc, best_weights = conc, trial
+            best_hr = hit_rate(joined, trial)
+        elif conc == best_conc:
+            # Tie on the objective: prefer the more accurate top pick.
+            hr = hit_rate(joined, trial)
+            if hr > best_hr:
+                best_hr, best_weights = hr, trial
+    return best_weights, best_conc, best_hr
+
+
+def holdout(joined: Sequence[JoinedDecision], signals: Sequence[str], step: float,
+            current: Mapping[str, float]) -> tuple[Optional[float], Optional[float], list[float]]:
+    """Leave-one-week-out: ``(fitted mean, current mean, per-week gains)``.
+
+    For each week, the grid is fitted on every other week and the result scored
+    on that week alone; the current weights are scored on the same week. The
+    in-sample best of ~1,771 vectors beats the current weights by chance on
+    almost any corpus, so only a gain that survives on weeks the fit never saw
+    is evidence. Weeks are the unit because a week's decisions share one slate,
+    one injury report and one weather system. Each week counts equally, and a
+    week whose held-out set has no comparable pair (or that leaves nothing to
+    fit on) is skipped.
+    """
+    weeks = sorted({(j.season, j.week) for j in joined})
+    fitted_scores: list[float] = []
+    current_scores: list[float] = []
+    for wk in weeks:
+        train = [j for j in joined if (j.season, j.week) != wk]
+        test = [j for j in joined if (j.season, j.week) == wk]
+        if not train:
+            continue
+        test_current, pairs = concordance(test, current)
+        if not pairs:
+            continue
+        fit, _, _ = grid_best(train, signals, step, current)
+        fitted_scores.append(concordance(test, fit)[0])
+        current_scores.append(test_current)
+    if not fitted_scores:
+        return None, None, []
+    n = len(fitted_scores)
+    gains = [f - c for f, c in zip(fitted_scores, current_scores)]
+    return sum(fitted_scores) / n, sum(current_scores) / n, gains

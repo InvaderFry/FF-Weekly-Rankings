@@ -261,6 +261,11 @@ def _build_parser() -> argparse.ArgumentParser:
                        help="minimum distinct weeks required to write (default 3). Weights "
                             "fitted to one week are fitted to that week's slate, not to your "
                             "leagues")
+    p_cal.add_argument("--min-gain", type=float, default=0.02, dest="min_gain",
+                       help="minimum leave-one-week-out concordance gain over the current "
+                            "weights required to write (default 0.02). The in-sample best "
+                            "of the grid beats the current weights by chance on almost "
+                            "any corpus")
     p_cal.add_argument("--log", type=Path, default=None, help="results log path (default: the cache log)")
     p_cal.add_argument("--write", action="store_true",
                        help="persist the learned weights so future runs auto-apply them")
@@ -1270,6 +1275,14 @@ def cmd_calibrate(args, settings: Settings, outcome_provider=None) -> int:
         if result.best_concordance <= result.current_concordance:
             print("Your current weights already match the best found — nothing to write.")
             return 0
+        held_out = result.holdout_shortfall(getattr(args, "min_gain", 0.02))
+        if held_out:
+            print("Not writing — the learned weights don't hold up on held-out "
+                  f"weeks: {held_out}.", file=sys.stderr)
+            print("An in-sample gain from a grid this size is mostly luck. Keep "
+                  "logging; a real edge survives being tested on weeks it wasn't "
+                  "fitted to.", file=sys.stderr)
+            return 1
         from .config import _validate_weights
         weights = _validate_weights(dict(result.best_weights), settings.weights)
         path = settings.learned_weights_path
@@ -1295,6 +1308,14 @@ def _print_calibration(result) -> None:
     print(f"  learned  weights: {_fmt_weights(result.best_weights, result.signals)}")
     print(f"           concordance {result.best_concordance:.3f}  "
           f"top-pick hit-rate {result.best_hit_rate:.3f}")
+    if result.holdout_concordance is not None:
+        t = result.holdout_consistency()
+        consistency = "" if t is None else (
+            "  consistency: every week" if t == float("inf")
+            else f"  consistency {t:.1f} SE")
+        print(f"  held-out (leave one week out, {result.holdout_weeks} week(s)): "
+              f"learned {result.holdout_concordance:.3f}  "
+              f"current {result.holdout_current_concordance:.3f}{consistency}")
     gain = result.best_concordance - result.current_concordance
     if not result.enough_data:
         print(f"  note: thin sample — {result.pairs_used} pairs; treat as directional only.")
