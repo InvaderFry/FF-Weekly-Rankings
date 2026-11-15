@@ -68,12 +68,28 @@ _ABBREV_ALIASES = {
 _FULL_NAME_TO_ABBREV = {name.lower(): abbr for abbr, name in TEAM_FULL_NAMES.items()}
 
 
+#: Values sources put in a team field that name no team. FantasyPros stamps a
+#: free agent ``FA``, which the loose match below would find inside "Atlanta
+#: Falcons".
+_NOT_A_TEAM = {"FA", "FREE AGENT"}
+
+
 def normalize_team(value: Optional[str]) -> Optional[str]:
-    """Return the canonical abbreviation for an abbreviation or full team name."""
+    """Return the canonical abbreviation for an abbreviation or full team name.
+
+    The loose substring fallback answers only when exactly **one** team
+    matches. It used to return the first match, so a bare city with two teams
+    ("New York", "Los Angeles") or a fragment ("Bay") was silently one of
+    them. ``None`` is the honest answer there: an unknown team drops a signal
+    and re-weights the rest, while a wrong one presents another team's data
+    as fact.
+    """
     if not value:
         return None
     v = value.strip()
     upper = v.upper()
+    if upper in _NOT_A_TEAM:
+        return None
     if upper in TEAM_FULL_NAMES:
         return upper
     if upper in _ABBREV_ALIASES:
@@ -82,7 +98,6 @@ def normalize_team(value: Optional[str]) -> Optional[str]:
     if lower in _FULL_NAME_TO_ABBREV:
         return _FULL_NAME_TO_ABBREV[lower]
     # Loose match on full names (handles minor punctuation/whitespace differences).
-    for full_lower, abbr in _FULL_NAME_TO_ABBREV.items():
-        if full_lower in lower or lower in full_lower:
-            return abbr
-    return None
+    matches = {abbr for full_lower, abbr in _FULL_NAME_TO_ABBREV.items()
+               if full_lower in lower or lower in full_lower}
+    return matches.pop() if len(matches) == 1 else None
