@@ -881,8 +881,12 @@ without kickers was told to start one. Now `report.league_slots(rules)` is the
 one slot list both build from (`waivers.build._lineup_keys` included). Order:
 QB/RB/WR/TE, then the flex slots, then K/DEF — the picks are the same as "flex
 last" (no flex slot takes K or DEF), and a template-shaped league renders in
-the template's order. Empty rules give exactly `LINEUP_SLOTS`, and with no
-flex slots read it keeps one `FLEX`, as the waiver pass always did.
+the template's order. Empty rules give exactly `LINEUP_SLOTS`. A `FLEX` is
+added **only when the platform reported no slots at all**: both platforms read
+flex slots from the same data as position slots, so known position slots with
+an empty `flex_slots` mean the league has no flex. The waiver pass used to add
+one regardless, which started (and protected from the drop list) a bench body
+in a no-flex league.
 `cli._availability_view` reads `LeagueRules` from the provider instance it
 already builds (one extra request per ESPN league; Sleeper's
 `get_league_rules` uses the profile's league id directly rather than

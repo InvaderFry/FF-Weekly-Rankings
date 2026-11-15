@@ -9,7 +9,9 @@ from ff_startsit.waivers.score import depth_ratio
 from ff_startsit.waivers.trades import (FAIRNESS_BAND_FACTOR, suggest_trades,
                                         team_shape, upgrade_value)
 
-RULES = LeagueRules(roster_slots={"QB": 1, "RB": 2, "WR": 2, "TE": 1}, team_count=12)
+# One FLEX, stated: with position slots reported, no flex_slots means no flex.
+RULES = LeagueRules(roster_slots={"QB": 1, "RB": 2, "WR": 2, "TE": 1},
+                    flex_slots={"FLEX": 1}, team_count=12)
 
 
 def _p(key, name, pos, team="KC"):

@@ -35,6 +35,20 @@ def test_no_rules_give_the_template():
     assert report.league_slots(LeagueRules()) == report.LINEUP_SLOTS
 
 
+def test_a_league_that_reports_slots_but_no_flex_gets_no_flex():
+    """Both platforms read flex slots from the same data as position slots,
+    so known position slots with no flex mean the league has no flex. The
+    fallback FLEX is only for a platform that reported nothing at all."""
+    rules = LeagueRules(roster_slots={"QB": 1, "RB": 2, "WR": 2, "TE": 1, "K": 1, "DEF": 1})
+    assert "FLEX" not in report.league_slots(rules)
+
+
+def test_reported_flex_with_no_position_slots_is_kept():
+    rules = LeagueRules(flex_slots={"SUPER_FLEX": 1})
+    slots = report.league_slots(rules)
+    assert slots.count("SUPER_FLEX") == 1 and "FLEX" not in slots
+
+
 def test_flex_slots_follow_every_position_they_can_take():
     rules = LeagueRules(roster_slots={"QB": 1, "RB": 2, "WR": 3, "TE": 1, "DEF": 1},
                         flex_slots={"SUPER_FLEX": 1, "FLEX": 2})

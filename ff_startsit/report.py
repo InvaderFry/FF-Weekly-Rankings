@@ -51,9 +51,11 @@ def league_slots(rules) -> list[str]:
     The one definition shared by the start/sit lineup and the waiver pass's
     drop protection (``waivers.build._lineup_keys``), so Sunday's report and
     Tuesday's can't disagree about who starts. ``rules`` is a
-    ``waivers.models.LeagueRules``; with no slots read it falls back to the
-    default positions, and with no flex slots read it keeps one ``FLEX``, as
-    the waiver pass always did — so empty rules give exactly ``LINEUP_SLOTS``.
+    ``waivers.models.LeagueRules``. With no slots reported at all it falls
+    back to the default positions plus one ``FLEX`` — exactly
+    ``LINEUP_SLOTS``. Once the platform reported position slots, an empty
+    ``flex_slots`` means the league has no flex: both platforms read flex
+    slots from the same data, so adding one there started a bench player.
 
     Flex slots come after every position they can take (QB, RB, WR, TE), so
     those slots claim their own players first, and before K and DEF, which no
@@ -64,7 +66,7 @@ def league_slots(rules) -> list[str]:
     from .waivers.score import starting_slots
 
     counts = starting_slots(rules)
-    flex = dict(rules.flex_slots) or {"FLEX": 1}
+    flex = dict(rules.flex_slots) or ({} if rules.roster_slots else {"FLEX": 1})
     flex_takes = set(SUPER_FLEX_POSITIONS)
     order = [p for p in POSITION_ORDER if p in counts] + sorted(
         p for p in counts if p not in POSITION_ORDER)
