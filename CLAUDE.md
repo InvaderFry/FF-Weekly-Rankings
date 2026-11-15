@@ -363,9 +363,16 @@ rewriting that branch — the readers already handle them, and the log is
 append-only on purpose.
 
 The corpus survives scheduled runs on a `calibration-data` orphan branch
-(`weekly-report.yml`), since `.cache/` dies with the runner. Note
-`results_log.jsonl` is gitignored as cache everywhere else, so that push needs
-`git add -f` — without it the step silently succeeds and persists nothing. Nothing
+(`weekly-report.yml`, and `chatops.yml` for `/rank` and `/compare`, the
+decisions the owner actually asked about), since `.cache/` dies with the
+runner. Note `results_log.jsonl` is gitignored as cache everywhere else, so
+that push needs `git add -f` — without it the step silently succeeds and
+persists nothing. The two workflows are in different concurrency groups, so
+the branch can move between a run's restore and its push:
+`scripts/persist-decision-log.sh` therefore appends only the rows the fetched
+branch doesn't hold (a row is its exact text; each carries its own timestamp)
+and retries a rejected push from a fresh fetch, rather than copying the local
+file over the branch, which would erase the other run's rows. Nothing
 runs `calibrate --write` from CI; fitting weights on a cron is what the floors
 above exist to prevent.
 

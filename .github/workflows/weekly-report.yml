@@ -159,7 +159,8 @@ jobs:
       # Best-effort: the digest, dashboard and Discord ping are what the user
       # actually depends on, so a push failure here warns rather than failing the
       # run — same trade the publish command makes for a Discord hiccup.
-      # `concurrency` above is what keeps two runs from racing this branch.
+      # chatops.yml writes this branch too, from another concurrency group, so
+      # the script appends onto a fresh fetch and retries a rejected push.
       - name: Persist decision log
         id: persist
         if: ${{ !inputs.artifact_only }}

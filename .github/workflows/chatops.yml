@@ -13,7 +13,7 @@ on:
     types: [created]
 
 permissions:
-  contents: read
+  contents: write   # append /rank and /compare decisions to the calibration-data branch
   issues: write
 
 # Serialize command execution and load per issue. Each runner has its own cache.
@@ -30,6 +30,12 @@ jobs:
     if: >
       startsWith(github.event.comment.body, '/') &&
       github.event.comment.author_association == 'OWNER'
+    env:
+      # Where the #7 decision log lives between runs, as in weekly-report.yml.
+      # /rank and /compare are the decisions the owner actually asked about, so
+      # they belong in the corpus too.
+      LOG_BRANCH: calibration-data
+      LOG_FILE: results_log.jsonl
     steps:
       - uses: actions/checkout@v7
 
@@ -39,6 +45,19 @@ jobs:
 
       - name: Install
         run: pip install -e .
+
+      # Same restore as weekly-report.yml: a command's new rows are appended to
+      # the existing log, not to an empty one.
+      - name: Restore decision log
+        run: |
+          mkdir -p .cache
+          if git fetch --depth=1 origin "$LOG_BRANCH" 2>/dev/null \
+             && git show "FETCH_HEAD:$LOG_FILE" > .cache/results_log.jsonl 2>/dev/null; then
+            echo "Restored $(wc -l < .cache/results_log.jsonl) logged decision(s)."
+          else
+            rm -f .cache/results_log.jsonl
+            echo "No decision log on $LOG_BRANCH yet — starting a fresh one."
+          fi
 
       - name: Run command
         env:
@@ -71,6 +90,15 @@ jobs:
           FF_ANALYST_MIN_GAP: ${{ vars.FF_ANALYST_MIN_GAP }}
         run: |
           python -m ff_startsit.workflow chatops
+
+      # Best-effort, like weekly-report.yml: the reply is what the owner is
+      # waiting for. This group differs from the weekly report's, so the branch
+      # can move under this run; the script refetches and re-applies on a
+      # rejected push rather than overwriting the other run's rows.
+      - name: Persist decision log
+        continue-on-error: true
+        run: |
+          bash scripts/persist-decision-log.sh
 
       - name: Reply
         if: hashFiles('reply.md') != ''
