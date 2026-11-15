@@ -430,5 +430,16 @@ class ESPNProvider(RosterProvider, LeagueViewProvider):
                 "ESPN denied access (401/403). For a private league set ESPN_S2 "
                 "and ESPN_SWID; for a public one the league must be viewable."
             )
-        resp.raise_for_status()
-        return resp.json()
+        # A 5xx or a non-JSON body is this league's failure, not the run's: as a
+        # bare HTTPError it escaped the per-league `except RosterError` in
+        # `cli._league_bundles`, and one league's 502 ended every league.
+        try:
+            resp.raise_for_status()
+        except requests.RequestException as exc:
+            raise RosterError(
+                f"ESPN request failed: HTTP {resp.status_code}") from exc
+        try:
+            return resp.json()
+        except ValueError as exc:
+            raise RosterError(
+                f"ESPN response was not JSON (HTTP {resp.status_code})") from exc

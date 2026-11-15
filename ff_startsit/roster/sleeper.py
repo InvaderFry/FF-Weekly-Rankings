@@ -50,9 +50,20 @@ class SleeperClient:
 
     # --- HTTP helpers -----------------------------------------------------
     def _get(self, path: str):
+        """GET a Sleeper path, failing as ``SleeperError`` on a bad status or
+        body so a caller's per-league guard costs one league, not the run.
+        Connection errors stay ``requests.RequestException``, as before."""
         resp = self.session.get(f"{BASE}{path}", timeout=self.timeout)
-        resp.raise_for_status()
-        return resp.json()
+        try:
+            resp.raise_for_status()
+        except requests.RequestException as exc:
+            raise SleeperError(
+                f"Sleeper request failed: HTTP {resp.status_code}") from exc
+        try:
+            return resp.json()
+        except ValueError as exc:
+            raise SleeperError(
+                f"Sleeper response was not JSON (HTTP {resp.status_code})") from exc
 
     # --- Public API -------------------------------------------------------
     def current_week(self) -> int:
@@ -342,7 +353,7 @@ class SleeperProvider(RosterProvider, LeagueViewProvider):
             return []
         try:
             trending = self.client.trending_adds()
-        except requests.RequestException:
+        except (SleeperError, requests.RequestException):
             trending = {}  # color only — never worth failing the pool for
         return build_free_agents(rosters, meta, limit=limit, trending=trending)
 

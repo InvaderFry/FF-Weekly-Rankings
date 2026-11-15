@@ -842,7 +842,9 @@ def _league_bundles(args, settings: Settings, week: int) -> list:
                                       if cbs_fetcher is not None else {}))
             recs = ws.recs
             journalists = report.build_journalist_view(lsettings, players, week)
-        except (RosterError, SleeperError) as exc:
+        except (RosterError, SleeperError, requests.RequestException) as exc:
+            # RequestException too: a provider that forgets to wrap an HTTP
+            # failure must still cost one league, not every league after it.
             status.skipped[profile.name] = str(exc)
             print(f"warning: skipping league {profile.name!r}: {exc}", file=sys.stderr)
             continue
@@ -977,7 +979,9 @@ def _waiver_bundles(args, settings: Settings, week: int, writers=None,
             if on_bundle is not None:
                 on_bundle(bundle, players)
             bundles.append(bundle)
-        except (RosterError, SleeperError) as exc:
+        except (RosterError, SleeperError, requests.RequestException) as exc:
+            # RequestException too: a provider that forgets to wrap an HTTP
+            # failure must still cost one league, not every league after it.
             status.skipped[profile.name] = str(exc)
             print(f"warning: skipping league {profile.name!r}: {exc}", file=sys.stderr)
             continue
