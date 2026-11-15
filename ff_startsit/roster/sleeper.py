@@ -338,7 +338,10 @@ class SleeperProvider(RosterProvider, LeagueViewProvider):
 
     def get_league_rules(self) -> LeagueRules:
         try:
-            _, league_id = self._resolve()
+            # Rules need only the league id. ``pick_league`` trusts an explicit
+            # one anyway, so resolving the user first was three requests (state,
+            # user, leagues) for an answer already in hand.
+            league_id = self.league_id or self._resolve()[1]
             return parse_league_rules(self.client.league_settings(league_id))
         except (SleeperError, requests.RequestException) as exc:
             print(f"warning: Sleeper league settings unavailable: {exc}", file=sys.stderr)

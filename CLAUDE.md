@@ -873,6 +873,26 @@ candidate is flex-eligible, and **refuses** otherwise (QB vs RB) or when the
 pooled ranking fails its coverage guard — there is no honest fallback, and the
 per-position blend would answer with a number that doesn't mean what it says.
 
+**The lineup is the league's, not the template** (2026-11 review). Start/sit
+used to build `LINEUP_SLOTS` (1QB/2RB/2WR/TE/FLEX/K/DEF) for every league while
+the waiver pass read the real slots, so a superflex league benched its second
+quarterback, a two-flex league left a starter on the bench, and a league
+without kickers was told to start one. Now `report.league_slots(rules)` is the
+one slot list both build from (`waivers.build._lineup_keys` included). Order:
+QB/RB/WR/TE, then the flex slots, then K/DEF — the picks are the same as "flex
+last" (no flex slot takes K or DEF), and a template-shaped league renders in
+the template's order. Empty rules give exactly `LINEUP_SLOTS`, and with no
+flex slots read it keeps one `FLEX`, as the waiver pass always did.
+`cli._availability_view` reads `LeagueRules` from the provider instance it
+already builds (one extra request per ESPN league; Sleeper's
+`get_league_rules` uses the profile's league id directly rather than
+resolving the user first) and returns the slots as its fourth element; it is
+None, meaning the template, offline, in preseason, for a manual source, on
+empty rules or on any failed read. `score_week` stores them on
+`WeekScores.slots`, so `lineup_from` builds the same lineup the boundary flag
+saw, and all four lineup renderers show it. `SUPER_FLEX` still compares
+per-position scores (see above).
+
 ### The waiver/trade pass (`waivers/`)
 
 The Tuesday-evening companion to the start/sit pass: `ffstartsit waivers` (and
@@ -1175,7 +1195,8 @@ called **without** `protected`: offers are drawn from surplus only, so no
 starting slot can be traded away, and passing a lineup's worth of protected keys
 blocked every idea (surplus depth *is* the FLEX).
 
-`build._lineup_keys` passes the **league's** slots into `build_lineup` (which takes
+`build._lineup_keys` passes the **league's** slots (`report.league_slots`, the
+list the start/sit lineup uses too) into `build_lineup` (which takes
 an optional `slots`, defaulting to `LINEUP_SLOTS`), **flex slots included**.
 Protecting against the hardcoded 1QB/2RB/2WR template while `droppable` counted
 surplus against the real `roster_slots` made the two halves of one guard disagree.

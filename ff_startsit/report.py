@@ -43,6 +43,41 @@ SLOT_POSITIONS: dict[str, tuple[str, ...]] = {
 }
 # Order positions appear in the digest.
 POSITION_ORDER = ["QB", "RB", "WR", "TE", "K", "DEF"]
+
+
+def league_slots(rules) -> list[str]:
+    """The league's starting slots, in the order ``build_lineup`` fills them.
+
+    The one definition shared by the start/sit lineup and the waiver pass's
+    drop protection (``waivers.build._lineup_keys``), so Sunday's report and
+    Tuesday's can't disagree about who starts. ``rules`` is a
+    ``waivers.models.LeagueRules``; with no slots read it falls back to the
+    default positions, and with no flex slots read it keeps one ``FLEX``, as
+    the waiver pass always did — so empty rules give exactly ``LINEUP_SLOTS``.
+
+    Flex slots come after every position they can take (QB, RB, WR, TE), so
+    those slots claim their own players first, and before K and DEF, which no
+    flex slot takes: the picks are the same as "flex last", and a
+    template-shaped league renders in the template's order. ``FLEX`` precedes
+    ``SUPER_FLEX``.
+    """
+    from .waivers.score import starting_slots
+
+    counts = starting_slots(rules)
+    flex = dict(rules.flex_slots) or {"FLEX": 1}
+    flex_takes = set(SUPER_FLEX_POSITIONS)
+    order = [p for p in POSITION_ORDER if p in counts] + sorted(
+        p for p in counts if p not in POSITION_ORDER)
+    slots: list[str] = []
+    for pos in order:
+        if pos in flex_takes:
+            slots.extend([pos] * int(counts[pos]))
+    for name in sorted(flex):
+        slots.extend([name] * int(flex[name]))
+    for pos in order:
+        if pos not in flex_takes:
+            slots.extend([pos] * int(counts[pos]))
+    return slots
 # Position precedence for FLEX tie-breaks. Arbitrary but fixed, and derived from
 # POSITION_ORDER so the file keeps one ordering convention rather than two.
 _FLEX_ORDER = {pos: i for i, pos in enumerate(FLEX_POSITIONS)}
@@ -111,6 +146,9 @@ class WeekScores:
     signals: list = field(default_factory=list)
     #: Teams with a game this week, or None when the schedule couldn't be read.
     playing: Optional[set] = None
+    #: The league's starting slots (``league_slots``), or None for the
+    #: template. Kept so ``lineup_from`` builds the lineup the boundary flag saw.
+    slots: Optional[list] = None
 
 
 @dataclass
@@ -383,9 +421,8 @@ def score_week(settings: Settings, players: Sequence[Player], week: int,
     flex, note = rank_flex_pool(settings, players, week, signals=signals,
                                 **({"ruled_out": byes} if byes else {}))
     ws = WeekScores(recs=recs, flex=flex, flex_note=note, signals=list(signals),
-                    playing=playing)
-    flag_starter_boundaries(settings, recs, build_lineup(
-        scored(recs), flex_pool=scored_flex(ws), flex_note=note, slots=slots))
+                    playing=playing, slots=list(slots) if slots is not None else None)
+    flag_starter_boundaries(settings, recs, lineup_from(ws))
     for rec in recs.values():
         log_deferred(settings, rec, command="report")
     return ws
@@ -498,9 +535,10 @@ def scored_flex(ws: WeekScores) -> Optional[list[PlayerScore]]:
 
 
 def lineup_from(ws: WeekScores) -> Lineup:
-    """The suggested lineup for an already-scored week."""
+    """The suggested lineup for an already-scored week, in the league's
+    slots when ``score_week`` was given them."""
     return build_lineup(scored(ws.recs), flex_pool=scored_flex(ws),
-                        flex_note=ws.flex_note)
+                        flex_note=ws.flex_note, slots=ws.slots)
 
 
 def _slot_sort_key(s: PlayerScore) -> tuple:

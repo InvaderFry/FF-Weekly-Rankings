@@ -81,24 +81,17 @@ def _lineup_keys(my_scores: Sequence[PlayerScore], rules: LeagueRules) -> set[st
     takes RB/WR/TE only) and a two-flex league's second flex body likewise, which
     is a recommendation to cut a starter.
     """
-    from ..report import build_lineup
+    from .. import report
 
-    slots: list[str] = []
-    for pos, count in sorted(starting_slots(rules).items()):
-        slots.extend([pos] * count)
-    # Flex last, so the position slots claim their own players first.
-    for name, count in sorted(rules.flex_slots.items()):
-        slots.extend([name] * count)
-    if not rules.flex_slots:
-        slots.append("FLEX")   # platform told us nothing; one, as before
-
+    # The same slot list the start/sit lineup builds from (`report.league_slots`).
+    slots = report.league_slots(rules)
     by_pos: dict[str, list[PlayerScore]] = {}
     for s in my_scores:
         by_pos.setdefault(s.player.position, []).append(s)
     for scores in by_pos.values():
         scores.sort(key=lambda s: (s.final is not None, s.final or 0), reverse=True)
     return {pick.player.key
-            for _, pick in build_lineup(by_pos, slots=slots) if pick is not None}
+            for _, pick in report.build_lineup(by_pos, slots=slots) if pick is not None}
 
 
 def _weeks_playing(schedule: ScheduleProvider, week: int,

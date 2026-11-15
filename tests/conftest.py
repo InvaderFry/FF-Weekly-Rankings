@@ -41,7 +41,7 @@ def offline_availability(monkeypatch):
     ``availability`` directly with fakes, or re-patch this.
     """
     monkeypatch.setattr("ff_startsit.cli._availability_view",
-                        lambda *a, **k: (None, None, False))
+                        lambda *a, **k: (None, None, False, None))
 
 
 @pytest.fixture

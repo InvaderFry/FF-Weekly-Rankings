@@ -1510,10 +1510,10 @@ def _score_league(args, settings: Settings, profile: Optional[LeagueProfile],
     roster's weekly projections (every run, one request) and the free-agent
     wire (only when a hole exists). Neither can fail the run.
     """
-    outlook, free_agents, live = _availability_view(args, settings, profile,
-                                                     players, week)
+    outlook, free_agents, live, slots = _availability_view(args, settings, profile,
+                                                            players, week)
     ws = report.score_week(settings, players, week, outlook=outlook,
-                           check_byes=live, **score_kwargs)
+                           check_byes=live, slots=slots, **score_kwargs)
     lineup = report.lineup_from(ws)
     if live:
         # Offline and preseason runs skip the check rather than half-run it:
@@ -1528,24 +1528,30 @@ def _score_league(args, settings: Settings, profile: Optional[LeagueProfile],
 
 def _availability_view(args, settings: Settings, profile: Optional[LeagueProfile],
                        players: Sequence[Player], week: int):
-    """``(outlook, free_agents, live)`` for this league.
+    """``(outlook, free_agents, live, slots)`` for this league.
 
     ``live`` says the run may read the schedule (bye checks, lineup holes):
-    false offline and in preseason, when the other two are None as well. A
+    false offline and in preseason, when the others are None as well. A
     roster source with no ESPN league behind it is live with no outlook and no
     wire read: its holes are still flagged, just without pickups.
+
+    ``slots`` is the league's starting-slot list (``report.league_slots``),
+    read from the same provider instance so ESPN's memoized league payload
+    serves any later read, or None for the template: offline, preseason, a
+    source with no league behind it (manual), empty rules, or a failed read.
     """
     if getattr(args, "offline", False) or season.preseason_banner(settings):
-        return None, None, False
+        return None, None, False, None
     try:
         provider = build_roster_provider(settings, getattr(args, "source", None),
                                          getattr(args, "league", None),
                                          getattr(args, "team", None), profile=profile)
     except RosterError:
-        return None, None, True
+        return None, None, True, None
+    slots = _league_slots(provider)
     get_outlook = getattr(provider, "get_week_outlook", None)
     if not callable(get_outlook):
-        return None, None, True
+        return None, None, True, slots
     try:
         outlook = get_outlook(week, players)
     except Exception as exc:  # the provider already degrades; belt and braces
@@ -1554,7 +1560,28 @@ def _availability_view(args, settings: Settings, profile: Optional[LeagueProfile
 
     def free_agents(positions):
         return provider.get_free_agents(week, positions=positions)
-    return outlook, free_agents, True
+    return outlook, free_agents, True, slots
+
+
+def _league_slots(provider) -> Optional[list[str]]:
+    """The league's starting slots, or None to keep the template.
+
+    Never raises: the rules are a refinement of the lineup, so any failure to
+    read them costs the refinement, not the run.
+    """
+    from .waivers.base import LeagueViewProvider
+
+    if not isinstance(provider, LeagueViewProvider):
+        return None
+    try:
+        rules = provider.get_league_rules()
+    except Exception as exc:
+        print(f"warning: league lineup slots unavailable, using the default "
+              f"lineup: {exc}", file=sys.stderr)
+        return None
+    if rules is None or not (rules.roster_slots or rules.flex_slots):
+        return None
+    return report.league_slots(rules)
 
 
 def _outlook_status(settings: Settings, players: Sequence[Player], outlook) -> tuple:
