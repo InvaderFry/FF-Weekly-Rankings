@@ -278,6 +278,22 @@ without touching the pure engine.
   was still under the `calibrate --write` floors; if a later fit looks odd on
   those two weights, that boundary is the first place to look.
 
+  **Team defenses read the opponent's Vegas total** (2026-11-15). Vegas used
+  to give every player his own team's implied total, higher is better, which
+  for a defense is backwards: the Chiefs' high total said nothing about how
+  many points the Chiefs' defense would allow. `VegasSignal.assign` now gives a
+  defense (`matching.is_defense`) the **negated** opponent implied total
+  (`opponent_totals_by_team`), keeping one `higher_is_better`. Defenses are
+  only ever normalized against defenses, so the sign is safe for the blend,
+  and `_flag_raw_dead_heat` compares absolute differences. The number a reader
+  sees is the real one: the note reads `opp implied 24.5`, and
+  `SignalValue.display` (display only, never logged) is what the dead-heat
+  note prints instead of a bare negative. The same **corpus boundary** as
+  above applies: logged DEF `vegas` raw values before 2026-11-15 are the
+  team's own total and after it the negated opponent total, so their
+  `normalized` values rank defenses in opposite directions across the date.
+  Replay is unaffected; a fit spanning it mixes the two for DEF rows.
+
 ### The self-calibration loop (#7)
 
 Every `rank`/`compare` run appends a row to `.cache/results_log.jsonl`
