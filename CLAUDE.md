@@ -1572,6 +1572,16 @@ trade as the decision log, and as Discord. Note the titles are now season-aware
 (`2026 Week 1 start/sit`); pre-existing week-only issues are left standing as
 history and are never reused.
 
+**A new week's issue closes the older ones of its kind.** When a workflow
+*creates* an issue it lists the open issues of that kind and closes each one
+`workflow.stale_issues` names: a title in exactly `issue_title`'s shape, same
+kind, earlier `(season, week)`. Everything else stays open, including the
+legacy week-only titles above (no season to compare), a later week, and any
+issue a person opened. Nothing depends on an older issue staying open: every
+reader (`--since`, the `ff-waivers-refreshed` marker, values.yml's read of the
+waiver issue) takes the newest open issue of its kind. A failed close warns
+and the step goes on.
+
 **Scheduled runs publish only in season.** Every workflow with a cron runs a
 `gate` job first (`workflow.py in-season "$GITHUB_EVENT_NAME"`, stdlib only,
 so the runner's own Python runs it with no install), and its real job `needs`

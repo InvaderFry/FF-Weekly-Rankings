@@ -198,6 +198,14 @@ jobs:
           else
             echo "Creating issue: $TITLE"
             gh issue create --title "$TITLE" --body-file waivers.md
+            # A new week's issue closes the earlier weeks' issues of this kind
+            # (workflow.stale_issues); every reader takes the newest open one.
+            gh issue list --state open --search 'in:title "waiver wire"' --limit 100 \
+              --json number,title > open-issues.json
+            for OLD in $(python -m ff_startsit.workflow stale-issues open-issues.json "$TITLE" "waiver wire"); do
+              gh issue close "$OLD" --comment "Superseded by $TITLE." \
+                || echo "::warning::Could not close issue #$OLD"
+            done
           fi
 
       - name: Report issue failure

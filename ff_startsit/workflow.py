@@ -206,6 +206,33 @@ def issue_title(report, kind):
     return f"{match[1]} Week {match[2]} {kind}"
 
 
+def stale_issues(issues, title, kind):
+    """Open issues of ``kind`` from a week before ``title``'s, to close.
+
+    ``issues`` is ``gh issue list --json number,title`` output. Titles are
+    ``issue_title``'s ``"<season> Week <n> <kind>"``; only a title in exactly
+    that shape, for this kind and an earlier ``(season, week)``, is stale.
+    Anything else is left open: a legacy week-only title (no season to compare),
+    another kind the title search also matched, a later week, or an issue a
+    person opened. Every reader of these issues (``--since``, the refresh
+    marker) takes the newest open one of its kind, so closing the older ones
+    changes nothing they read.
+    """
+    import re
+
+    pattern = re.compile(rf"^(\d{{4}}) Week (\d+) {re.escape(kind)}$")
+    current = pattern.match(title or "")
+    if not current:
+        return []
+    now = (int(current[1]), int(current[2]))
+    stale = []
+    for issue in issues:
+        m = pattern.match(str(issue.get("title", "")))
+        if m and (int(m[1]), int(m[2])) < now:
+            stale.append(int(issue["number"]))
+    return stale
+
+
 def publish_adds_changed(report_path, previous_path, output=None):
     """Whether Wednesday's rebuilt waiver report changed the adds.
 
@@ -447,6 +474,12 @@ def main():
         reply = chatops_reply(os.environ.get("COMMENT_BODY", ""))
         if reply is not None:
             Path("reply.md").write_text(reply, encoding="utf-8")
+    elif sys.argv[1] == "stale-issues":
+        # stale-issues OPEN_ISSUES_JSON TITLE KIND
+        import json
+        issues = json.loads(Path(sys.argv[2]).read_text(encoding="utf-8") or "[]")
+        for number in stale_issues(issues, sys.argv[3], sys.argv[4]):
+            print(number)
     elif sys.argv[1] == "in-season":
         # in-season EVENT_NAME
         in_season(sys.argv[2])
