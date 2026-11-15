@@ -1602,6 +1602,17 @@ workflows skip the issue post, the `calibration-data` push and the Pages
 upload/deploy while still requiring both pages to build. It cannot prove
 production permissions or delivery — only a real run does that.
 
+**What the runs with secrets execute is pinned.** The scheduled workflows and
+ChatOps hold ESPN cookies, a Discord webhook and `contents: write`, so every
+`uses:` in every workflow is a full commit SHA with a `# vX.Y.Z` comment (a
+moved tag would otherwise run there unreviewed), and those four workflows
+install with `pip install -e . -c constraints.txt`, which pins the runtime
+dependencies and what they pull in. **CI installs unconstrained** on purpose,
+so a new release is tested before anyone bumps a pin. Bumping: resolve the
+new tag with `git ls-remote --tags`, replace every occurrence of that action
+(`tests/test_pinning.py` refuses one action at two SHAs), and update
+`constraints.txt` only after CI has passed on the new versions.
+
 CI runs `actionlint` and `scripts/check-workflows.py` over the workflows, and
 installs the built wheel into a clean venv to run the suite from outside the
 repo import path. The two workflow checks are one check split in half: the

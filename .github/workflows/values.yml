@@ -53,7 +53,7 @@ jobs:
     outputs:
       run: ${{ steps.season.outputs.run }}
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - id: season
         run: python3 -m ff_startsit.workflow in-season "$GITHUB_EVENT_NAME"
 
@@ -82,14 +82,14 @@ jobs:
       INPUT_WEEK: ${{ github.event.inputs.week }}
       INPUT_BOONE_CHART: ${{ github.event.inputs.boone_chart }}
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - uses: actions/setup-python@v7
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: "3.12"
 
       - name: Install
-        run: pip install -e .
+        run: pip install -e . -c constraints.txt
 
       # Same retry gate as waivers.yml: compare against what's already published.
       - name: Fetch this week's published values (scheduled runs)
@@ -267,14 +267,14 @@ jobs:
 
       - name: Upload Pages artifact
         if: steps.site.outputs.complete == 'true' && !inputs.artifact_only
-        uses: actions/upload-pages-artifact@v5
+        uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
         with:
           path: ./site
 
       - name: Deploy to GitHub Pages
         if: steps.site.outputs.complete == 'true' && !inputs.artifact_only
         id: deployment
-        uses: actions/deploy-pages@v5
+        uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346 # v5.0.1
 
       # Only now is this week's waivers refresh done: rebuilt *and* live. The
       # marker goes on the values issue, where the retry's refresh-needed check
@@ -297,7 +297,7 @@ jobs:
 
       - name: Upload test artifacts
         if: inputs.artifact_only && steps.site.outputs.complete == 'true'
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: publishing-test
           path: |
