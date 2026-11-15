@@ -164,6 +164,18 @@ def blend(
     return rec
 
 
+#: ``Recommendation.close_call_kinds`` values.
+TOP_KIND = "top"
+BOUNDARY_KIND = "boundary"
+
+
+def _mark_close_call(rec: Recommendation, kind: str) -> None:
+    """Set ``close_call`` and record which check set it."""
+    rec.close_call = True
+    if kind not in rec.close_call_kinds:
+        rec.close_call_kinds.append(kind)
+
+
 def _flag_close_call(rec: Recommendation, normalized: Mapping[str, Mapping[str, float]],
                      threshold: float, min_disagree_weight: float = 0.0,
                      raw_gaps: Optional[Mapping[str, float]] = None,
@@ -175,7 +187,7 @@ def _flag_close_call(rec: Recommendation, normalized: Mapping[str, Mapping[str, 
     top, second = scored[0], scored[1]
 
     if abs(top.final - second.final) <= threshold:
-        rec.close_call = True
+        _mark_close_call(rec, TOP_KIND)
         rec.notes.append(
             f"Too close to call: {top.player.name} ({top.final}) vs "
             f"{second.player.name} ({second.final}) within {threshold} pts."
@@ -226,7 +238,7 @@ def _flag_close_call(rec: Recommendation, normalized: Mapping[str, Mapping[str, 
         note = (f"Signals disagree: {sig_name} favors {second.player.name} "
                 f"while the blend favors {top.player.name}.")
         if share >= min_disagree_weight:
-            rec.close_call = True
+            _mark_close_call(rec, TOP_KIND)
             rec.notes.append(note)
         elif sig_name in exempt:
             rec.notes.append(note)          # demoted: real, but not on its own
@@ -280,7 +292,7 @@ def flag_starter_boundary_pair(rec: Recommendation, a: PlayerScore, b: PlayerSco
             return (rec.weights.get(sig_name, 0.0) / total_weight) if total_weight > 0 else 0.0
 
     if abs(a.final - b.final) <= threshold:
-        rec.close_call = True
+        _mark_close_call(rec, BOUNDARY_KIND)
         rec.notes.append(
             f"Last starting spot is a coin flip: {a.player.name} ({a.final}) vs "
             f"{b.player.name} ({b.final}) within {threshold} pts."
@@ -338,7 +350,8 @@ def _flag_raw_dead_heat(rec: Recommendation, top: PlayerScore, second: PlayerSco
 
     if not voted:
         return
-    rec.close_call = True
+    # A ``subject`` is only ever passed by the boundary check.
+    _mark_close_call(rec, BOUNDARY_KIND if subject else TOP_KIND)
     lead = f"{subject} is too close to call" if subject else "Too close to call"
     rec.notes.append(
         f"{lead}: nothing separates {top.player.name} from "

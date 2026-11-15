@@ -154,6 +154,12 @@ class Recommendation:
     scores: list[PlayerScore]          # ordered best -> worst by ``final``
     close_call: bool = False
     notes: list[str] = field(default_factory=list)
+    #: Which checks set ``close_call``: ``"top"`` (the overall top two) and/or
+    #: ``"boundary"`` (the last starting spot). ``close_call`` stays the one
+    #: flag every renderer reads; this exists for ``backtest``, which buckets
+    #: *top-pick* hits and must not count a confident pick with a tight last
+    #: starting spot as a flagged one. Logged beside ``close_call``.
+    close_call_kinds: list[str] = field(default_factory=list)
     #: signal name -> the raw separation below which that signal is treated as
     #: not separating players at all (``Settings.close_call_raw_gaps``, e.g. 3.0
     #: ECR ranks, 1.5 implied points). Carried on the recommendation so a

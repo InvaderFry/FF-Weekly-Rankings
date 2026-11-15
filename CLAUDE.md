@@ -389,6 +389,16 @@ while another candidate in the decision joined goes to
 `BacktestResult.pick_did_not_play`, reported on its own line and excluded from
 every hit-rate; a decision where nobody joined is simply unjoinable.
 
+The honesty split buckets on **which check fired**, not on `close_call`
+alone. `close_call` is one boolean that the last-starting-spot check sets too,
+and that check says nothing about the top pick, so a confident pick with a
+tight boundary used to land in the close-call bucket. Every place that sets
+the flag now also records its kind on `Recommendation.close_call_kinds`
+(`"top"`, `"boundary"`; `blend._mark_close_call`), the log row carries it, and
+`backtest` buckets on `"top"` when a row has the field. Rows written before it
+existed read as `close_call_kinds=None` and keep the old bucketing; renderers
+still read `close_call` alone.
+
 `sources/experts.py` is a **setup helper, not a signal** — it resolves analyst
 names to the FantasyPros expert ids `FF_PREFERRED_EXPERTS` wants.
 

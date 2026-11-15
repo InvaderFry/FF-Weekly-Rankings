@@ -68,6 +68,19 @@ class BacktestResult:
         return self.close_call_hits / self.close_call_n if self.close_call_n else 0.0
 
 
+def _top_pick_flagged(d: Decision) -> bool:
+    """Whether this decision's *top pick* was flagged as a close call.
+
+    ``close_call`` is also set by the last-starting-spot check, which says
+    nothing about the top pick; counting those as flagged picks muddied the
+    honesty split. Rows that record which check fired are bucketed on
+    ``"top"``; older rows, which can't say, keep ``close_call``.
+    """
+    if d.close_call_kinds is not None:
+        return "top" in d.close_call_kinds
+    return d.close_call
+
+
 def backtest(decisions: Sequence[Decision], provider: OutcomeProvider, *,
              base_weights: Mapping[str, float]) -> BacktestResult:
     """Replay logged decisions against real outcomes under their own weights.
@@ -137,7 +150,7 @@ def backtest(decisions: Sequence[Decision], provider: OutcomeProvider, *,
 
         if hit:
             hits += 1
-        if d.close_call:
+        if _top_pick_flagged(d):
             close_call_n += 1
             close_call_hits += int(hit)
         else:
