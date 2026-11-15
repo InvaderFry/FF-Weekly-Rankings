@@ -35,6 +35,7 @@ from ..data.stadiums import Stadium
 from ..models import GameContext, Player, SignalValue
 from .base import Signal
 from .schedule import ScheduleProvider, venue_for
+from ..net import session as net_session
 
 FORECAST_URL = "https://api.open-meteo.com/v1/forecast"
 
@@ -141,7 +142,7 @@ class WeatherSignal(Signal):
     def __init__(self, enabled: bool = True, session: Optional[requests.Session] = None,
                  timeout: int = 20, schedule: Optional[ScheduleProvider] = None):
         self.enabled = enabled
-        self.session = session or requests.Session()
+        self.session = session or net_session()
         self.timeout = timeout
         self.schedule = schedule
         # Cache keyed by (venue, kickoff hour) rather than by team, so both

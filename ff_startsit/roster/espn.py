@@ -31,7 +31,7 @@ from ..waivers.base import LeagueViewProvider
 from ..waivers.models import (ACQ_FAAB, ACQ_PRIORITY, ACQ_UNKNOWN, FantasyTeam,
                               LeagueRules, PoolPlayer)
 from .base import RosterError, RosterProvider
-from ..net import HEADERS
+from ..net import HEADERS, session as net_session
 
 BASE = ("https://lm-api-reads.fantasy.espn.com/apis/v3/games/ffl/seasons/"
         "{season}/segments/0/leagues/{league_id}")
@@ -311,7 +311,7 @@ class ESPNProvider(RosterProvider, LeagueViewProvider):
         self.team_id = team_id
         self.espn_s2 = espn_s2
         self.swid = swid
-        self.session = session or requests.Session()
+        self.session = session or net_session()
         self.timeout = timeout
         # The league call answers roster, teams and rules alike, so memoize it:
         # a waiver run asks all three and should still cost one request.

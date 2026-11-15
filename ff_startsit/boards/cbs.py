@@ -39,7 +39,7 @@ from ..cache import atomic_write_text, read_json_or_none
 from ..data.matching import ExternalRow, is_defense, match_rows
 from ..data.teams import normalize_team
 from ..models import Player
-from ..net import HEADERS
+from ..net import HEADERS, session as net_session
 from .models import ALL_POSITIONS, BoardEntry, ExpertBoard
 
 URL = "https://www.cbssports.com/fantasy/football/rankings/{scoring}/{pos}/weekly/"
@@ -177,7 +177,7 @@ class CbsFetcher:
     def __init__(self, data_dir: Optional[Path] = None, schedule=None,
                  session: Optional[requests.Session] = None, timeout: int = 20):
         self.data_dir = Path(data_dir) if data_dir else None
-        self.session = session or requests.Session()
+        self.session = session or net_session()
         self.timeout = timeout
         self._schedule = schedule
         self._pages: dict[tuple[str, str], object] = {}

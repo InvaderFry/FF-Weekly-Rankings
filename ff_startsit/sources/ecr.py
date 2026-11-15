@@ -21,7 +21,7 @@ import requests
 from ..data.matching import ExternalRow, match_rows
 from ..data.teams import normalize_team
 from ..models import Player, SignalValue
-from ..net import HEADERS
+from ..net import HEADERS, session as net_session
 from .base import Signal
 
 API_URL = "https://api.fantasypros.com/v2/json/nfl/{season}/consensus-rankings"
@@ -234,7 +234,7 @@ class ECRSignal(Signal):
         self.api_key = api_key
         self.scoring = scoring
         self.season = season or _current_season()
-        self.session = session or requests.Session()
+        self.session = session or net_session()
         self.timeout = timeout
         #: When set (e.g. ``FLEX_POOL``), fetch one pooled cross-position ranking
         #: instead of one list per position.

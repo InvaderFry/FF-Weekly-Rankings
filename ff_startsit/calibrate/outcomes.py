@@ -23,6 +23,7 @@ import requests
 
 from .. import cache
 from ..data.matching import player_match_key
+from ..net import session as net_session
 
 BASE = "https://api.sleeper.app/v1"
 STATS_CACHE_TTL = 6 * 3600  # seconds; finalized weeks rarely move, recent ones can
@@ -104,7 +105,7 @@ class SleeperStatsClient:
     def __init__(self, data_dir: Path, session: Optional[requests.Session] = None,
                  timeout: int = 30):
         self.data_dir = data_dir
-        self.session = session or requests.Session()
+        self.session = session or net_session()
         self.timeout = timeout
 
     def _cache_path(self, season, week) -> Path:

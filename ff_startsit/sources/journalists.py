@@ -24,6 +24,7 @@ import requests
 from ..data.matching import ExternalRow, match_rows
 from ..models import Player
 from .ecr import _canon_pos, _current_season, fetch_api_rows, fetch_scrape_rows
+from ..net import session as net_session
 
 # Values of FF_PREFERRED_EXPERTS that disable the feature entirely.
 _DISABLED = {"", "0", "false", "no", "off"}
@@ -92,7 +93,7 @@ class JournalistFetcher:
         self.api_key = api_key
         self.scoring = scoring
         self.season = season or _current_season()
-        self.session = session or requests.Session()
+        self.session = session or net_session()
         self.timeout = timeout
         self._rows_cache: dict[tuple[str, int, str], list[ExternalRow]] = {}
 

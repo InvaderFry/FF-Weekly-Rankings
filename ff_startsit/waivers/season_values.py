@@ -16,7 +16,7 @@ import requests
 from ..data.matching import match_rows
 from ..models import Player
 from ..season import season_year
-from ..net import HEADERS
+from ..net import HEADERS, session as net_session
 from ..sources.ecr import parse_api_response
 
 _DATA = re.compile(r"var\s+ecrData\s*=\s*(\{.*?\})\s*;", re.DOTALL)
@@ -54,7 +54,7 @@ def pos_rank_number(label) -> Optional[float]:
 
 class SeasonValueProvider:
     def __init__(self, session: Optional[requests.Session] = None, timeout: int = 20):
-        self.session = session or requests.Session()
+        self.session = session or net_session()
         self.timeout = timeout
         #: Positional ROS ranks from the last ``fetch`` (the same page states
         #: them), keyed like its result. Read by the waiver pass for bye weeks.

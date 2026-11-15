@@ -25,6 +25,7 @@ from ..waivers.base import LeagueViewProvider
 from ..waivers.models import (ACQ_FAAB, ACQ_PRIORITY, ACQ_UNKNOWN, FantasyTeam,
                               LeagueRules, PoolPlayer)
 from .base import RosterError, RosterProvider
+from ..net import session as net_session
 
 BASE = "https://api.sleeper.app/v1"
 PLAYERS_CACHE_TTL = 24 * 3600  # seconds
@@ -45,7 +46,7 @@ class SleeperClient:
     def __init__(self, data_dir: Path, session: Optional[requests.Session] = None,
                  timeout: int = 30):
         self.data_dir = data_dir
-        self.session = session or requests.Session()
+        self.session = session or net_session()
         self.timeout = timeout
 
     # --- HTTP helpers -----------------------------------------------------

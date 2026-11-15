@@ -33,6 +33,7 @@ from .. import cache
 from ..data.stadiums import STADIUMS, Stadium, neutral_venue
 from ..data.teams import normalize_team
 from ..models import GameContext
+from ..net import session as net_session
 
 SCOREBOARD_URL = "https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard"
 
@@ -158,7 +159,7 @@ class ScheduleProvider:
                  session: Optional[requests.Session] = None, timeout: int = 20,
                  cache_dir: Optional[Path] = None):
         self.season = season
-        self.session = session or requests.Session()
+        self.session = session or net_session()
         self.timeout = timeout
         self.cache_dir = Path(cache_dir) if cache_dir else None
         self._weeks: dict[int, dict[str, GameContext]] = {}

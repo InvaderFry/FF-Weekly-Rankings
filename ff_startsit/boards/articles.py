@@ -29,7 +29,7 @@ from typing import Optional, Sequence
 import requests
 
 from ..cache import atomic_write_text, read_json_or_none
-from ..net import HEADERS
+from ..net import HEADERS, session as net_session
 from ..sources.articles import article_metadata
 
 #: Appears in every reason that may mean "the writer hasn't published it yet".
@@ -99,7 +99,7 @@ class ArticleFetcher:
     def __init__(self, data_dir: Optional[Path] = None,
                  session: Optional[requests.Session] = None, timeout: int = 20):
         self.data_dir = Path(data_dir) if data_dir else None
-        self.session = session or requests.Session()
+        self.session = session or net_session()
         self.timeout = timeout
         self._memo: dict[str, Optional[str]] = {}
 

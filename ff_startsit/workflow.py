@@ -3,6 +3,7 @@ from pathlib import Path
 import re
 import os
 import sys
+from .net import session as net_session
 
 
 def chatops_reply(comment):
@@ -94,7 +95,7 @@ def restore_pages(base_url, directory, pages, session=None, optional=False,
     from .net import HEADERS
     directory = Path(directory)
     directory.mkdir(parents=True, exist_ok=True)
-    session = session or requests.Session()
+    session = session or net_session()
     outcome = {}
     prefer_live = set(prefer_live)
     for page in pages:

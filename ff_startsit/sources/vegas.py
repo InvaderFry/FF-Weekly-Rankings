@@ -38,6 +38,7 @@ from ..data.teams import normalize_team
 from ..models import Game, GameContext, Player, SignalValue, _fmt_raw
 from .base import Signal
 from .schedule import ScheduleProvider, parse_kickoff
+from ..net import session as net_session
 
 ODDS_URL = "https://api.the-odds-api.com/v4/sports/americanfootball_nfl/odds"
 #: Seconds a cached odds payload stays usable. Deliberately short: lines really
@@ -146,7 +147,7 @@ class VegasSignal(Signal):
                  timeout: int = 20, schedule: Optional[ScheduleProvider] = None,
                  cache_dir: Optional[Path] = None):
         self.api_key = api_key
-        self.session = session or requests.Session()
+        self.session = session or net_session()
         self.timeout = timeout
         self.schedule = schedule
         self.cache_dir = Path(cache_dir) if cache_dir else None

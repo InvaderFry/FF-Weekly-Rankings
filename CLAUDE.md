@@ -537,6 +537,17 @@ the verified shape of every source page live in `docs/EXPERT_BOARD_PLAN.md`.
 - Every request sends `net.HEADERS`, a plain `ff-startsit/...` identity. Don't
   reintroduce a browser User-Agent (`tests/test_net.py`), and don't add
   "compatible;" to it: CBS answers 406 to that token.
+- Every default session comes from **`net.session()`**, which sends those
+  headers and retries connection errors, 429 and 5xx up to `RETRY_TOTAL` (3)
+  times with a short backoff, for **GET and HEAD only**. Nothing is cached
+  between Actions runs, so before this one 502 at the moment a scheduled run
+  fetched cost that run the source. Never retry a POST: the Discord webhook
+  is one, and a POST that reached Discord but failed on the way back would
+  post twice. `Retry-After` is ignored so a run can't sleep for as long as a
+  server asks, and exhausted retries return the last response so each caller's
+  own status handling still runs. Don't build a bare `requests.Session()`
+  (`tests/test_http_retry.py` checks); keep every `session=` parameter so
+  tests stay offline.
 
 ### The Tuesday expert board (`boards/writers.py`, `waivers/board.py`)
 
