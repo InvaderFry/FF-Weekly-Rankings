@@ -333,7 +333,8 @@ def _flag_raw_dead_heat(rec: Recommendation, top: PlayerScore, second: PlayerSco
         voted = True
         if abs(a.raw - b.raw) > gap:
             return  # this signal genuinely separates them
-        separations.append(f"{sig_name} {_fmt_raw(a.raw)} vs {_fmt_raw(b.raw)}")
+        separations.append(f"{sig_name} {a.display or _fmt_raw(a.raw)} vs "
+                           f"{b.display or _fmt_raw(b.raw)}")
 
     if not voted:
         return

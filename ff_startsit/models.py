@@ -118,6 +118,11 @@ class SignalValue:
     raw: Optional[float]
     available: bool = True
     note: str = ""
+    #: How to print ``raw`` where a reader sees it, when the number itself is
+    #: not meant to be read: a defense's Vegas raw is the *negated* opponent
+    #: total, so the dead-heat note prints this instead. Display only; never
+    #: logged (``results_log`` writes ``raw``).
+    display: str = ""
 
 
 @dataclass
