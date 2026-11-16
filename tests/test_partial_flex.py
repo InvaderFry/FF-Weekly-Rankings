@@ -9,7 +9,7 @@ drop protection. Found in review of PR #92.
 """
 from ff_startsit import report
 from ff_startsit.availability import _slot_accepts, slot_positions
-from ff_startsit.models import FLEX_SLOT_POSITIONS, Player, PlayerScore
+from ff_startsit.models import FLEX_SLOT_ORDER, FLEX_SLOT_POSITIONS, Player, PlayerScore
 from ff_startsit.roster.espn import parse_league_rules as parse_espn
 from ff_startsit.roster.sleeper import parse_league_rules as parse_sleeper
 from ff_startsit.waivers.models import LeagueRules
@@ -108,3 +108,80 @@ def test_one_table_says_what_each_flex_slot_takes():
     for slot, positions in FLEX_SLOT_POSITIONS.items():
         assert set(report.SLOT_POSITIONS[slot]) == set(positions)
         assert set(_slot_accepts(slot)) == set(positions)
+
+
+# --- overlapping flex slots (second review of PR #92) -------------------------
+def _keys(lineup):
+    return [(s, p.player.key if p else None) for s, p in lineup]
+
+
+def _rb_wr_wr_te():
+    return _by_pos(_ps("rb1", "RB", 90.0), _ps("rb2", "RB", 10.0),
+                   _ps("wr1", "WR", 95.0), _ps("wr2", "WR", 80.0))
+
+
+SLOTS = ["RB", "WR", "RB/WR", "WR/TE"]
+
+
+def test_overlapping_flex_slots_are_both_filled():
+    """Filled best-first, RB/WR takes the WR and WR/TE is left empty with an
+    RB on the bench. The RB in RB/WR and the WR in WR/TE fills both."""
+    assert dict(_keys(report.build_lineup(_rb_wr_wr_te(), slots=SLOTS))) == {
+        "RB": "rb1", "WR": "wr1", "RB/WR": "rb2", "WR/TE": "wr2"}
+
+
+def test_overlapping_flex_slots_are_both_filled_from_the_pool():
+    by = _rb_wr_wr_te()
+    pool = [by["WR"][1], by["RB"][1]]
+    lineup = report.build_lineup(by, flex_pool=pool, slots=SLOTS)
+    assert dict(_keys(lineup)) == {"RB": "rb1", "WR": "wr1", "RB/WR": "rb2", "WR/TE": "wr2"}
+
+
+def test_no_false_hole_and_the_rb_is_protected():
+    from ff_startsit.availability import lineup_holes
+    from ff_startsit.waivers.build import _lineup_keys
+
+    lineup = report.build_lineup(_rb_wr_wr_te(), slots=SLOTS)
+    assert lineup_holes(lineup, playing=None) == []
+    rules = LeagueRules(roster_slots={"RB": 1, "WR": 1},
+                        flex_slots={"RB/WR": 1, "WR/TE": 1})
+    mine = [s for group in _rb_wr_wr_te().values() for s in group]
+    assert "rb2" in _lineup_keys(mine, rules)
+
+
+def test_an_infeasible_slot_stays_empty():
+    by = _by_pos(_ps("rb1", "RB", 90.0), _ps("rb2", "RB", 10.0), _ps("wr1", "WR", 95.0))
+    assert dict(_keys(report.build_lineup(by, slots=SLOTS)))["WR/TE"] is None
+
+
+def test_the_repair_never_benches_a_greedy_starter():
+    """It only adds a starter: every player the best-first pass started still
+    starts, in some slot."""
+    by = _rb_wr_wr_te()
+    plain = {k for _, k in _keys(report.build_lineup(by, slots=SLOTS[:3])) if k}
+    full = {k for _, k in _keys(report.build_lineup(by, slots=SLOTS)) if k}
+    assert plain <= full
+
+
+def test_flex_slots_fill_as_many_as_any_assignment_could():
+    """Brute force over random rosters and flex layouts: the lineup fills as
+    many slots as the best possible assignment does."""
+    import itertools
+    import random
+
+    rng = random.Random(92)
+    names = list(FLEX_SLOT_POSITIONS)
+    for _ in range(250):
+        players = [_ps(f"p{i}", rng.choice(["QB", "RB", "WR", "TE"]),
+                       float(rng.randint(1, 100))) for i in range(rng.randint(1, 6))]
+        slots = [rng.choice(names) for _ in range(rng.randint(1, 4))]
+        slots = [s for s in FLEX_SLOT_ORDER for _ in range(slots.count(s))]
+        best = 0              # every way to seat players (or nobody) in the slots
+        for perm in itertools.permutations(players + [None] * len(slots), len(slots)):
+            best = max(best, sum(p is not None and p.player.position in FLEX_SLOT_POSITIONS[s]
+                                 for s, p in zip(slots, perm)))
+        lineup = report.build_lineup(_by_pos(*players), slots=slots)
+        filled = sum(p is not None for _, p in lineup)
+        assert filled == best, (slots, [(p.player.key, p.player.position) for p in players])
+        for slot, pick in lineup:
+            assert pick is None or pick.player.position in FLEX_SLOT_POSITIONS[slot]

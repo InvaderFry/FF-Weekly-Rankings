@@ -648,6 +648,64 @@ def flag_starter_boundaries(settings: Settings, recs: dict[str, Recommendation],
                 settings.analyst_min_gap, boundary_pair=pair)
 
 
+def _fill_empty_flex_slots(out: list, by_pos: dict[str, list[PlayerScore]],
+                           flex_pool: Optional[Sequence[PlayerScore]],
+                           used: set[str]) -> None:
+    """Fill a flex slot the best-first pass left empty, if any rearrangement can.
+
+    Filling one slot at a time can strand a slot when flex slots overlap: with
+    an RB and a WR left for ``RB/WR`` then ``WR/TE``, ``RB/WR`` takes the
+    better WR and ``WR/TE`` has nobody, while the RB sits on the bench (found
+    in review of PR #92). So for each empty flex slot this searches for an
+    augmenting chain: a flex starter who can also play the empty slot moves
+    into it, the slot he left takes another flex starter or, at the end of the
+    chain, the best unused player it accepts. That is the standard
+    maximum-matching step, so the lineup fills as many slots as any
+    assignment could, and it never benches anyone the best-first pass started:
+    the starters only gain one. Position slots never take part, since anyone
+    they could hand over is a player the empty slot could have taken itself.
+    """
+    flex = [i for i, (slot, _) in enumerate(out) if slot in SLOT_POSITIONS]
+
+    def accepts(i: int, pick: PlayerScore) -> bool:
+        return pick.player.position in SLOT_POSITIONS[out[i][0]]
+
+    def best_unused(i: int) -> Optional[PlayerScore]:
+        slot = out[i][0]
+        if flex_pool and slot in POOLED_SLOTS:
+            return _best_from_pool(flex_pool, used, SLOT_POSITIONS[slot])
+        return _best_for_slot(slot, by_pos, used)
+
+    for start in flex:
+        if out[start][1] is not None:
+            continue
+        # Breadth-first over flex slots: ``parent[t] = s`` means t's starter
+        # can move into s, after which t needs a player of its own.
+        parent = {start: None}
+        queue = [start]
+        end, newcomer = None, None
+        while queue and end is None:
+            s = queue.pop(0)
+            candidate = best_unused(s)
+            if candidate is not None:
+                end, newcomer = s, candidate
+                break
+            for t in flex:
+                pick = out[t][1]
+                if t not in parent and pick is not None and accepts(s, pick):
+                    parent[t] = s
+                    queue.append(t)
+        if end is None:
+            continue              # nothing can fill it: a genuine hole
+        # Walk the chain back: each slot passes its starter up to its parent.
+        incoming, slot_i = newcomer, end
+        while slot_i is not None:
+            outgoing = out[slot_i][1]
+            out[slot_i] = (out[slot_i][0], incoming)
+            incoming, slot_i = outgoing, parent[slot_i]
+        used.add(newcomer.player.key)
+
+
 def build_lineup(by_pos: dict[str, list[PlayerScore]],
                  flex_pool: Optional[Sequence[PlayerScore]] = None,
                  flex_note: Optional[str] = None,
@@ -685,6 +743,7 @@ def build_lineup(by_pos: dict[str, list[PlayerScore]],
         if pick is not None:
             used.add(pick.player.key)
         out.append((slot, pick))
+    _fill_empty_flex_slots(out, by_pos, flex_pool if pooled else None, used)
 
     has_flex = any(slot in POOLED_SLOTS and pick is not None for slot, pick in out)
     if pooled:

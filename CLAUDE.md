@@ -972,7 +972,17 @@ parser without an entry there leaves it accepting only itself. Flex slots fill
 narrowest first (`FLEX_SLOT_ORDER`), and the pooled RB/WR/TE ranking fills
 `report.POOLED_SLOTS` (FLEX, RB/WR, WR/TE): any subset of one cross-position
 ranking is still a ranking, while SUPER_FLEX needs quarterbacks it doesn't
-rank.
+rank. Overlapping flex slots also need more than a best-first fill
+(second review of PR #92): with an RB and a WR left for `RB/WR` then
+`WR/TE`, `RB/WR` took the better WR and `WR/TE` sat empty beside a benched
+RB, which also raised a false lineup-hole alert and left the RB off the drop
+protection. `report._fill_empty_flex_slots` runs after the greedy pass and,
+for each empty flex slot, looks for an augmenting chain (a flex starter who
+can also play it moves over; the slot he left takes the best unused player it
+accepts). That is the maximum-matching step, so the lineup fills as many slots
+as any assignment could, and it never benches a starter the greedy pass
+chose. `test_flex_slots_fill_as_many_as_any_assignment_could` checks it
+against brute force on random rosters.
 `cli._availability_view` reads `LeagueRules` from the provider instance it
 already builds (one extra request per ESPN league; Sleeper's
 `get_league_rules` uses the profile's league id directly rather than
