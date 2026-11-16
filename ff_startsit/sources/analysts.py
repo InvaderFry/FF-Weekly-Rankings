@@ -25,7 +25,7 @@ from ..cache import atomic_write_text, read_json_or_none
 from ..data.matching import ExternalRow, match_rows, is_defense
 from ..data.teams import normalize_team
 from ..models import Player
-from ..net import HEADERS
+from ..net import HEADERS, session as net_session
 from .articles import verified_week
 
 UNIVERSAL_KINDS = frozenset({'QB', 'DST', 'K'})
@@ -358,7 +358,7 @@ class AnalystFetcher:
         self.source = AnalystSource()
         self.season = season
         self.data_dir = data_dir
-        self.session = session or requests.Session()
+        self.session = session or net_session()
         self.timeout = timeout
         self._pages = {}
         self._catalogs = {}

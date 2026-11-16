@@ -63,7 +63,22 @@ concurrency:
   queue: max
 
 jobs:
+  # Scheduled runs publish only in season (the rehearsal week, then kickoff
+  # through the Monday that ends Week 18); a manual dispatch always runs. The
+  # decision is workflow.in_season, tested offline. Stdlib only, so the
+  # runner's own Python runs it with no install.
+  gate:
+    runs-on: ubuntu-latest
+    outputs:
+      run: ${{ steps.season.outputs.run }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - id: season
+        run: python3 -m ff_startsit.workflow in-season "$GITHUB_EVENT_NAME"
+
   report:
+    needs: gate
+    if: needs.gate.outputs.run == 'true'
     runs-on: ubuntu-latest
     environment:
       name: ${{ inputs.artifact_only && 'publishing-test' || 'github-pages' }}
@@ -98,14 +113,14 @@ jobs:
       LOG_BRANCH: calibration-data
       LOG_FILE: results_log.jsonl
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - uses: actions/setup-python@v7
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: "3.12"
 
       - name: Install
-        run: pip install -e .
+        run: pip install -e . -c constraints.txt
 
       # The decision log is the corpus `calibrate` learns from, and a runner's
       # filesystem does not survive the job. Keep it on an orphan branch that
@@ -159,7 +174,8 @@ jobs:
       # Best-effort: the digest, dashboard and Discord ping are what the user
       # actually depends on, so a push failure here warns rather than failing the
       # run — same trade the publish command makes for a Discord hiccup.
-      # `concurrency` above is what keeps two runs from racing this branch.
+      # chatops.yml writes this branch too, from another concurrency group, so
+      # the script appends onto a fresh fetch and retries a rejected push.
       - name: Persist decision log
         id: persist
         if: ${{ !inputs.artifact_only }}
@@ -202,6 +218,14 @@ jobs:
           else
             echo "Creating issue: $TITLE"
             gh issue create --title "$TITLE" --body-file report.md
+            # A new week's issue closes the earlier weeks' issues of this kind
+            # (workflow.stale_issues); every reader takes the newest open one.
+            gh issue list --state open --search 'in:title "start/sit"' --limit 100 \
+              --json number,title > open-issues.json
+            for OLD in $(python -m ff_startsit.workflow stale-issues open-issues.json "$TITLE" "start/sit"); do
+              gh issue close "$OLD" --comment "Superseded by $TITLE." \
+                || echo "::warning::Could not close issue #$OLD"
+            done
           fi
 
       - name: Report issue failure
@@ -242,18 +266,18 @@ jobs:
 
       - name: Upload Pages artifact
         if: steps.site.outputs.complete == 'true' && !inputs.artifact_only
-        uses: actions/upload-pages-artifact@v5
+        uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
         with:
           path: ./site
 
       - name: Deploy to GitHub Pages
         if: steps.site.outputs.complete == 'true' && !inputs.artifact_only
         id: deployment
-        uses: actions/deploy-pages@v5
+        uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346 # v5.0.1
 
       - name: Upload test artifacts
         if: inputs.artifact_only && steps.site.outputs.complete == 'true'
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: publishing-test
           path: |

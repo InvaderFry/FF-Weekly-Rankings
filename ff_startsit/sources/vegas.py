@@ -33,10 +33,12 @@ from typing import Iterable, Mapping, Optional
 import requests
 
 from .. import cache
+from ..data.matching import is_defense
 from ..data.teams import normalize_team
-from ..models import Game, GameContext, Player, SignalValue
+from ..models import Game, GameContext, Player, SignalValue, _fmt_raw
 from .base import Signal
 from .schedule import ScheduleProvider, parse_kickoff
+from ..net import session as net_session
 
 ODDS_URL = "https://api.the-odds-api.com/v4/sports/americanfootball_nfl/odds"
 #: Seconds a cached odds payload stays usable. Deliberately short: lines really
@@ -121,6 +123,22 @@ def implied_totals_by_team(games: Iterable[Game]) -> dict[str, float]:
     return out
 
 
+def opponent_totals_by_team(games: Iterable[Game]) -> dict[str, float]:
+    """``{team: the opponent's implied total}``, first occurrence wins.
+
+    What a team defense is scored on: fewer points expected *against* it is
+    the better spot. Same first-wins rule as ``implied_totals_by_team``, for
+    the same reason.
+    """
+    out: dict[str, float] = {}
+    for g in games:
+        for team, opp in ((g.home_team, g.away_team), (g.away_team, g.home_team)):
+            it = g.implied_total(opp)
+            if it is not None:
+                out.setdefault(team, it)
+    return out
+
+
 class VegasSignal(Signal):
     name = "vegas"
     higher_is_better = True  # a higher implied total is a better scoring spot
@@ -129,7 +147,7 @@ class VegasSignal(Signal):
                  timeout: int = 20, schedule: Optional[ScheduleProvider] = None,
                  cache_dir: Optional[Path] = None):
         self.api_key = api_key
-        self.session = session or requests.Session()
+        self.session = session or net_session()
         self.timeout = timeout
         self.schedule = schedule
         self.cache_dir = Path(cache_dir) if cache_dir else None
@@ -151,15 +169,32 @@ class VegasSignal(Signal):
             self.schedule.for_week(week) if self.schedule else {},
         )
         totals = implied_totals_by_team(games)
-        return self.assign(players, totals)
+        return self.assign(players, totals, opponent_totals_by_team(games))
 
     @staticmethod
-    def assign(players: Iterable[Player], totals: dict[str, float]) -> dict[str, SignalValue]:
-        """Map per-team implied totals onto players (pure; used by tests)."""
+    def assign(players: Iterable[Player], totals: dict[str, float],
+               opp_totals: Optional[dict[str, float]] = None) -> dict[str, SignalValue]:
+        """Map per-team implied totals onto players (pure; used by tests).
+
+        A team defense reads its **opponent's** implied total, negated: a
+        signal has one ``higher_is_better``, and for a defense fewer points
+        against is better. Defenses are only ever normalized against other
+        defenses, so the sign is safe for the blend, and the raw-gap check
+        compares absolute differences. The note and ``display`` carry the
+        real number so no reader sees a bare negative.
+        """
         out: dict[str, SignalValue] = {}
         for p in players:
             if not p.team:
                 out[p.key] = SignalValue(raw=None, available=False, note="bye / no team")
+            elif is_defense(p.position) and opp_totals is not None:
+                if p.team in opp_totals:
+                    shown = f"opp implied {_fmt_raw(opp_totals[p.team])}"
+                    out[p.key] = SignalValue(raw=-opp_totals[p.team], available=True,
+                                             note=shown, display=shown)
+                else:
+                    out[p.key] = SignalValue(raw=None, available=False,
+                                             note="no line for team")
             elif p.team in totals:
                 out[p.key] = SignalValue(raw=totals[p.team], available=True)
             else:

@@ -41,6 +41,13 @@ Sleeper/Discord) must be injectable or mockable so the test stays offline; follo
 the existing pattern (e.g. `cmd_calibrate`'s `outcome_provider` parameter, fake
 signals in `test_pipeline.py`).
 
+CI's `installed-wheel` job runs a **copy of `tests/` outside the checkout**
+against the installed package, so a test that reads the repository's own files
+(workflows, `pyproject.toml`, `constraints.txt`) must carry
+`conftest.requires_repo` and read through `conftest.REPO_ROOT`. It still runs in
+every matrix job. Make such a test assert it read something: two pinning checks
+once "passed" in that job by globbing an empty directory.
+
 ## Architecture
 
 Data flows: **roster provider → pipeline → signals → engine → recommendation →
@@ -278,6 +285,22 @@ without touching the pure engine.
   was still under the `calibrate --write` floors; if a later fit looks odd on
   those two weights, that boundary is the first place to look.
 
+  **Team defenses read the opponent's Vegas total** (2026-11-15). Vegas used
+  to give every player his own team's implied total, higher is better, which
+  for a defense is backwards: the Chiefs' high total said nothing about how
+  many points the Chiefs' defense would allow. `VegasSignal.assign` now gives a
+  defense (`matching.is_defense`) the **negated** opponent implied total
+  (`opponent_totals_by_team`), keeping one `higher_is_better`. Defenses are
+  only ever normalized against defenses, so the sign is safe for the blend,
+  and `_flag_raw_dead_heat` compares absolute differences. The number a reader
+  sees is the real one: the note reads `opp implied 24.5`, and
+  `SignalValue.display` (display only, never logged) is what the dead-heat
+  note prints instead of a bare negative. The same **corpus boundary** as
+  above applies: logged DEF `vegas` raw values before 2026-11-15 are the
+  team's own total and after it the negated opponent total, so their
+  `normalized` values rank defenses in opposite directions across the date.
+  Replay is unaffected; a fit spanning it mixes the two for DEF rows.
+
 ### The self-calibration loop (#7)
 
 Every `rank`/`compare` run appends a row to `.cache/results_log.jsonl`
@@ -302,6 +325,23 @@ fell short, since "gather more data" doesn't say what to gather. This matters
 more than it looks: because a learned file now *replaces* the weight set, a
 premature `--write` zeroes every signal the log happened not to contain rather
 than merely diluting it.
+
+**Clearing the floors is not enough to write either: the fit must hold up out
+of sample.** Four signals at step 0.05 is 1,771 trial vectors, and the best of
+that many beats the current weights *in sample* on almost any corpus, noise
+included. So `calibrate` also runs leave-one-week-out validation
+(`learner.holdout`): for each week, fit on every other week (`grid_best`) and
+score the held-out week, the current weights scored on the same week.
+`--write` requires the mean held-out gain to reach `--min-gain` (default 0.02)
+**and** the per-week gains to be consistent: their mean at least
+`MIN_HOLDOUT_T` (2) standard errors above zero (`holdout_shortfall` says which
+failed). The consistency half is not decoration. In simulation (40 pure-noise
+corpora, 8 weeks x 3 decisions x 4 candidates) the mean alone let about a third
+write: one extreme vector wins every fold, so in-sample luck carries straight
+into the held-out score. With both, 2 of 40 wrote, while a strong real signal
+wrote 40 of 40 (`tests/test_calibrate_holdout.py` pins both rates). A weak but
+real signal writes about half the time and waits for more weeks, which is the
+right direction to err: a learned file replaces the whole weight set.
 
 `dedupe_decisions` (`log_reader.py`) collapses rows sharing `(season, week,
 scoring)` and the same candidate keys — the Thursday and Sunday passes over one
@@ -347,9 +387,16 @@ rewriting that branch — the readers already handle them, and the log is
 append-only on purpose.
 
 The corpus survives scheduled runs on a `calibration-data` orphan branch
-(`weekly-report.yml`), since `.cache/` dies with the runner. Note
-`results_log.jsonl` is gitignored as cache everywhere else, so that push needs
-`git add -f` — without it the step silently succeeds and persists nothing. Nothing
+(`weekly-report.yml`, and `chatops.yml` for `/rank` and `/compare`, the
+decisions the owner actually asked about), since `.cache/` dies with the
+runner. Note `results_log.jsonl` is gitignored as cache everywhere else, so
+that push needs `git add -f` — without it the step silently succeeds and
+persists nothing. The two workflows are in different concurrency groups, so
+the branch can move between a run's restore and its push:
+`scripts/persist-decision-log.sh` therefore appends only the rows the fetched
+branch doesn't hold (a row is its exact text; each carries its own timestamp)
+and retries a rejected push from a fresh fetch, rather than copying the local
+file over the branch, which would erase the other run's rows. Nothing
 runs `calibrate --write` from CI; fitting weights on a cron is what the floors
 above exist to prevent.
 
@@ -358,7 +405,23 @@ logged decision under **the weights that run actually used** (`Decision.weights`
 joins the pick to the same Sleeper outcomes, and reports top-pick hit-rate plus a
 **confident-vs-close-call hit-rate split** — the honesty check on close-call
 flagging. It reuses `weighted_final`, the `OutcomeProvider` seam, and `load_decisions`;
-it never writes weights.
+it never writes weights. The pick is decided **before** outcomes are joined
+(highest blended final among the scored candidates): joining first and taking
+the best of whoever had points promoted the runner-up whenever the pick was a
+late scratch, scoring a decision the tool never made. A pick with no points
+while another candidate in the decision joined goes to
+`BacktestResult.pick_did_not_play`, reported on its own line and excluded from
+every hit-rate; a decision where nobody joined is simply unjoinable.
+
+The honesty split buckets on **which check fired**, not on `close_call`
+alone. `close_call` is one boolean that the last-starting-spot check sets too,
+and that check says nothing about the top pick, so a confident pick with a
+tight boundary used to land in the close-call bucket. Every place that sets
+the flag now also records its kind on `Recommendation.close_call_kinds`
+(`"top"`, `"boundary"`; `blend._mark_close_call`), the log row carries it, and
+`backtest` buckets on `"top"` when a row has the field. Rows written before it
+existed read as `close_call_kinds=None` and keep the old bucketing; renderers
+still read `close_call` alone.
 
 `sources/experts.py` is a **setup helper, not a signal** — it resolves analyst
 names to the FantasyPros expert ids `FF_PREFERRED_EXPERTS` wants.
@@ -481,6 +544,17 @@ the verified shape of every source page live in `docs/EXPERT_BOARD_PLAN.md`.
 - Every request sends `net.HEADERS`, a plain `ff-startsit/...` identity. Don't
   reintroduce a browser User-Agent (`tests/test_net.py`), and don't add
   "compatible;" to it: CBS answers 406 to that token.
+- Every default session comes from **`net.session()`**, which sends those
+  headers and retries connection errors, 429 and 5xx up to `RETRY_TOTAL` (3)
+  times with a short backoff, for **GET and HEAD only**. Nothing is cached
+  between Actions runs, so before this one 502 at the moment a scheduled run
+  fetched cost that run the source. Never retry a POST: the Discord webhook
+  is one, and a POST that reached Discord but failed on the way back would
+  post twice. `Retry-After` is ignored so a run can't sleep for as long as a
+  server asks, and exhausted retries return the last response so each caller's
+  own status handling still runs. Don't build a bare `requests.Session()`
+  (`tests/test_http_retry.py` checks); keep every `session=` parameter so
+  tests stay offline.
 
 ### The Tuesday expert board (`boards/writers.py`, `waivers/board.py`)
 
@@ -873,6 +947,52 @@ candidate is flex-eligible, and **refuses** otherwise (QB vs RB) or when the
 pooled ranking fails its coverage guard — there is no honest fallback, and the
 per-position blend would answer with a number that doesn't mean what it says.
 
+**The lineup is the league's, not the template** (2026-11 review). Start/sit
+used to build `LINEUP_SLOTS` (1QB/2RB/2WR/TE/FLEX/K/DEF) for every league while
+the waiver pass read the real slots, so a superflex league benched its second
+quarterback, a two-flex league left a starter on the bench, and a league
+without kickers was told to start one. Now `report.league_slots(rules)` is the
+one slot list both build from (`waivers.build._lineup_keys` included). Order:
+QB/RB/WR/TE, then the flex slots, then K/DEF — the picks are the same as "flex
+last" (no flex slot takes K or DEF), and a template-shaped league renders in
+the template's order. Empty rules give exactly `LINEUP_SLOTS`. A `FLEX` is
+added **only when the platform reported no slots at all**: both platforms read
+flex slots from the same data as position slots, so known position slots with
+an empty `flex_slots` mean the league has no flex. The waiver pass used to add
+one regardless, which started (and protected from the drop list) a bench body
+in a no-flex league. That rule is only as good as the parsers'
+list of flex slots, and it was incomplete (found in review of PR #92): ESPN's
+slot 3 ("RB/WR") and 5 ("WR/TE"), and Sleeper's `WRRB_FLEX` and `REC_FLEX`
+(verified against ffscrapr and espn_api, not guessed) were dropped, so a
+nine-starter RB/WR league built eight slots and its flex starter lost drop
+protection. Every flex slot now lives in one table,
+`models.FLEX_SLOT_POSITIONS` (`RB/WR`, `WR/TE`, `FLEX`, `SUPER_FLEX`), which
+`report.SLOT_POSITIONS` and `availability` both read; adding a slot name to a
+parser without an entry there leaves it accepting only itself. Flex slots fill
+narrowest first (`FLEX_SLOT_ORDER`), and the pooled RB/WR/TE ranking fills
+`report.POOLED_SLOTS` (FLEX, RB/WR, WR/TE): any subset of one cross-position
+ranking is still a ranking, while SUPER_FLEX needs quarterbacks it doesn't
+rank. Overlapping flex slots also need more than a best-first fill
+(second review of PR #92): with an RB and a WR left for `RB/WR` then
+`WR/TE`, `RB/WR` took the better WR and `WR/TE` sat empty beside a benched
+RB, which also raised a false lineup-hole alert and left the RB off the drop
+protection. `report._fill_empty_flex_slots` runs after the greedy pass and,
+for each empty flex slot, looks for an augmenting chain (a flex starter who
+can also play it moves over; the slot he left takes the best unused player it
+accepts). That is the maximum-matching step, so the lineup fills as many slots
+as any assignment could, and it never benches a starter the greedy pass
+chose. `test_flex_slots_fill_as_many_as_any_assignment_could` checks it
+against brute force on random rosters.
+`cli._availability_view` reads `LeagueRules` from the provider instance it
+already builds (one extra request per ESPN league; Sleeper's
+`get_league_rules` uses the profile's league id directly rather than
+resolving the user first) and returns the slots as its fourth element; it is
+None, meaning the template, offline, in preseason, for a manual source, on
+empty rules or on any failed read. `score_week` stores them on
+`WeekScores.slots`, so `lineup_from` builds the same lineup the boundary flag
+saw, and all four lineup renderers show it. `SUPER_FLEX` still compares
+per-position scores (see above).
+
 ### The waiver/trade pass (`waivers/`)
 
 The Tuesday-evening companion to the start/sit pass: `ffstartsit waivers` (and
@@ -1175,7 +1295,8 @@ called **without** `protected`: offers are drawn from surplus only, so no
 starting slot can be traded away, and passing a lineup's worth of protected keys
 blocked every idea (surplus depth *is* the FLEX).
 
-`build._lineup_keys` passes the **league's** slots into `build_lineup` (which takes
+`build._lineup_keys` passes the **league's** slots (`report.league_slots`, the
+list the start/sit lineup uses too) into `build_lineup` (which takes
 an optional `slots`, defaulting to `LINEUP_SLOTS`), **flex slots included**.
 Protecting against the hardcoded 1QB/2RB/2WR template while `droppable` counted
 surplus against the real `roster_slots` made the two halves of one guard disagree.
@@ -1192,9 +1313,10 @@ platforms — `espn.FLEX_SLOT_ID_TO_NAME` maps 23/7, `sleeper._FLEX_SLOTS` match
 the names — and kept deliberately **out of** `roster_slots`: nobody plays "FLEX",
 and `starter_demand` divides a rank by a position's demand, which a flex slot has
 none of. `report.SLOT_POSITIONS` says what each accepts. Two consequences worth
-keeping: the pooled FantasyPros ranking fills `FLEX` and **only** `FLEX`, since it
-is an RB/WR/TE list that doesn't rank quarterbacks and a `SUPER_FLEX` pick drawn
-from it would come off a list its best candidate isn't on; and `starter_demand`
+keeping: the pooled FantasyPros ranking fills `FLEX` and the narrower `RB/WR`
+and `WR/TE`, never `SUPER_FLEX`, since it is an RB/WR/TE list that doesn't rank
+quarterbacks and a `SUPER_FLEX` pick drawn from it would come off a list its
+best candidate isn't on; and `starter_demand`
 still ignores flex slots, so a superflex league's QB depth ratios read against a
 one-QB field. Splitting a FLEX across RB/WR/TE to fix that would invent exactly
 the kind of number the `depth_ratio` change removed.
@@ -1427,6 +1549,17 @@ missing-reading counts carrying the signal's *own* note (`venue unknown` and
 It is **never a scoring input** — `finish_status` only reads what the blend
 already produced.
 
+That per-league catch only works if a league's failure *is* a `RosterError`
+(or `SleeperError`). An HTTP 5xx used to leave `ESPNProvider._fetch` as a bare
+`requests.HTTPError`, and one league's 502 ended every league after it. So
+`_fetch` and `SleeperClient._get` wrap a bad status or a non-JSON body (naming
+the status), and both loops also catch `requests.RequestException`, so a
+provider that forgets to wrap still costs one league. The same applies one
+level down: when the FantasyPros page can't be reached, `ECRSignal` notes
+`ECR page unreachable` on each player (not `no ECR rank`, which means the page
+was read and didn't list him) and adds an `("ecr-unreachable", reason, week)`
+status entry naming the status code or exception class.
+
 Two things it must keep doing. It says explicitly that a generation or fetch
 time is **not** the provider's update time, because the one thing a status block
 must not do is imply a freshness it never measured; a cache-file mtime is
@@ -1469,12 +1602,46 @@ trade as the decision log, and as Discord. Note the titles are now season-aware
 (`2026 Week 1 start/sit`); pre-existing week-only issues are left standing as
 history and are never reused.
 
+**A new week's issue closes the older ones of its kind.** When a workflow
+*creates* an issue it lists the open issues of that kind and closes each one
+`workflow.stale_issues` names: a title in exactly `issue_title`'s shape, same
+kind, earlier `(season, week)`. Everything else stays open, including the
+legacy week-only titles above (no season to compare), a later week, and any
+issue a person opened. Nothing depends on an older issue staying open: every
+reader (`--since`, the `ff-waivers-refreshed` marker, values.yml's read of the
+waiver issue) takes the newest open issue of its kind. A failed close warns
+and the step goes on.
+
+**Scheduled runs publish only in season.** Every workflow with a cron runs a
+`gate` job first (`workflow.py in-season "$GITHUB_EVENT_NAME"`, stdlib only,
+so the runner's own Python runs it with no install), and its real job `needs`
+it and runs only on `run == 'true'`. The rule is `season.in_season_window`:
+the rehearsal week, then kickoff through `season.season_end` (the Monday that
+ends Week 18, on the Tuesday-anchored weeks `date_week` counts), on Central
+dates. A `workflow_dispatch` always runs. Out of season the run ends green
+with nothing posted, including the waiver refusal banner (owner's decision,
+2026-11). GitHub separately disables schedules after 60 days without
+repository activity, which an offseason exceeds; `docs/SETUP.md` carries the
+September re-enable checklist, since no code can prevent it.
+`tests/test_season_gate.py` checks every cron workflow is gated.
+
 `ARTIFACT_ONLY=true` (the `artifact_only` dispatch input) is the rehearsal for
 publishing, and like the waiver rehearsal it is a *real* run with its effects
 withheld rather than a mock: `run_cli` strips `--discord` and `--log`, and the
 workflows skip the issue post, the `calibration-data` push and the Pages
 upload/deploy while still requiring both pages to build. It cannot prove
 production permissions or delivery — only a real run does that.
+
+**What the runs with secrets execute is pinned.** The scheduled workflows and
+ChatOps hold ESPN cookies, a Discord webhook and `contents: write`, so every
+`uses:` in every workflow is a full commit SHA with a `# vX.Y.Z` comment (a
+moved tag would otherwise run there unreviewed), and those four workflows
+install with `pip install -e . -c constraints.txt`, which pins the runtime
+dependencies and what they pull in. **CI installs unconstrained** on purpose,
+so a new release is tested before anyone bumps a pin. Bumping: resolve the
+new tag with `git ls-remote --tags`, replace every occurrence of that action
+(`tests/test_pinning.py` refuses one action at two SHAs), and update
+`constraints.txt` only after CI has passed on the new versions.
 
 CI runs `actionlint` and `scripts/check-workflows.py` over the workflows, and
 installs the built wheel into a clean venv to run the suite from outside the

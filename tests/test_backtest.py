@@ -179,3 +179,109 @@ def test_cmd_backtest_dedupes_before_reporting(tmp_path, capsys):
                       outcome_provider=_provider(outcomes))
     assert rc == 0
     assert "3 evaluatable decision(s)" in capsys.readouterr().out
+
+
+def _scratch_log(path, rows):
+    path.write_text("\n".join(json.dumps(r) for r in rows))
+    return load_decisions(path)
+
+
+def test_a_pick_who_did_not_play_is_not_promoted_to_his_runner_up(tmp_path):
+    """The top pick was a late scratch: no Sleeper points while the week's
+    stats exist. Dropping him and taking the best of the rest scored the
+    runner-up as though he had been the pick (here, a hit)."""
+    decisions = _scratch_log(tmp_path / "log.jsonl", [
+        {"ts": "2024-10-01T12:00:00+00:00", "command": "rank", "week": 1,
+         "scoring": "ppr", "weights": {"ecr": 1.0}, "close_call": False,
+         "notes": [], "pick": "A",
+         "candidates": [_cand("a", 95.0), _cand("b", 70.0), _cand("c", 20.0)]}])
+    outcomes = {"b": 18.0, "c": 4.0}                # "a" has no points: scratched
+
+    result = backtest(decisions, _provider(outcomes), base_weights={"ecr": 1.0})
+
+    assert result.pick_did_not_play == 1
+    assert result.hits == 0
+    assert result.decisions_used == 0               # out of the hit-rate entirely
+    assert (result.confident_n, result.close_call_n) == (0, 0)
+
+
+def test_a_week_with_no_stats_is_not_a_pick_who_did_not_play(tmp_path):
+    decisions = _scratch_log(tmp_path / "log.jsonl", [
+        {"ts": "2024-10-01T12:00:00+00:00", "command": "rank", "week": 1,
+         "scoring": "ppr", "weights": {"ecr": 1.0}, "close_call": False,
+         "notes": [], "pick": "A",
+         "candidates": [_cand("a", 95.0), _cand("b", 70.0)]}])
+    result = backtest(decisions, lambda *a: None, base_weights={"ecr": 1.0})
+    assert result.pick_did_not_play == 0
+
+
+def test_cmd_backtest_reports_the_did_not_play_bucket(tmp_path, capsys):
+    log = tmp_path / "log.jsonl"
+    rows = [
+        {"ts": "2024-10-01T12:00:00+00:00", "command": "rank", "week": 1,
+         "scoring": "ppr", "weights": {"ecr": 1.0}, "close_call": False,
+         "notes": [], "pick": "A",
+         "candidates": [_cand("a", 95.0), _cand("b", 70.0)]},
+        {"ts": "2024-10-08T12:00:00+00:00", "command": "rank", "week": 2,
+         "scoring": "ppr", "weights": {"ecr": 1.0}, "close_call": False,
+         "notes": [], "pick": "C",
+         "candidates": [_cand("c", 90.0), _cand("d", 40.0)]}]
+    log.write_text("\n".join(json.dumps(r) for r in rows))
+    args = argparse.Namespace(log=log, season=None, week=None)
+    rc = cmd_backtest(args, Settings(data_dir=tmp_path),
+                      outcome_provider=_provider({"b": 9.0, "c": 20.0, "d": 3.0}))
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "pick did not play: 1 decision(s), excluded from the hit-rate" in out
+
+
+# --- close_call_kinds: the top-two flag apart from the boundary flag ---------
+
+def _row(close_call, kinds=None, week=1, ts="2024-10-01T12:00:00+00:00"):
+    row = {"ts": ts, "command": "report", "week": week, "scoring": "ppr",
+           "weights": {"ecr": 1.0}, "close_call": close_call, "notes": [],
+           "pick": "A", "candidates": [_cand("a", 90.0), _cand("b", 40.0)]}
+    if kinds is not None:
+        row["close_call_kinds"] = kinds
+    return row
+
+
+def test_close_call_kinds_round_trip_through_the_log(tmp_path):
+    from ff_startsit.models import Player, PlayerScore, Recommendation
+    from ff_startsit.results_log import log_recommendation
+
+    rec = Recommendation(1, "ppr", {"ecr": 1.0}, [
+        PlayerScore(Player("a", "A", "KC", "RB"), normalized={"ecr": 90.0}, final=90.0),
+        PlayerScore(Player("b", "B", "KC", "RB"), normalized={"ecr": 40.0}, final=40.0)],
+        close_call=True, close_call_kinds=["boundary"])
+    log = tmp_path / "log.jsonl"
+    log_recommendation(rec, log, command="report")
+    (decision,) = load_decisions(log)
+    assert decision.close_call is True
+    assert decision.close_call_kinds == ("boundary",)
+
+
+def test_an_old_row_without_kinds_reads_as_none(tmp_path):
+    (decision,) = _scratch_log(tmp_path / "log.jsonl", [_row(True)])
+    assert decision.close_call is True and decision.close_call_kinds is None
+
+
+def test_a_boundary_only_decision_lands_in_the_confident_bucket(tmp_path):
+    decisions = _scratch_log(tmp_path / "log.jsonl", [_row(True, ["boundary"])])
+    result = backtest(decisions, _provider({"a": 20.0, "b": 10.0}),
+                      base_weights={"ecr": 1.0})
+    assert (result.confident_n, result.close_call_n) == (1, 0)
+
+
+def test_a_top_two_decision_lands_in_the_close_call_bucket(tmp_path):
+    decisions = _scratch_log(tmp_path / "log.jsonl", [_row(True, ["top", "boundary"])])
+    result = backtest(decisions, _provider({"a": 20.0, "b": 10.0}),
+                      base_weights={"ecr": 1.0})
+    assert (result.confident_n, result.close_call_n) == (0, 1)
+
+
+def test_an_old_flagged_row_keeps_todays_bucketing(tmp_path):
+    decisions = _scratch_log(tmp_path / "log.jsonl", [_row(True)])
+    result = backtest(decisions, _provider({"a": 20.0, "b": 10.0}),
+                      base_weights={"ecr": 1.0})
+    assert (result.confident_n, result.close_call_n) == (0, 1)

@@ -25,6 +25,7 @@ from ..waivers.base import LeagueViewProvider
 from ..waivers.models import (ACQ_FAAB, ACQ_PRIORITY, ACQ_UNKNOWN, FantasyTeam,
                               LeagueRules, PoolPlayer)
 from .base import RosterError, RosterProvider
+from ..net import session as net_session
 
 BASE = "https://api.sleeper.app/v1"
 PLAYERS_CACHE_TTL = 24 * 3600  # seconds
@@ -33,8 +34,10 @@ PLAYERS_CACHE_TTL = 24 * 3600  # seconds
 _KEEP_POSITIONS = {"QB", "RB", "WR", "TE", "K", "DEF"}
 #: Sleeper's flex slot names, kept apart from ``_KEEP_POSITIONS`` because that
 #: set also filters real players (a player's position is never "FLEX").
-#: ``report.SLOT_POSITIONS`` decides what each one accepts.
-_FLEX_SLOTS = {"FLEX", "SUPER_FLEX"}
+#: Mapped to our slot names; ``models.FLEX_SLOT_POSITIONS`` says what each takes.
+#: ``WRRB_FLEX`` is RB/WR and ``REC_FLEX`` is WR/TE.
+_FLEX_SLOTS = {"FLEX": "FLEX", "SUPER_FLEX": "SUPER_FLEX",
+               "WRRB_FLEX": "RB/WR", "REC_FLEX": "WR/TE"}
 
 
 class SleeperError(RuntimeError):
@@ -45,14 +48,25 @@ class SleeperClient:
     def __init__(self, data_dir: Path, session: Optional[requests.Session] = None,
                  timeout: int = 30):
         self.data_dir = data_dir
-        self.session = session or requests.Session()
+        self.session = session or net_session()
         self.timeout = timeout
 
     # --- HTTP helpers -----------------------------------------------------
     def _get(self, path: str):
+        """GET a Sleeper path, failing as ``SleeperError`` on a bad status or
+        body so a caller's per-league guard costs one league, not the run.
+        Connection errors stay ``requests.RequestException``, as before."""
         resp = self.session.get(f"{BASE}{path}", timeout=self.timeout)
-        resp.raise_for_status()
-        return resp.json()
+        try:
+            resp.raise_for_status()
+        except requests.RequestException as exc:
+            raise SleeperError(
+                f"Sleeper request failed: HTTP {resp.status_code}") from exc
+        try:
+            return resp.json()
+        except ValueError as exc:
+            raise SleeperError(
+                f"Sleeper response was not JSON (HTTP {resp.status_code})") from exc
 
     # --- Public API -------------------------------------------------------
     def current_week(self) -> int:
@@ -206,7 +220,8 @@ def parse_league_rules(league: dict) -> LeagueRules:
             # anyway because it decides who *starts* — a SUPER_FLEX quarterback
             # dropped here was surplus by the waiver pass's count and unprotected
             # by the lineup builder at once, which is advice to cut a starter.
-            flex[pos] = flex.get(pos, 0) + 1
+            name = _FLEX_SLOTS[pos]
+            flex[name] = flex.get(name, 0) + 1
 
     return LeagueRules(acquisition_type=acq, faab_budget=budget,
                        roster_slots=slots, flex_slots=flex)
@@ -327,7 +342,10 @@ class SleeperProvider(RosterProvider, LeagueViewProvider):
 
     def get_league_rules(self) -> LeagueRules:
         try:
-            _, league_id = self._resolve()
+            # Rules need only the league id. ``pick_league`` trusts an explicit
+            # one anyway, so resolving the user first was three requests (state,
+            # user, leagues) for an answer already in hand.
+            league_id = self.league_id or self._resolve()[1]
             return parse_league_rules(self.client.league_settings(league_id))
         except (SleeperError, requests.RequestException) as exc:
             print(f"warning: Sleeper league settings unavailable: {exc}", file=sys.stderr)
@@ -342,7 +360,7 @@ class SleeperProvider(RosterProvider, LeagueViewProvider):
             return []
         try:
             trending = self.client.trending_adds()
-        except requests.RequestException:
+        except (SleeperError, requests.RequestException):
             trending = {}  # color only — never worth failing the pool for
         return build_free_agents(rosters, meta, limit=limit, trending=trending)
 

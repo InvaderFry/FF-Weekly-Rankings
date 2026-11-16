@@ -47,6 +47,10 @@ class Decision:
     #: part of ``dedupe_decisions``' identity; see the note there. Empty for rows
     #: written before the field existed.
     league: str = ""
+    #: Which checks set ``close_call`` (``"top"``, ``"boundary"``), or None for
+    #: a row written before the field existed. ``backtest`` buckets on ``"top"``
+    #: when it is present and on ``close_call`` when it is not.
+    close_call_kinds: Optional[tuple[str, ...]] = None
 
 
 def season_from_ts(ts: str) -> Optional[str]:
@@ -155,4 +159,6 @@ def _parse_row(row, season: Optional[str], week: Optional[int]) -> Optional[Deci
         weights=weights,
         close_call=bool(row.get("close_call", False)),
         league=str(row.get("league", "") or ""),
+        close_call_kinds=(tuple(str(k) for k in row["close_call_kinds"])
+                          if isinstance(row.get("close_call_kinds"), list) else None),
     )

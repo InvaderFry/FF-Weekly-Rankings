@@ -35,6 +35,8 @@ def log_recommendation(rec: Recommendation, path: Path, command: str = "",
         "scoring": rec.scoring,
         "weights": rec.weights,
         "close_call": rec.close_call,
+        # Which checks set it ("top", "boundary"); see Recommendation.
+        "close_call_kinds": list(rec.close_call_kinds),
         "notes": rec.notes,
         "pick": rec.scores[0].player.name if rec.scores and rec.scores[0].final is not None else None,
         "candidates": [

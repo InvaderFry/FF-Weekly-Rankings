@@ -76,6 +76,104 @@ def test_persist_decisions_in_temporary_remote(tmp_path):
     assert len(git("worktree", "list", "--porcelain", cwd=repo).split("worktree ")) == 2
 
 
+def _decision_repo(tmp_path):
+    """A repo with a bare origin, as a runner's checkout has, plus a git helper."""
+    remote, repo = tmp_path / "remote.git", tmp_path / "repo"
+
+    def git(*args, cwd=None):
+        return subprocess.check_output(["git", *args], cwd=cwd, stderr=subprocess.DEVNULL,
+                                       text=True)
+    git("init", "--bare", str(remote))
+    git("init", str(repo))
+    for where in (repo,):
+        git("config", "user.email", "test@example.com", cwd=where)
+        git("config", "user.name", "Test", cwd=where)
+    (repo / ".gitignore").write_text("results_log.jsonl\n")
+    git("add", ".", cwd=repo)
+    git("commit", "-m", "initial", cwd=repo)
+    git("remote", "add", "origin", str(remote), cwd=repo)
+    (repo / ".cache").mkdir()
+    return remote, repo, git
+
+
+def _persist(repo):
+    script = Path(__file__).resolve().parents[1] / "scripts/persist-decision-log.sh"
+    env = dict(os.environ, LOG_BRANCH="calibration-data", LOG_FILE="results_log.jsonl",
+               PERSIST_BACKOFF="0")
+    return subprocess.run(["bash", str(script)], cwd=repo, env=env, capture_output=True,
+                          text=True)
+
+
+def test_persist_appends_onto_rows_another_run_pushed_since_restore(tmp_path):
+    """chatops and the weekly report are in different concurrency groups, so
+    the branch can move between this run's restore and its push. Copying the
+    restored-plus-new file over the branch would erase the other run's rows."""
+    remote, repo, git = _decision_repo(tmp_path)
+    log = repo / ".cache" / "results_log.jsonl"
+    log.write_text('{"run":"a","n":1}\n')
+    assert _persist(repo).returncode == 0          # creates the branch
+
+    # Another runner pushes its own row after this one restored.
+    other = tmp_path / "other"
+    git("clone", "--branch", "calibration-data", str(remote), str(other))
+    git("config", "user.email", "o@example.com", cwd=other)
+    git("config", "user.name", "Other", cwd=other)
+    with (other / "results_log.jsonl").open("a") as fh:
+        fh.write('{"run":"b","n":1}\n')
+    git("commit", "-am", "other run", cwd=other)
+    git("push", "origin", "calibration-data", cwd=other)
+
+    log.write_text('{"run":"a","n":1}\n{"run":"a","n":2}\n')   # restored + this run
+    result = _persist(repo)
+    assert result.returncode == 0, result.stderr
+    assert git("show", "calibration-data:results_log.jsonl", cwd=remote) == (
+        '{"run":"a","n":1}\n{"run":"b","n":1}\n{"run":"a","n":2}\n')
+
+
+def test_persist_retries_a_push_rejected_by_a_concurrent_run(tmp_path):
+    """The other run pushes between this run's fetch and its push: the push
+    is rejected, and the script must refetch and re-apply its own rows."""
+    remote, repo, git = _decision_repo(tmp_path)
+    log = repo / ".cache" / "results_log.jsonl"
+    log.write_text('{"run":"a","n":1}\n')
+    assert _persist(repo).returncode == 0
+
+    other = tmp_path / "other"
+    git("clone", "--branch", "calibration-data", str(remote), str(other))
+    marker = tmp_path / "raced"
+    hook = repo / ".git" / "hooks" / "pre-push"
+    hook.write_text(
+        "#!/usr/bin/env bash\n"
+        f'if [ ! -e "{marker}" ]; then\n'
+        f'  touch "{marker}"\n'
+        f'  cd "{other}" && git pull -q origin calibration-data\n'
+        "  echo '{\"run\":\"b\",\"n\":1}' >> results_log.jsonl\n"
+        "  git -c user.name=O -c user.email=o@example.com commit -qam race\n"
+        "  git push -q origin calibration-data\n"
+        "fi\n")
+    hook.chmod(0o755)
+
+    log.write_text('{"run":"a","n":1}\n{"run":"a","n":2}\n')
+    result = _persist(repo)
+    assert result.returncode == 0, result.stderr
+    assert marker.exists()                                  # the race happened
+    assert git("show", "calibration-data:results_log.jsonl", cwd=remote) == (
+        '{"run":"a","n":1}\n{"run":"b","n":1}\n{"run":"a","n":2}\n')
+
+
+def test_persist_with_nothing_new_pushes_nothing(tmp_path):
+    """A ChatOps command that logs nothing (``/waivers``) restores the log and
+    leaves it untouched; the script must not push an empty commit."""
+    remote, repo, git = _decision_repo(tmp_path)
+    log = repo / ".cache" / "results_log.jsonl"
+    log.write_text('{"run":"a","n":1}\n')
+    assert _persist(repo).returncode == 0
+    head = git("rev-parse", "calibration-data", cwd=remote)
+    result = _persist(repo)
+    assert result.returncode == 0 and "nothing to push" in result.stdout
+    assert git("rev-parse", "calibration-data", cwd=remote) == head
+
+
 def test_issue_identity_requires_season():
     from ff_startsit.workflow import issue_title
     assert issue_title("Season 2026 · Week 1", "start/sit") == "2026 Week 1 start/sit"

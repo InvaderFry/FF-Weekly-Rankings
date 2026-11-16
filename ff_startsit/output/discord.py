@@ -18,6 +18,7 @@ import requests
 from ..models import PlayerScore, Recommendation
 from .board import close_call_comparison, waiver_cell
 from .render import LINEUP_UNSCORED_NOTE, lineup_unscored_keys
+from ..net import session as net_session
 
 if TYPE_CHECKING:                    # the duck-typed bundle, named for the reader
     from ..report import LeagueBundle
@@ -257,7 +258,7 @@ def build_multi_discord_payload(week: int, bundles: Sequence["LeagueBundle"],
 def send_discord(webhook_url: str, payload: dict,
                  session: Optional[requests.Session] = None, timeout: int = 20) -> None:
     """POST the payload to a Discord incoming webhook."""
-    sess = session or requests.Session()
+    sess = session or net_session()
     resp = sess.post(webhook_url, json=payload, timeout=timeout)
     resp.raise_for_status()
 

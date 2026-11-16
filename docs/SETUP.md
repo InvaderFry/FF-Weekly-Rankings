@@ -448,6 +448,23 @@ They read their configuration from your repository's Actions settings:
 3. When ESPN cookies expire, update the `ESPN_S2`/`ESPN_SWID` **secrets** here
    too, not just your local `.env`.
 
+### Every September: re-arm the schedules
+
+Scheduled runs only publish **in season**: the week before kickoff (the dress
+rehearsal) through the Monday that ends Week 18. Outside that window each
+workflow's `gate` job ends the run green with nothing posted; a run you start by
+hand always goes through. So the offseason is quiet by design.
+
+GitHub, separately, **disables a repository's scheduled workflows after 60 days
+without activity** in it, and an offseason is longer than that. No code can
+prevent it, so before kickoff each year:
+
+1. Open the **Actions** tab. A workflow GitHub disabled shows a banner saying
+   so; click **Enable workflow** on each of **Weekly start/sit report**,
+   **Tuesday waiver wire & trades** and the Wednesday values workflow.
+2. Run one by hand (**Run workflow**) to confirm the secrets still work, in
+   particular the ESPN cookies, which also expire over the summer.
+
 > Cron times are UTC and drift an hour with daylight saving; edit the `cron:`
 > lines in `weekly-report.yml` / `waivers.yml` to taste. The waiver run is set
 > for 7pm Tuesday US Central (6pm once standard time starts), which is ahead of

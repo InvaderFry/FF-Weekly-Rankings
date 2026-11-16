@@ -18,6 +18,39 @@ def test_normalize_team_handles_aliases_and_full_names():
     assert normalize_team("Mars Rovers") is None
 
 
+def test_normalize_team_does_not_guess_on_partial_strings():
+    """The loose substring fallback returned the *first* team that matched.
+    FantasyPros stamps free agents ``FA``, which is inside "Atlanta Falcons";
+    a bare city with two teams picked whichever came first in the table."""
+    assert normalize_team("FA") is None
+    assert normalize_team("Free Agent") is None
+    assert normalize_team("New York") is None
+    assert normalize_team("Los Angeles") is None
+    assert normalize_team("Bay") is None
+
+
+def test_normalize_team_loose_match_still_resolves_a_unique_name():
+    # Nicknames and single-team cities are unique, so they still resolve.
+    assert normalize_team("Chiefs") == "KC"
+    assert normalize_team("Giants") == "NYG"
+    assert normalize_team("Kansas City") == "KC"
+    assert normalize_team("Green Bay") == "GB"
+    assert normalize_team("Kansas City Chiefs D/ST") == "KC"
+    # Aliases are untouched.
+    for alias, canonical in (("WSH", "WAS"), ("LA", "LAR"), ("JAC", "JAX"),
+                             ("OAK", "LV"), ("SD", "LAC")):
+        assert normalize_team(alias) == canonical
+
+
+def test_a_defense_named_only_by_an_ambiguous_city_is_unmatched():
+    """A manual-roster defense called "New York" with no team used to become
+    the Giants. Which team it is can't be known, so it is left unmatched."""
+    assert player_match_key("New York", "DEF") == ("new york", "DEF")
+    # A team on the row still decides it, as Sleeper's city-named defenses do.
+    assert player_match_key("New York", "DEF", "NYJ") == ("def:NYJ", "DEF")
+    assert player_match_key("Giants D/ST", "DEF") == ("def:NYG", "DEF")
+
+
 def test_match_rows_matches_and_reports_unmatched():
     players = [
         Player(key="1", name="Patrick Mahomes", team="KC", position="QB"),

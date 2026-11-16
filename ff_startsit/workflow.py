@@ -3,6 +3,7 @@ from pathlib import Path
 import re
 import os
 import sys
+from .net import session as net_session
 
 
 def chatops_reply(comment):
@@ -94,7 +95,7 @@ def restore_pages(base_url, directory, pages, session=None, optional=False,
     from .net import HEADERS
     directory = Path(directory)
     directory.mkdir(parents=True, exist_ok=True)
-    session = session or requests.Session()
+    session = session or net_session()
     outcome = {}
     prefer_live = set(prefer_live)
     for page in pages:
@@ -203,6 +204,33 @@ def issue_title(report, kind):
     if not match:
         raise ValueError("Report has no season/week identity; refusing an ambiguous issue")
     return f"{match[1]} Week {match[2]} {kind}"
+
+
+def stale_issues(issues, title, kind):
+    """Open issues of ``kind`` from a week before ``title``'s, to close.
+
+    ``issues`` is ``gh issue list --json number,title`` output. Titles are
+    ``issue_title``'s ``"<season> Week <n> <kind>"``; only a title in exactly
+    that shape, for this kind and an earlier ``(season, week)``, is stale.
+    Anything else is left open: a legacy week-only title (no season to compare),
+    another kind the title search also matched, a later week, or an issue a
+    person opened. Every reader of these issues (``--since``, the refresh
+    marker) takes the newest open one of its kind, so closing the older ones
+    changes nothing they read.
+    """
+    import re
+
+    pattern = re.compile(rf"^(\d{{4}}) Week (\d+) {re.escape(kind)}$")
+    current = pattern.match(title or "")
+    if not current:
+        return []
+    now = (int(current[1]), int(current[2]))
+    stale = []
+    for issue in issues:
+        m = pattern.match(str(issue.get("title", "")))
+        if m and (int(m[1]), int(m[2])) < now:
+            stale.append(int(issue["number"]))
+    return stale
 
 
 def publish_adds_changed(report_path, previous_path, output=None):
@@ -419,11 +447,42 @@ def startsit_update_note(report: str, previous: str, url: str = "",
     return "\n".join(lines + [""] + markers) + "\n"
 
 
+def in_season(event, today=None, output=None):
+    """Whether this run should do its work: ``run=true`` or ``run=false``.
+
+    A manual dispatch always runs; a scheduled run only inside
+    ``season.in_season_window``. Out of season the workflow ends green with
+    nothing published, rather than posting a refusal every week of the
+    offseason. Written to ``GITHUB_OUTPUT`` for the gate job.
+    """
+    from .season import in_season_window
+
+    run = event != "schedule" or in_season_window(today)
+    print(f"run={'true' if run else 'false'}")
+    if not run:
+        print("Scheduled run out of season (before the rehearsal week or after "
+              "Week 18): nothing to publish. Run it by hand to force it.")
+    output = output or os.environ.get("GITHUB_OUTPUT")
+    if output:
+        with open(output, "a") as handle:
+            handle.write(f"run={'true' if run else 'false'}\n")
+    return run
+
+
 def main():
     if sys.argv[1] == "chatops":
         reply = chatops_reply(os.environ.get("COMMENT_BODY", ""))
         if reply is not None:
             Path("reply.md").write_text(reply, encoding="utf-8")
+    elif sys.argv[1] == "stale-issues":
+        # stale-issues OPEN_ISSUES_JSON TITLE KIND
+        import json
+        issues = json.loads(Path(sys.argv[2]).read_text(encoding="utf-8") or "[]")
+        for number in stale_issues(issues, sys.argv[3], sys.argv[4]):
+            print(number)
+    elif sys.argv[1] == "in-season":
+        # in-season EVENT_NAME
+        in_season(sys.argv[2])
     elif sys.argv[1] == "identity":
         print(issue_title(Path(sys.argv[2]).read_text(), sys.argv[3]))
     elif sys.argv[1] == "run":

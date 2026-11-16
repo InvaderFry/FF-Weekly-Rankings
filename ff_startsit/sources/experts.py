@@ -47,7 +47,7 @@ from typing import Iterable, Optional, Sequence
 import requests
 
 from ..data.matching import normalize_name
-from ..net import HEADERS
+from ..net import HEADERS, session as net_session
 from .journalists import Expert
 
 #: One page per analyst. The slug is derived from their name. Kept only as the
@@ -194,7 +194,7 @@ class ExpertFinder:
 
     def __init__(self, session: Optional[requests.Session] = None,
                  timeout: int = 20):
-        self.session = session or requests.Session()
+        self.session = session or net_session()
         self.timeout = timeout
         self._cache: dict[str, Optional[Expert]] = {}
         #: name -> the page we looked at, so the output can show its work.
@@ -394,7 +394,7 @@ def verify_experts(experts: Sequence[Expert], *, scoring: str = "ppr",
     """
     if fetch is None:
         from .ecr import fetch_scrape_rows as fetch  # local: avoids a cycle
-    session = session or requests.Session()
+    session = session or net_session()
     known = {e.id: e.name for e in (directory or [])}
 
     def _fetch(filters: Optional[str]):

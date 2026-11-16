@@ -19,6 +19,22 @@ if TYPE_CHECKING:  # pragma: no cover - typing only; boards imports nothing from
     from .boards.models import ExpertBoard
 
 
+#: What each flex lineup slot accepts: the one table the lineup builder
+#: (``report.SLOT_POSITIONS``), the lineup-hole check (``availability``) and the
+#: platform parsers' slot names all go by. ESPN calls the narrow ones slot 3
+#: "RB/WR" and slot 5 "WR/TE"; Sleeper calls them ``WRRB_FLEX`` and
+#: ``REC_FLEX``. Both used to be dropped by the parsers, which only knew FLEX
+#: and SUPER_FLEX, so a league with one lost a starting slot.
+FLEX_SLOT_POSITIONS: dict[str, tuple[str, ...]] = {
+    "RB/WR": ("RB", "WR"),
+    "WR/TE": ("WR", "TE"),
+    "FLEX": ("RB", "WR", "TE"),
+    "SUPER_FLEX": ("QB", "RB", "WR", "TE"),
+}
+#: The order flex slots are filled: narrowest first, so a broad slot doesn't
+#: take the one player a narrow slot could have used.
+FLEX_SLOT_ORDER: tuple[str, ...] = ("RB/WR", "WR/TE", "FLEX", "SUPER_FLEX")
+
 #: The flag a bye-week player carries in every table (``report.bye_keys``).
 #: Here rather than in ``report`` so ``Recommendation.pick_blocker`` can read it.
 BYE_FLAG = "on bye this week"
@@ -118,6 +134,11 @@ class SignalValue:
     raw: Optional[float]
     available: bool = True
     note: str = ""
+    #: How to print ``raw`` where a reader sees it, when the number itself is
+    #: not meant to be read: a defense's Vegas raw is the *negated* opponent
+    #: total, so the dead-heat note prints this instead. Display only; never
+    #: logged (``results_log`` writes ``raw``).
+    display: str = ""
 
 
 @dataclass
@@ -149,6 +170,12 @@ class Recommendation:
     scores: list[PlayerScore]          # ordered best -> worst by ``final``
     close_call: bool = False
     notes: list[str] = field(default_factory=list)
+    #: Which checks set ``close_call``: ``"top"`` (the overall top two) and/or
+    #: ``"boundary"`` (the last starting spot). ``close_call`` stays the one
+    #: flag every renderer reads; this exists for ``backtest``, which buckets
+    #: *top-pick* hits and must not count a confident pick with a tight last
+    #: starting spot as a flagged one. Logged beside ``close_call``.
+    close_call_kinds: list[str] = field(default_factory=list)
     #: signal name -> the raw separation below which that signal is treated as
     #: not separating players at all (``Settings.close_call_raw_gaps``, e.g. 3.0
     #: ECR ranks, 1.5 implied points). Carried on the recommendation so a

@@ -31,7 +31,7 @@ from ..waivers.base import LeagueViewProvider
 from ..waivers.models import (ACQ_FAAB, ACQ_PRIORITY, ACQ_UNKNOWN, FantasyTeam,
                               LeagueRules, PoolPlayer)
 from .base import RosterError, RosterProvider
-from ..net import HEADERS
+from ..net import HEADERS, session as net_session
 
 BASE = ("https://lm-api-reads.fantasy.espn.com/apis/v3/games/ffl/seasons/"
         "{season}/segments/0/leagues/{league_id}")
@@ -48,8 +48,9 @@ _UA = HEADERS
 SLOT_ID_TO_POS = {0: "QB", 2: "RB", 4: "WR", 6: "TE", 16: "DEF", 17: "K"}
 #: Flex lineup slots, deliberately *not* in SLOT_ID_TO_POS: that map also drives
 #: FREE_AGENT_SLOT_IDS and roster parsing, and no player's position is "FLEX".
-#: 23 is FLEX (RB/WR/TE); 7 is ESPN's "OP", the superflex slot that takes a QB.
-FLEX_SLOT_ID_TO_NAME = {23: "FLEX", 7: "SUPER_FLEX"}
+#: 23 is FLEX (RB/WR/TE); 7 is ESPN's "OP", the superflex slot that takes a QB;
+#: 3 is "RB/WR" and 5 is "WR/TE" (models.FLEX_SLOT_POSITIONS says what each takes).
+FLEX_SLOT_ID_TO_NAME = {3: "RB/WR", 5: "WR/TE", 23: "FLEX", 7: "SUPER_FLEX"}
 #: ESPN's injured-reserve lineup slot. A player there doesn't count against the
 #: roster limit, so dropping him frees an IR slot and not a bench spot — the
 #: waiver report must never pair him with an add.
@@ -311,7 +312,7 @@ class ESPNProvider(RosterProvider, LeagueViewProvider):
         self.team_id = team_id
         self.espn_s2 = espn_s2
         self.swid = swid
-        self.session = session or requests.Session()
+        self.session = session or net_session()
         self.timeout = timeout
         # The league call answers roster, teams and rules alike, so memoize it:
         # a waiver run asks all three and should still cost one request.
@@ -430,5 +431,16 @@ class ESPNProvider(RosterProvider, LeagueViewProvider):
                 "ESPN denied access (401/403). For a private league set ESPN_S2 "
                 "and ESPN_SWID; for a public one the league must be viewable."
             )
-        resp.raise_for_status()
-        return resp.json()
+        # A 5xx or a non-JSON body is this league's failure, not the run's: as a
+        # bare HTTPError it escaped the per-league `except RosterError` in
+        # `cli._league_bundles`, and one league's 502 ended every league.
+        try:
+            resp.raise_for_status()
+        except requests.RequestException as exc:
+            raise RosterError(
+                f"ESPN request failed: HTTP {resp.status_code}") from exc
+        try:
+            return resp.json()
+        except ValueError as exc:
+            raise RosterError(
+                f"ESPN response was not JSON (HTTP {resp.status_code})") from exc

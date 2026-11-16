@@ -50,6 +50,10 @@ class BacktestResult:
     close_call_n: int
     close_call_hits: int
     weeks: list[WeekStat] = field(default_factory=list)
+    #: Decisions whose pick had no points while the week's stats existed — a
+    #: late scratch, usually. Excluded from every hit-rate: scoring the
+    #: runner-up instead would credit (or blame) a pick nobody made.
+    pick_did_not_play: int = 0
 
     @property
     def hit_rate(self) -> float:
@@ -64,12 +68,32 @@ class BacktestResult:
         return self.close_call_hits / self.close_call_n if self.close_call_n else 0.0
 
 
+def _top_pick_flagged(d: Decision) -> bool:
+    """Whether this decision's *top pick* was flagged as a close call.
+
+    ``close_call`` is also set by the last-starting-spot check, which says
+    nothing about the top pick; counting those as flagged picks muddied the
+    honesty split. Rows that record which check fired are bucketed on
+    ``"top"``; older rows, which can't say, keep ``close_call``.
+    """
+    if d.close_call_kinds is not None:
+        return "top" in d.close_call_kinds
+    return d.close_call
+
+
 def backtest(decisions: Sequence[Decision], provider: OutcomeProvider, *,
              base_weights: Mapping[str, float]) -> BacktestResult:
     """Replay logged decisions against real outcomes under their own weights.
 
     A decision counts only when at least two of its candidates join to actual
     points (you need a contest to have a pick that could be right or wrong).
+
+    The pick is decided **before** outcomes are joined: the highest blended
+    final among the candidates the weights score. Joining first and then taking
+    the best of whoever had points promoted the runner-up whenever the pick was
+    a late scratch, scoring a decision the tool never made. A pick with no
+    points while the week's stats exist (another candidate in the decision
+    joined) goes to ``pick_did_not_play`` instead.
     """
     # Cache the per-(season, week, scoring) outcome lookup so each slice is fetched once.
     cache: dict[tuple[str, int, str], Optional[object]] = {}
@@ -81,6 +105,7 @@ def backtest(decisions: Sequence[Decision], provider: OutcomeProvider, *,
     confident_n = confident_hits = 0
     close_call_n = close_call_hits = 0
     week_stats: dict[tuple[str, int], WeekStat] = {}
+    pick_did_not_play = 0
 
     for d in decisions:
         slice_key = (d.season, d.week, d.scoring)
@@ -91,29 +116,41 @@ def backtest(decisions: Sequence[Decision], provider: OutcomeProvider, *,
             continue
 
         weights = d.weights or dict(base_weights)
+        scored = [(final, c) for c in d.candidates
+                  if (final := weighted_final(c.normalized, weights)) is not None]
+        if len(scored) < 2:
+            continue          # no contest, so no pick that could be right or wrong
+        pick = max(scored, key=lambda fc: fc[0])[1]
+
         joined: list[tuple[float, float]] = []  # (blended final, actual points)
-        for c in d.candidates:
-            final = weighted_final(c.normalized, weights)
-            if final is None:
-                continue
+        pick_actual: Optional[float] = None
+        for final, c in scored:
             pts = lookup(c.key, c.name, c.position)
             if pts is None:
                 continue
             joined.append((final, pts))
+            if c is pick:
+                pick_actual = pts
 
+        if pick_actual is None:
+            # Only a scratch when the week's stats demonstrably reached this
+            # decision: someone else in it joined. Nobody joining is a decision
+            # that can't be joined at all (stats not posted, a name mismatch).
+            if joined:
+                pick_did_not_play += 1
+            continue
         if len(joined) < 2:
             continue
 
         decisions_used += 1
         candidates_joined += len(joined)
         best_actual = max(pts for _, pts in joined)
-        pick_final, pick_actual = max(joined, key=lambda fp: fp[0])
         hit = pick_actual == best_actual
         total_points_lost += best_actual - pick_actual
 
         if hit:
             hits += 1
-        if d.close_call:
+        if _top_pick_flagged(d):
             close_call_n += 1
             close_call_hits += int(hit)
         else:
@@ -139,4 +176,5 @@ def backtest(decisions: Sequence[Decision], provider: OutcomeProvider, *,
         close_call_n=close_call_n,
         close_call_hits=close_call_hits,
         weeks=weeks,
+        pick_did_not_play=pick_did_not_play,
     )

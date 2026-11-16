@@ -660,3 +660,30 @@ def test_presentational_gap_never_votes_in_the_dead_heat_check():
     assert exempt.close_call is True
     assert any("nothing separates" in n and "weather" not in n
                for n in exempt.notes)
+
+
+# --- which check fired (close_call_kinds) -------------------------------------
+
+def test_a_boundary_only_flag_records_its_kind():
+    """`close_call` is one boolean set by both checks; `backtest` needs to
+    tell a confident top pick with a tight last starting spot from a top-two
+    coin flip, so the kind is recorded beside it."""
+    rec = _blend_four([1.0, 20.0, 20.1, 90.0], starter_count=2)
+    assert rec.close_call is True
+    assert rec.close_call_kinds == ["boundary"]
+
+
+def test_a_top_two_flag_records_its_kind():
+    rec = _blend_four([1.0, 1.05, 60.0, 90.0], starter_count=None)
+    assert rec.close_call is True
+    assert rec.close_call_kinds == ["top"]
+
+
+def test_both_checks_record_both_kinds_once():
+    rec = _blend_four([1.0, 1.05, 1.1, 90.0], starter_count=2)   # 1v2 and 2v3 tight
+    assert rec.close_call_kinds == ["top", "boundary"]
+
+
+def test_an_unflagged_decision_has_no_kinds():
+    rec = _blend_four([1.0, 10.0, 60.0, 90.0], starter_count=2)
+    assert rec.close_call is False and rec.close_call_kinds == []

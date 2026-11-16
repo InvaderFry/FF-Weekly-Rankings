@@ -261,6 +261,11 @@ def _build_parser() -> argparse.ArgumentParser:
                        help="minimum distinct weeks required to write (default 3). Weights "
                             "fitted to one week are fitted to that week's slate, not to your "
                             "leagues")
+    p_cal.add_argument("--min-gain", type=float, default=0.02, dest="min_gain",
+                       help="minimum leave-one-week-out concordance gain over the current "
+                            "weights required to write (default 0.02). The in-sample best "
+                            "of the grid beats the current weights by chance on almost "
+                            "any corpus")
     p_cal.add_argument("--log", type=Path, default=None, help="results log path (default: the cache log)")
     p_cal.add_argument("--write", action="store_true",
                        help="persist the learned weights so future runs auto-apply them")
@@ -842,7 +847,9 @@ def _league_bundles(args, settings: Settings, week: int) -> list:
                                       if cbs_fetcher is not None else {}))
             recs = ws.recs
             journalists = report.build_journalist_view(lsettings, players, week)
-        except (RosterError, SleeperError) as exc:
+        except (RosterError, SleeperError, requests.RequestException) as exc:
+            # RequestException too: a provider that forgets to wrap an HTTP
+            # failure must still cost one league, not every league after it.
             status.skipped[profile.name] = str(exc)
             print(f"warning: skipping league {profile.name!r}: {exc}", file=sys.stderr)
             continue
@@ -977,7 +984,9 @@ def _waiver_bundles(args, settings: Settings, week: int, writers=None,
             if on_bundle is not None:
                 on_bundle(bundle, players)
             bundles.append(bundle)
-        except (RosterError, SleeperError) as exc:
+        except (RosterError, SleeperError, requests.RequestException) as exc:
+            # RequestException too: a provider that forgets to wrap an HTTP
+            # failure must still cost one league, not every league after it.
             status.skipped[profile.name] = str(exc)
             print(f"warning: skipping league {profile.name!r}: {exc}", file=sys.stderr)
             continue
@@ -1266,6 +1275,14 @@ def cmd_calibrate(args, settings: Settings, outcome_provider=None) -> int:
         if result.best_concordance <= result.current_concordance:
             print("Your current weights already match the best found — nothing to write.")
             return 0
+        held_out = result.holdout_shortfall(getattr(args, "min_gain", 0.02))
+        if held_out:
+            print("Not writing — the learned weights don't hold up on held-out "
+                  f"weeks: {held_out}.", file=sys.stderr)
+            print("An in-sample gain from a grid this size is mostly luck. Keep "
+                  "logging; a real edge survives being tested on weeks it wasn't "
+                  "fitted to.", file=sys.stderr)
+            return 1
         from .config import _validate_weights
         weights = _validate_weights(dict(result.best_weights), settings.weights)
         path = settings.learned_weights_path
@@ -1291,6 +1308,14 @@ def _print_calibration(result) -> None:
     print(f"  learned  weights: {_fmt_weights(result.best_weights, result.signals)}")
     print(f"           concordance {result.best_concordance:.3f}  "
           f"top-pick hit-rate {result.best_hit_rate:.3f}")
+    if result.holdout_concordance is not None:
+        t = result.holdout_consistency()
+        consistency = "" if t is None else (
+            "  consistency: every week" if t == float("inf")
+            else f"  consistency {t:.1f} SE")
+        print(f"  held-out (leave one week out, {result.holdout_weeks} week(s)): "
+              f"learned {result.holdout_concordance:.3f}  "
+              f"current {result.holdout_current_concordance:.3f}{consistency}")
     gain = result.best_concordance - result.current_concordance
     if not result.enough_data:
         print(f"  note: thin sample — {result.pairs_used} pairs; treat as directional only.")
@@ -1345,7 +1370,7 @@ def cmd_backtest(args, settings: Settings, outcome_provider=None) -> int:
     provider = outcome_provider or _sleeper_outcome_provider(settings)
     result = run_backtest(decisions, provider, base_weights=settings.weights)
 
-    if not result.decisions_used:
+    if not result.decisions_used and not result.pick_did_not_play:
         print("Could not join any logged decision to an actual outcome yet — "
               "outcomes post after games are played.", file=sys.stderr)
         return 1
@@ -1360,6 +1385,10 @@ def _print_backtest(result) -> None:
     print(f"  top-pick hit-rate {result.hit_rate:.3f} "
           f"({result.hits}/{result.decisions_used})")
     print(f"  avg points left on bench per decision: {result.avg_points_lost:.2f}")
+    if result.pick_did_not_play:
+        print(f"  pick did not play: {result.pick_did_not_play} decision(s), excluded "
+              "from the hit-rate (the pick had no points while the week's stats "
+              "exist, usually a late scratch)")
     print("  close-call honesty:")
     if result.confident_n:
         print(f"    confident picks : hit-rate {result.confident_hit_rate:.3f} "
@@ -1506,10 +1535,10 @@ def _score_league(args, settings: Settings, profile: Optional[LeagueProfile],
     roster's weekly projections (every run, one request) and the free-agent
     wire (only when a hole exists). Neither can fail the run.
     """
-    outlook, free_agents, live = _availability_view(args, settings, profile,
-                                                     players, week)
+    outlook, free_agents, live, slots = _availability_view(args, settings, profile,
+                                                            players, week)
     ws = report.score_week(settings, players, week, outlook=outlook,
-                           check_byes=live, **score_kwargs)
+                           check_byes=live, slots=slots, **score_kwargs)
     lineup = report.lineup_from(ws)
     if live:
         # Offline and preseason runs skip the check rather than half-run it:
@@ -1524,24 +1553,30 @@ def _score_league(args, settings: Settings, profile: Optional[LeagueProfile],
 
 def _availability_view(args, settings: Settings, profile: Optional[LeagueProfile],
                        players: Sequence[Player], week: int):
-    """``(outlook, free_agents, live)`` for this league.
+    """``(outlook, free_agents, live, slots)`` for this league.
 
     ``live`` says the run may read the schedule (bye checks, lineup holes):
-    false offline and in preseason, when the other two are None as well. A
+    false offline and in preseason, when the others are None as well. A
     roster source with no ESPN league behind it is live with no outlook and no
     wire read: its holes are still flagged, just without pickups.
+
+    ``slots`` is the league's starting-slot list (``report.league_slots``),
+    read from the same provider instance so ESPN's memoized league payload
+    serves any later read, or None for the template: offline, preseason, a
+    source with no league behind it (manual), empty rules, or a failed read.
     """
     if getattr(args, "offline", False) or season.preseason_banner(settings):
-        return None, None, False
+        return None, None, False, None
     try:
         provider = build_roster_provider(settings, getattr(args, "source", None),
                                          getattr(args, "league", None),
                                          getattr(args, "team", None), profile=profile)
     except RosterError:
-        return None, None, True
+        return None, None, True, None
+    slots = _league_slots(provider)
     get_outlook = getattr(provider, "get_week_outlook", None)
     if not callable(get_outlook):
-        return None, None, True
+        return None, None, True, slots
     try:
         outlook = get_outlook(week, players)
     except Exception as exc:  # the provider already degrades; belt and braces
@@ -1550,7 +1585,28 @@ def _availability_view(args, settings: Settings, profile: Optional[LeagueProfile
 
     def free_agents(positions):
         return provider.get_free_agents(week, positions=positions)
-    return outlook, free_agents, True
+    return outlook, free_agents, True, slots
+
+
+def _league_slots(provider) -> Optional[list[str]]:
+    """The league's starting slots, or None to keep the template.
+
+    Never raises: the rules are a refinement of the lineup, so any failure to
+    read them costs the refinement, not the run.
+    """
+    from .waivers.base import LeagueViewProvider
+
+    if not isinstance(provider, LeagueViewProvider):
+        return None
+    try:
+        rules = provider.get_league_rules()
+    except Exception as exc:
+        print(f"warning: league lineup slots unavailable, using the default "
+              f"lineup: {exc}", file=sys.stderr)
+        return None
+    if rules is None or not (rules.roster_slots or rules.flex_slots):
+        return None
+    return report.league_slots(rules)
 
 
 def _outlook_status(settings: Settings, players: Sequence[Player], outlook) -> tuple:

@@ -64,6 +64,27 @@ def test_date_week_counts_from_the_real_kickoff():
     assert season.date_week(date(2027, 2, 1)) == 18  # clamped
 
 
+def test_date_week_turns_over_on_tuesday_after_a_wednesday_kickoff():
+    """Fantasy weeks run Tuesday to Monday. Counting 7-day blocks from a
+    Wednesday kickoff read Tuesday 2026-09-15, waiver day, as Week 1."""
+    assert season.date_week(date(2026, 9, 9)) == 1          # kickoff (Wed)
+    assert season.date_week(date(2026, 9, 14)) == 1         # Monday after
+    assert season.date_week(date(2026, 9, 15)) == 2         # Tuesday after
+    assert season.date_week(date(2026, 9, 21)) == 2         # Week 2 Monday
+    assert season.date_week(date(2026, 9, 22)) == 3
+
+
+def test_date_week_turns_over_on_tuesday_after_a_thursday_kickoff():
+    """A Thursday kickoff put both Tuesday 2025-09-09 and Wednesday
+    2025-09-10 in Week 1."""
+    assert season.date_week(date(2025, 9, 4)) == 1          # kickoff (Thu)
+    assert season.date_week(date(2025, 9, 8)) == 1          # Monday after
+    assert season.date_week(date(2025, 9, 9)) == 2          # Tuesday after
+    assert season.date_week(date(2025, 9, 10)) == 2
+    assert season.date_week(date(2025, 9, 16)) == 3
+    assert season.date_week(date(2025, 9, 1)) == 1          # before kickoff
+
+
 def test_env_override_beats_the_table_for_its_own_year(monkeypatch):
     monkeypatch.setenv(season.KICKOFF_ENV, "2026-09-10")
     assert season.first_kickoff(2026) == date(2026, 9, 10)

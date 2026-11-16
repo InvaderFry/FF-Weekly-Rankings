@@ -1,0 +1,19 @@
+# Exact versions for the scheduled and ChatOps workflows (weekly-report, waivers,
+# values, chatops), which run with ESPN cookies, a Discord webhook and
+# `contents: write`. Installed with `pip install -e . -c constraints.txt`, so a new
+# release can't reach those runs unreviewed. CI installs without this file, so a
+# new release is still tested there; bump a pin here once CI has passed on it.
+#
+# The runtime dependencies from pyproject.toml, plus what they pull in.
+requests==2.34.2
+python-dotenv==1.2.4
+rich==15.0.0
+# requests
+urllib3==2.8.0
+idna==3.20
+certifi==2026.10.23
+charset-normalizer==3.5.2
+# rich
+markdown-it-py==4.3.0
+mdurl==0.1.2
+Pygments==2.21.0

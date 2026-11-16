@@ -41,7 +41,7 @@ import requests
 
 from ..data.matching import is_defense, normalize_name
 from ..models import Player
-from ..net import HEADERS
+from ..net import HEADERS, session as net_session
 from .models import ColumnMention
 
 #: Public article pages, one request per author per week, and the report
@@ -196,7 +196,7 @@ class ColumnFetcher:
     def __init__(self, sources: Sequence[ColumnSource] = SOURCES,
                  session: Optional[requests.Session] = None, timeout: int = 15):
         self.sources = tuple(sources)
-        self.session = session or requests.Session()
+        self.session = session or net_session()
         self.timeout = timeout
         #: (author, url) for every column we actually read, for the credits line.
         self.read: list[tuple[str, str]] = []

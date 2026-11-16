@@ -21,7 +21,7 @@ import requests
 from ..data.matching import ExternalRow, match_rows
 from ..data.teams import normalize_team
 from ..models import Player, SignalValue
-from ..net import HEADERS
+from ..net import HEADERS, session as net_session
 from .base import Signal
 
 API_URL = "https://api.fantasypros.com/v2/json/nfl/{season}/consensus-rankings"
@@ -234,7 +234,7 @@ class ECRSignal(Signal):
         self.api_key = api_key
         self.scoring = scoring
         self.season = season or _current_season()
-        self.session = session or requests.Session()
+        self.session = session or net_session()
         self.timeout = timeout
         #: When set (e.g. ``FLEX_POOL``), fetch one pooled cross-position ranking
         #: instead of one list per position.
@@ -258,6 +258,14 @@ class ECRSignal(Signal):
         #: Guards the dead-key warning below. A set rather than a bool so the
         #: pooled sibling can share the one instance and the run says it once.
         self._api_warned: set[str] = set()
+        #: (position, requested week) -> why the public page could not be
+        #: reached ("HTTP 502", "ConnectionError"). Kept apart from a page that
+        #: was reached and ranked nobody, because the two used to render as the
+        #: same "no ECR rank" on every player — see ``_record_unreachable``.
+        self._unreachable: dict[tuple[str, int], str] = {}
+        #: Shared with the pooled sibling, like ``_api_warned``, so one outage
+        #: is warned once per run rather than once per position.
+        self._unreachable_warned: set[str] = set()
 
     def pooled(self, pool_position: str = FLEX_POOL) -> "ECRSignal":
         """A sibling instance that fetches one pooled cross-position ranking.
@@ -273,6 +281,7 @@ class ECRSignal(Signal):
                         pool_position=pool_position)
         sib._rows_cache = self._rows_cache
         sib._api_warned = self._api_warned
+        sib._unreachable_warned = self._unreachable_warned
         return sib
 
     def is_available(self) -> bool:
@@ -296,7 +305,10 @@ class ECRSignal(Signal):
         for p in players:
             row = result.matched.get(p.key)
             if row is None:
-                out[p.key] = SignalValue(raw=None, available=False, note="no ECR rank")
+                pos = self.pool_position or _canon_pos(p.position)
+                note = (UNREACHABLE_NOTE if (pos, week) in self._unreachable
+                        else "no ECR rank")
+                out[p.key] = SignalValue(raw=None, available=False, note=note)
             else:
                 out[p.key] = SignalValue(raw=row.value, available=True)
         return out
@@ -326,8 +338,11 @@ class ECRSignal(Signal):
         meta: dict = {}
         try:
             rows = self._fetch_scrape(position, meta)
-        except requests.RequestException:
-            return []  # offline / page unreachable -> signal simply has no data
+        except requests.RequestException as exc:
+            # The signal has no data, but it must say why: an unreachable page
+            # and an unranked player used to read identically.
+            self._record_unreachable(position, week, exc)
+            return []
         self.last_source = "scrape"
         if meta:
             self.page_meta[(position, week)] = meta
@@ -360,6 +375,26 @@ class ECRSignal(Signal):
         if position not in run[0]:
             run[0].append(position)
 
+    def _record_unreachable(self, position: str, week: int,
+                            exc: requests.RequestException) -> None:
+        """Record that the public page for ``position`` could not be reached.
+
+        Warned once per run on stderr and surfaced in Data status through
+        ``source_status``, aggregated per (reason, week) the way successful
+        fetches are. The status code is the diagnosis when there is one; a
+        connection failure has none, so its exception class stands in.
+        """
+        resp = getattr(exc, "response", None)
+        reason = (f"HTTP {resp.status_code}" if resp is not None
+                  else exc.__class__.__name__)
+        self._unreachable[(position, week)] = reason
+        if self._unreachable_warned:
+            return
+        self._unreachable_warned.add("warned")
+        print(f"warning: FantasyPros rankings page unreachable ({reason}) — "
+              "players read \"ECR page unreachable\" and the blend runs without "
+              "ECR for them.", file=sys.stderr)
+
     @property
     def source_status(self) -> list[tuple[tuple, str]]:
         """``(identity, line)`` pairs, one per (transport, week).
@@ -385,6 +420,13 @@ class ECRSignal(Signal):
             entries.append((("ecr", source, week),
                             f"ECR {', '.join(positions)}: {source}; "
                             f"requested Week {week}{count}; fetched {fetched}"))
+        unreachable: dict[tuple[str, int], list[str]] = {}
+        for (position, week), reason in self._unreachable.items():
+            unreachable.setdefault((reason, week), []).append(position)
+        for (reason, week), positions in unreachable.items():
+            entries.append((("ecr-unreachable", reason, week),
+                            f"ECR {', '.join(positions)}: FantasyPros page "
+                            f"unreachable ({reason}); requested Week {week}"))
         # Once, however many transports were tried: it is a fact about the run,
         # not about a fetch.
         if self.served_wrong_week and self._source_runs:
@@ -487,6 +529,11 @@ class ECRSignal(Signal):
     def _fetch_scrape(self, position: str, meta: Optional[dict] = None) -> list[ExternalRow]:
         return fetch_scrape_rows(self.session, self.scoring, position,
                                  timeout=self.timeout, meta=meta)
+
+
+#: The per-player note when the ranking page itself could not be fetched —
+#: distinct from "no ECR rank", which means the page was read and did not list him.
+UNREACHABLE_NOTE = "ECR page unreachable"
 
 
 def _canon_pos(position: str) -> str:

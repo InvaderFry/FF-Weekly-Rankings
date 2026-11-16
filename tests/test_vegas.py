@@ -231,3 +231,63 @@ def test_without_a_cache_dir_the_signal_still_works(tmp_path):
     assert len(sig._fetch_games()) == 1
     assert sess.calls == 1
     assert list(tmp_path.iterdir()) == []
+
+
+# --- team defenses read the opponent's total ------------------------------------
+def _fixture_signal():
+    sig = VegasSignal(api_key="k")
+    sig._games = parse_odds_response(
+        json.loads((FIXTURES / "odds_api.json").read_text()))
+    return sig
+
+
+def test_opponent_totals_by_team():
+    from ff_startsit.sources.vegas import opponent_totals_by_team
+    games = parse_odds_response(json.loads((FIXTURES / "odds_api.json").read_text()))
+    opp = opponent_totals_by_team(games)
+    assert opp["KC"] == 22.5 and opp["BUF"] == 25.5   # each other's totals
+    assert opp["CHI"] == 22.0 and opp["GB"] == 16.0
+
+
+def test_a_defense_reads_the_negated_opponent_total_and_says_so():
+    players = [Player(key="d1", name="Chiefs D/ST", team="KC", position="DEF"),
+               Player(key="d2", name="Bears", team="CHI", position="DST"),
+               Player(key="r1", name="Runner", team="KC", position="RB")]
+    out = _fixture_signal().fetch(3, players)
+    assert out["d1"].raw == -22.5 and out["d1"].note == "opp implied 22.5"
+    assert out["d2"].raw == -22.0 and out["d2"].note == "opp implied 22"
+    # A non-defense is unchanged: his own team's total, no note.
+    assert out["r1"].raw == 25.5 and out["r1"].note == ""
+
+
+def test_the_defense_facing_the_lower_total_ranks_higher_on_vegas(tmp_path):
+    """KC's defense faces BUF (22.5), CHI's faces GB (22.0): CHI's is the
+    better Vegas spot, though KC's own offense has the higher total."""
+    from ff_startsit.config import Settings
+    from ff_startsit.pipeline import recommend
+
+    players = [Player(key="d1", name="Chiefs D/ST", team="KC", position="DEF"),
+               Player(key="d2", name="Bears D/ST", team="CHI", position="DEF")]
+    rec = recommend(Settings(data_dir=tmp_path, weights={"vegas": 1.0}), players, 3,
+                    signals=[_fixture_signal()], log=False)
+    by_key = {s.player.key: s for s in rec.scores}
+    assert by_key["d2"].normalized["vegas"] > by_key["d1"].normalized["vegas"]
+    assert rec.scores[0].player.key == "d2"
+    assert "vegas: opp implied 22" in by_key["d2"].flags
+
+
+def test_a_defense_dead_heat_never_prints_a_bare_negative(tmp_path):
+    """The dead-heat note is the one place a raw Vegas number is printed."""
+    from ff_startsit.config import Settings
+    from ff_startsit.pipeline import recommend
+
+    sig = VegasSignal(api_key="k")
+    sig._games = [Game(home_team="KC", away_team="BUF", total=45.0, home_spread=0.0),
+                  Game(home_team="CHI", away_team="GB", total=44.0, home_spread=0.0)]
+    players = [Player(key="d1", name="Bills D/ST", team="BUF", position="DEF"),
+               Player(key="d2", name="Packers D/ST", team="GB", position="DEF")]
+    rec = recommend(Settings(data_dir=tmp_path, weights={"vegas": 1.0}), players, 3,
+                    signals=[sig], log=False)
+    note = next(n for n in rec.notes if "nothing separates" in n)
+    assert "vegas opp implied 22 vs opp implied 22.5" in note
+    assert "-2" not in note

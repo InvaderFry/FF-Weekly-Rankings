@@ -104,12 +104,20 @@ def is_preseason(today: Optional[date] = None) -> bool:
 
 
 def date_week(today: Optional[date] = None) -> int:
-    """Rough NFL week from a date — a fallback when Sleeper /state/nfl fails."""
+    """Rough NFL week from a date — a fallback when Sleeper /state/nfl fails.
+
+    Fantasy weeks turn over on **Tuesday**: Week 1 runs from kickoff to the
+    following Monday and each later week runs Tuesday to Monday. So the count is
+    anchored to the Tuesday on or before kickoff, not to kickoff itself —
+    counting 7-day blocks from a Wednesday (2026) or Thursday (2025) kickoff
+    read the Tuesday waiver day as the week just finished.
+    """
     today = today or date.today()
     kickoff = first_kickoff(season_year(today))
     if today < kickoff:
         return 1
-    return max(1, min(18, (today - kickoff).days // 7 + 1))
+    anchor = kickoff - timedelta(days=(kickoff.weekday() - 1) % 7)  # Tuesday
+    return max(1, min(18, (today - anchor).days // 7 + 1))
 
 
 def date_season(today: Optional[date] = None) -> str:
@@ -180,6 +188,32 @@ def is_rehearsal_window(today: Optional[date] = None) -> bool:
     today = today or central_today()
     delta = first_kickoff(season_year(today)) - today
     return timedelta(0) < delta <= timedelta(days=REHEARSAL_DAYS)
+
+
+def season_end(year: int) -> date:
+    """The Monday that ends Week 18 of the season named for ``year``.
+
+    The same Tuesday-anchored weeks ``date_week`` counts: Week 1 runs from the
+    Tuesday on or before kickoff, so Week 18 ends 18 weeks later, less a day.
+    """
+    kickoff = first_kickoff(year)
+    anchor = kickoff - timedelta(days=(kickoff.weekday() - 1) % 7)
+    return anchor + timedelta(weeks=18, days=-1)
+
+
+def in_season_window(today: Optional[date] = None) -> bool:
+    """True when a scheduled run has something real to publish.
+
+    The rehearsal week (``is_rehearsal_window``), then kickoff through the
+    Monday that ends Week 18. Outside it, a cron firing would publish a
+    preseason refusal in June or a "Week 18" report in February, every week.
+    Central dates for the same reason ``is_rehearsal_window`` uses them.
+    """
+    today = today or central_today()
+    if is_rehearsal_window(today):
+        return True
+    year = season_year(today)
+    return first_kickoff(year) <= today <= season_end(year)
 
 
 def waiver_banner(rehearse: bool = False,
