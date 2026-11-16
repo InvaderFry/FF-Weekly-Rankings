@@ -26,6 +26,20 @@ def isolate_settings(monkeypatch, tmp_path):
     monkeypatch.setenv("FF_DATA_DIR", str(tmp_path / "cache"))
 
 
+#: The repository root. Tests about the repository's own files (workflows,
+#: ``pyproject.toml``, ``constraints.txt``) read from here.
+REPO_ROOT = Path(__file__).resolve().parents[1]
+
+#: Skip a test that needs the repository checkout beside the tests. CI's
+#: ``installed-wheel`` job runs a copy of ``tests/`` outside the checkout to
+#: test the installed package, where those files don't exist; every matrix
+#: job runs from the checkout, so these still run on each push.
+requires_repo = pytest.mark.skipif(
+    not (REPO_ROOT / ".github" / "workflows").is_dir()
+    or not (REPO_ROOT / "pyproject.toml").is_file(),
+    reason="needs the repository checkout (.github/workflows, pyproject.toml)")
+
+
 #: The unstubbed helper, for the tests that exercise it with a fake provider.
 REAL_AVAILABILITY_VIEW = _cli._availability_view
 

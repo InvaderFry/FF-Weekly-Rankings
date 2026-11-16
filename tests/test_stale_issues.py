@@ -6,9 +6,10 @@ open list grew by three a week. Which issue is stale is decided in
 an issue it can't place in a season and week is left as it is.
 """
 import json
-from pathlib import Path
 
 from ff_startsit.workflow import stale_issues
+
+from .conftest import REPO_ROOT, requires_repo
 
 ISSUES = [
     {"number": 40, "title": "2026 Week 9 start/sit"},
@@ -55,8 +56,9 @@ def test_cli_prints_one_number_per_line(tmp_path, monkeypatch, capsys):
     assert capsys.readouterr().out.split() == ["40", "30", "12"]
 
 
+@requires_repo
 def test_each_workflow_closes_stale_issues_when_it_creates_one():
-    root = Path(__file__).resolve().parents[1] / ".github" / "workflows"
+    root = REPO_ROOT / ".github" / "workflows"
     for name, kind in (("weekly-report.yml", "start/sit"), ("waivers.yml", "waiver wire"),
                        ("values.yml", "trade values")):
         text = (root / name).read_text()

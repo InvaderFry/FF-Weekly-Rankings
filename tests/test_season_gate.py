@@ -13,6 +13,8 @@ import pytest
 from ff_startsit import season
 from ff_startsit.workflow import in_season
 
+from .conftest import REPO_ROOT, requires_repo
+
 
 @pytest.mark.parametrize("day,expected", [
     (date(2026, 7, 21), False),     # July: nothing to rank
@@ -58,13 +60,13 @@ def test_a_schedule_in_season_runs(tmp_path):
     assert out.read_text() == "run=true\n"
 
 
+@requires_repo
 def test_every_scheduled_workflow_is_gated():
     """Each workflow with a cron must run its work behind the gate job."""
-    from pathlib import Path
-
     import yaml
 
-    root = Path(__file__).resolve().parents[1] / ".github" / "workflows"
+    root = REPO_ROOT / ".github" / "workflows"
+    gated = 0
     for path in sorted(root.glob("*.yml")):
         doc = yaml.safe_load(path.read_text())
         triggers = doc.get(True) or doc.get("on") or {}
@@ -78,3 +80,5 @@ def test_every_scheduled_workflow_is_gated():
                 continue
             assert "gate" in job.get("needs", []), (path.name, name)
             assert "needs.gate.outputs.run == 'true'" in job.get("if", ""), (path.name, name)
+        gated += 1
+    assert gated == 3                       # weekly-report, waivers, values

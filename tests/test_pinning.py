@@ -7,16 +7,26 @@ workflows install against ``constraints.txt``. CI stays unconstrained, so a
 new release is still tested before anyone bumps a pin.
 """
 import re
-from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[1]
+from .conftest import REPO_ROOT as ROOT, requires_repo
+
 WORKFLOWS = ROOT / ".github" / "workflows"
 CONSTRAINED = ("weekly-report.yml", "waivers.yml", "values.yml", "chatops.yml")
+
+#: Repository config, not package behaviour: see ``conftest.requires_repo``.
+pytestmark = requires_repo
+
+
+def _workflows():
+    paths = sorted(WORKFLOWS.glob("*.yml"))
+    # Never pass vacuously: with no files read, every check below holds.
+    assert len(paths) >= 5, paths
+    return paths
 
 
 def test_every_action_is_pinned_to_a_commit_sha():
     bad = []
-    for path in sorted(WORKFLOWS.glob("*.yml")):
+    for path in _workflows():
         for line in path.read_text().splitlines():
             m = re.search(r"uses:\s*(\S+)(.*)", line)
             if not m:
@@ -31,7 +41,7 @@ def test_every_action_is_pinned_to_a_commit_sha():
 def test_one_version_per_action():
     """The same action at two SHAs is a half-done bump."""
     seen = {}
-    for path in WORKFLOWS.glob("*.yml"):
+    for path in _workflows():
         for ref in re.findall(r"uses:\s*(\S+)", path.read_text()):
             name, _, sha = ref.partition("@")
             seen.setdefault(name, set()).add(sha)

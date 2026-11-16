@@ -41,6 +41,13 @@ Sleeper/Discord) must be injectable or mockable so the test stays offline; follo
 the existing pattern (e.g. `cmd_calibrate`'s `outcome_provider` parameter, fake
 signals in `test_pipeline.py`).
 
+CI's `installed-wheel` job runs a **copy of `tests/` outside the checkout**
+against the installed package, so a test that reads the repository's own files
+(workflows, `pyproject.toml`, `constraints.txt`) must carry
+`conftest.requires_repo` and read through `conftest.REPO_ROOT`. It still runs in
+every matrix job. Make such a test assert it read something: two pinning checks
+once "passed" in that job by globbing an empty directory.
+
 ## Architecture
 
 Data flows: **roster provider → pipeline → signals → engine → recommendation →
