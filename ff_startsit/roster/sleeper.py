@@ -34,8 +34,10 @@ PLAYERS_CACHE_TTL = 24 * 3600  # seconds
 _KEEP_POSITIONS = {"QB", "RB", "WR", "TE", "K", "DEF"}
 #: Sleeper's flex slot names, kept apart from ``_KEEP_POSITIONS`` because that
 #: set also filters real players (a player's position is never "FLEX").
-#: ``report.SLOT_POSITIONS`` decides what each one accepts.
-_FLEX_SLOTS = {"FLEX", "SUPER_FLEX"}
+#: Mapped to our slot names; ``models.FLEX_SLOT_POSITIONS`` says what each takes.
+#: ``WRRB_FLEX`` is RB/WR and ``REC_FLEX`` is WR/TE.
+_FLEX_SLOTS = {"FLEX": "FLEX", "SUPER_FLEX": "SUPER_FLEX",
+               "WRRB_FLEX": "RB/WR", "REC_FLEX": "WR/TE"}
 
 
 class SleeperError(RuntimeError):
@@ -218,7 +220,8 @@ def parse_league_rules(league: dict) -> LeagueRules:
             # anyway because it decides who *starts* — a SUPER_FLEX quarterback
             # dropped here was surplus by the waiver pass's count and unprotected
             # by the lineup builder at once, which is advice to cut a starter.
-            flex[pos] = flex.get(pos, 0) + 1
+            name = _FLEX_SLOTS[pos]
+            flex[name] = flex.get(name, 0) + 1
 
     return LeagueRules(acquisition_type=acq, faab_budget=budget,
                        roster_slots=slots, flex_slots=flex)

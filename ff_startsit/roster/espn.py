@@ -48,8 +48,9 @@ _UA = HEADERS
 SLOT_ID_TO_POS = {0: "QB", 2: "RB", 4: "WR", 6: "TE", 16: "DEF", 17: "K"}
 #: Flex lineup slots, deliberately *not* in SLOT_ID_TO_POS: that map also drives
 #: FREE_AGENT_SLOT_IDS and roster parsing, and no player's position is "FLEX".
-#: 23 is FLEX (RB/WR/TE); 7 is ESPN's "OP", the superflex slot that takes a QB.
-FLEX_SLOT_ID_TO_NAME = {23: "FLEX", 7: "SUPER_FLEX"}
+#: 23 is FLEX (RB/WR/TE); 7 is ESPN's "OP", the superflex slot that takes a QB;
+#: 3 is "RB/WR" and 5 is "WR/TE" (models.FLEX_SLOT_POSITIONS says what each takes).
+FLEX_SLOT_ID_TO_NAME = {3: "RB/WR", 5: "WR/TE", 23: "FLEX", 7: "SUPER_FLEX"}
 #: ESPN's injured-reserve lineup slot. A player there doesn't count against the
 #: roster limit, so dropping him frees an IR slot and not a bench spot — the
 #: waiver report must never pair him with an add.

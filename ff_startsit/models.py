@@ -19,6 +19,22 @@ if TYPE_CHECKING:  # pragma: no cover - typing only; boards imports nothing from
     from .boards.models import ExpertBoard
 
 
+#: What each flex lineup slot accepts: the one table the lineup builder
+#: (``report.SLOT_POSITIONS``), the lineup-hole check (``availability``) and the
+#: platform parsers' slot names all go by. ESPN calls the narrow ones slot 3
+#: "RB/WR" and slot 5 "WR/TE"; Sleeper calls them ``WRRB_FLEX`` and
+#: ``REC_FLEX``. Both used to be dropped by the parsers, which only knew FLEX
+#: and SUPER_FLEX, so a league with one lost a starting slot.
+FLEX_SLOT_POSITIONS: dict[str, tuple[str, ...]] = {
+    "RB/WR": ("RB", "WR"),
+    "WR/TE": ("WR", "TE"),
+    "FLEX": ("RB", "WR", "TE"),
+    "SUPER_FLEX": ("QB", "RB", "WR", "TE"),
+}
+#: The order flex slots are filled: narrowest first, so a broad slot doesn't
+#: take the one player a narrow slot could have used.
+FLEX_SLOT_ORDER: tuple[str, ...] = ("RB/WR", "WR/TE", "FLEX", "SUPER_FLEX")
+
 #: The flag a bye-week player carries in every table (``report.bye_keys``).
 #: Here rather than in ``report`` so ``Recommendation.pick_blocker`` can read it.
 BYE_FLAG = "on bye this week"

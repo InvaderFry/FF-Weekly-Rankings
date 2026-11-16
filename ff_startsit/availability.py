@@ -33,7 +33,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Callable, Iterable, Mapping, Optional, Sequence
 
-from .models import Player, PlayerScore
+from .models import FLEX_SLOT_POSITIONS, Player, PlayerScore
 
 #: A projection at or under this many points on a week the team plays reads as
 #: "not expected to play". ESPN projects a real starter well above it at every
@@ -58,9 +58,10 @@ OPTIONAL_SLOTS = frozenset({"K", "DEF"})
 #: How many free agents to suggest per hole.
 STREAM_OPTIONS = 3
 
-#: Positions each lineup slot accepts. Mirrors ``report.SLOT_POSITIONS``; kept
-#: here as a lookup so this module doesn't import the report layer.
-_FLEX = ("RB", "WR", "TE")
+#: Positions each flex slot accepts: ``models.FLEX_SLOT_POSITIONS``, the table
+#: ``report.SLOT_POSITIONS`` reads too (this module doesn't import the report
+#: layer, so both read the model's copy rather than one another's).
+# (imported above)
 
 
 @dataclass(frozen=True)
@@ -112,7 +113,8 @@ class LineupHole:
     options_note: Optional[str] = None
 
     def headline(self) -> str:
-        what = "FLEX-eligible player" if self.position == "FLEX" else self.position
+        what = (f"{self.position}-eligible player"
+                if self.position in FLEX_SLOT_POSITIONS else self.position)
         line = f"No healthy {what} for your {self.slot} slot"
         if self.starter:
             line += f": {self.starter}"
@@ -259,11 +261,7 @@ def lineup_holes(lineup: Iterable[tuple[str, Optional[PlayerScore]]],
 
 
 def _slot_accepts(slot: str) -> tuple[str, ...]:
-    if slot == "FLEX":
-        return _FLEX
-    if slot == "SUPER_FLEX":
-        return ("QB",) + _FLEX
-    return (slot,)
+    return FLEX_SLOT_POSITIONS.get(slot, (slot,))
 
 
 def _stream_position(slot: str) -> str:
@@ -273,7 +271,9 @@ def _stream_position(slot: str) -> str:
 
 
 def slot_positions(position: str) -> tuple[str, ...]:
-    return _FLEX if position == "FLEX" else (position,)
+    """Positions a hole streamed as ``position`` may be filled from. A
+    SUPER_FLEX hole never reaches here as itself: it streams a QB."""
+    return FLEX_SLOT_POSITIONS.get(position, (position,))
 
 
 # --- streamers ---------------------------------------------------------------

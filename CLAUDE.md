@@ -960,7 +960,19 @@ added **only when the platform reported no slots at all**: both platforms read
 flex slots from the same data as position slots, so known position slots with
 an empty `flex_slots` mean the league has no flex. The waiver pass used to add
 one regardless, which started (and protected from the drop list) a bench body
-in a no-flex league.
+in a no-flex league. That rule is only as good as the parsers'
+list of flex slots, and it was incomplete (found in review of PR #92): ESPN's
+slot 3 ("RB/WR") and 5 ("WR/TE"), and Sleeper's `WRRB_FLEX` and `REC_FLEX`
+(verified against ffscrapr and espn_api, not guessed) were dropped, so a
+nine-starter RB/WR league built eight slots and its flex starter lost drop
+protection. Every flex slot now lives in one table,
+`models.FLEX_SLOT_POSITIONS` (`RB/WR`, `WR/TE`, `FLEX`, `SUPER_FLEX`), which
+`report.SLOT_POSITIONS` and `availability` both read; adding a slot name to a
+parser without an entry there leaves it accepting only itself. Flex slots fill
+narrowest first (`FLEX_SLOT_ORDER`), and the pooled RB/WR/TE ranking fills
+`report.POOLED_SLOTS` (FLEX, RB/WR, WR/TE): any subset of one cross-position
+ranking is still a ranking, while SUPER_FLEX needs quarterbacks it doesn't
+rank.
 `cli._availability_view` reads `LeagueRules` from the provider instance it
 already builds (one extra request per ESPN league; Sleeper's
 `get_league_rules` uses the profile's league id directly rather than
@@ -1291,9 +1303,10 @@ platforms — `espn.FLEX_SLOT_ID_TO_NAME` maps 23/7, `sleeper._FLEX_SLOTS` match
 the names — and kept deliberately **out of** `roster_slots`: nobody plays "FLEX",
 and `starter_demand` divides a rank by a position's demand, which a flex slot has
 none of. `report.SLOT_POSITIONS` says what each accepts. Two consequences worth
-keeping: the pooled FantasyPros ranking fills `FLEX` and **only** `FLEX`, since it
-is an RB/WR/TE list that doesn't rank quarterbacks and a `SUPER_FLEX` pick drawn
-from it would come off a list its best candidate isn't on; and `starter_demand`
+keeping: the pooled FantasyPros ranking fills `FLEX` and the narrower `RB/WR`
+and `WR/TE`, never `SUPER_FLEX`, since it is an RB/WR/TE list that doesn't rank
+quarterbacks and a `SUPER_FLEX` pick drawn from it would come off a list its
+best candidate isn't on; and `starter_demand`
 still ignores flex slots, so a superflex league's QB depth ratios read against a
 one-QB field. Splitting a FLEX across RB/WR/TE to fix that would invent exactly
 the kind of number the `depth_ratio` change removed.

@@ -38,9 +38,15 @@ SUPER_FLEX_POSITIONS: tuple[str, ...] = ("QB",) + FLEX_POSITIONS
 # Which positions each flex slot will accept. A slot absent from here is an
 # ordinary position slot and only accepts itself.
 SLOT_POSITIONS: dict[str, tuple[str, ...]] = {
+    "RB/WR": ("RB", "WR"),
+    "WR/TE": ("WR", "TE"),
     "FLEX": FLEX_POSITIONS,
     "SUPER_FLEX": SUPER_FLEX_POSITIONS,
 }
+# The flex slots the pooled FantasyPros RB/WR/TE ranking can fill. It is one
+# cross-position ranking, so any subset of it is still a ranking; it doesn't
+# rank quarterbacks, which is why SUPER_FLEX is not here.
+POOLED_SLOTS = frozenset({"FLEX", "RB/WR", "WR/TE"})
 # Order positions appear in the digest.
 POSITION_ORDER = ["QB", "RB", "WR", "TE", "K", "DEF"]
 
@@ -60,13 +66,15 @@ def league_slots(rules) -> list[str]:
     Flex slots come after every position they can take (QB, RB, WR, TE), so
     those slots claim their own players first, and before K and DEF, which no
     flex slot takes: the picks are the same as "flex last", and a
-    template-shaped league renders in the template's order. ``FLEX`` precedes
-    ``SUPER_FLEX``.
+    template-shaped league renders in the template's order. Among flex slots
+    the narrowest fill first: RB/WR, WR/TE, FLEX, SUPER_FLEX.
     """
     from .waivers.score import starting_slots
 
     counts = starting_slots(rules)
     flex = dict(rules.flex_slots) or ({} if rules.roster_slots else {"FLEX": 1})
+    from .models import FLEX_SLOT_ORDER
+
     flex_takes = set(SUPER_FLEX_POSITIONS)
     order = [p for p in POSITION_ORDER if p in counts] + sorted(
         p for p in counts if p not in POSITION_ORDER)
@@ -74,7 +82,10 @@ def league_slots(rules) -> list[str]:
     for pos in order:
         if pos in flex_takes:
             slots.extend([pos] * int(counts[pos]))
-    for name in sorted(flex):
+    # Narrowest flex first (RB/WR, WR/TE, FLEX, SUPER_FLEX), so a broad slot
+    # can't take the one player a narrow slot could have used.
+    for name in [n for n in FLEX_SLOT_ORDER if n in flex] + sorted(
+            n for n in flex if n not in FLEX_SLOT_ORDER):
         slots.extend([name] * int(flex[name]))
     for pos in order:
         if pos not in flex_takes:
@@ -492,7 +503,7 @@ def _fa_ranker(signals, week: int):
         return None
 
     def rank(position, players):
-        sig = ecr.pooled() if position == "FLEX" and callable(
+        sig = ecr.pooled() if position in POOLED_SLOTS and callable(
             getattr(ecr, "pooled", None)) else ecr
         values = sig.fetch(week, players)
         return {k: (v.raw if v.available else None) for k, v in values.items()}
@@ -573,10 +584,12 @@ def _best_for_slot(slot: str, by_pos: dict[str, list[PlayerScore]],
     return min(candidates, key=_slot_sort_key) if candidates else None
 
 
-def _best_from_pool(pool: Sequence[PlayerScore], used: set[str]) -> Optional[PlayerScore]:
-    """Best unused player in the pooled flex ranking (already sorted best->worst)."""
+def _best_from_pool(pool: Sequence[PlayerScore], used: set[str],
+                    positions: Sequence[str] = FLEX_POSITIONS) -> Optional[PlayerScore]:
+    """Best unused player at ``positions`` in the pooled flex ranking (already
+    sorted best->worst)."""
     for s in pool:
-        if s.player.key not in used:
+        if s.player.key not in used and s.player.position in positions:
             return s
     return None
 
@@ -653,8 +666,10 @@ def build_lineup(by_pos: dict[str, list[PlayerScore]],
     template instead left a superflex league's second quarterback both unprotected
     *and* surplus — the two halves of one guard disagreeing about who starts.
 
-    ``flex_pool`` fills ``FLEX`` and **only** ``FLEX``. It is FantasyPros'
-    cross-position RB/WR/TE ranking, which does not rank quarterbacks, so a
+    ``flex_pool`` fills the ``POOLED_SLOTS`` (``FLEX``, ``RB/WR``, ``WR/TE``),
+    each from the positions it accepts. It is FantasyPros' cross-position
+    RB/WR/TE ranking, so any subset of it is still a ranking; it does not rank
+    quarterbacks, so a
     ``SUPER_FLEX`` slot falls through to ``_best_for_slot`` and compares
     per-position scores — a real limitation, and a better one than drawing a
     superflex pick from a list its best candidate isn't on.
@@ -663,15 +678,15 @@ def build_lineup(by_pos: dict[str, list[PlayerScore]],
     out: list[tuple[str, Optional[PlayerScore]]] = []
     pooled = bool(flex_pool)
     for slot in (slots if slots is not None else LINEUP_SLOTS):
-        if slot == "FLEX" and pooled:
-            pick = _best_from_pool(flex_pool, used)
+        if slot in POOLED_SLOTS and pooled:
+            pick = _best_from_pool(flex_pool, used, SLOT_POSITIONS[slot])
         else:
             pick = _best_for_slot(slot, by_pos, used)
         if pick is not None:
             used.add(pick.player.key)
         out.append((slot, pick))
 
-    has_flex = any(slot == "FLEX" and pick is not None for slot, pick in out)
+    has_flex = any(slot in POOLED_SLOTS and pick is not None for slot, pick in out)
     if pooled:
         return Lineup(slots=out, flex_basis="pooled",
                       caveat=FLEX_NOTE_POOLED if has_flex else None)
