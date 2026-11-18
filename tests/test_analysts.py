@@ -421,3 +421,72 @@ def test_a_failure_is_remembered_for_minutes_not_hours(tmp_path):
     assert [u for u in later.calls if 'position=QB' in u]   # the failure was retried
     assert ranks.by_position.get('QB')
     assert not [u for u in later.calls if '/author/' in u]  # successes still cached
+
+
+# --- Yahoo's Week 11 (2026) embed: sports-player-card / fantasyPro ------------
+# Yahoo replaced the rankingPro widget with a card carrying only a meta-data
+# string. Every Boone list then read "scoring of the linked list could not be
+# resolved" and his column went blank in every league. The fixtures are the
+# live index, hub and two partner responses, gzipped whole (markup untouched).
+def test_week11_hub_cards_offer_every_list_in_both_scorings():
+    nodes = widget_nodes(raw('week11_hub.html.gz'))
+    assert {n['type'] for n in nodes} == {'sports-player-card'}
+    sets = {}
+    for n in nodes:
+        sets.update(widget_sets(n, 11, 2026))
+    assert set(sets) == {(k, s) for k in ['RB', 'WR', 'TE', 'FLEX'] for s in ['half', 'ppr']} | {
+        ('QB', ''), ('DST', ''), ('K', '')}
+    assert all(v == {'expert': '317', 'proFilters': '317'} for v in sets.values())
+
+
+def _card(meta):
+    return {'type': 'sports-player-card',
+            'attribs': {'module-type': 'fantasyPro', 'meta-data': meta}}
+
+
+GOOD_META = 'sport:NFL;positions:DST;scoring:HALF;experts:317;week:11;year:2026;'
+
+
+@pytest.mark.parametrize('change', [
+    ('week:11', 'week:10'), ('year:2026', 'year:2025'), ('sport:NFL', 'sport:NBA'),
+    ('experts:317', 'experts:317,45'), ('experts:317', 'experts:'),
+    ('scoring:HALF', 'scoring:STD'), ('scoring:HALF;', ''),
+    ('week:11;', 'week:11;week:12;'),
+])
+def test_a_card_fails_closed(change):
+    assert widget_sets(_card(GOOD_META), 11, 2026)          # the unchanged card reads
+    with pytest.raises(ValueError):
+        widget_sets(_card(GOOD_META.replace(*change)), 11, 2026)
+
+
+def test_a_card_from_another_module_is_ignored():
+    body = raw('week11_hub.html.gz').replace('"module-type":"fantasyPro"', '"module-type":"other"')
+    body = body.replace('\\"module-type\\":\\"fantasyPro\\"', '\\"module-type\\":\\"other\\"')
+    assert widget_nodes(body) == []
+
+
+class Week11Session:
+    def __init__(self):
+        self.calls = []
+
+    def get(self, url, **kwargs):
+        self.calls.append(url)
+        if '/author/' in url:
+            text = raw('week11_index.html.gz')
+        elif '/fantasy/article/' in url:
+            text = raw('week11_hub.html.gz')
+        else:
+            q = parse_qs(urlsplit(url).query)
+            assert q['filters'] == ['317'] and q['id'] == ['317'] and q['week'] == ['11']
+            text = raw(f"week11_half_{q['position'][0].lower()}_ranks.jsonp.gz")
+        return SimpleNamespace(status_code=200, text=text)
+
+
+def test_week11_kicker_and_defense_ranks_read_end_to_end():
+    players = [Player('den', 'Broncos D/ST', 'DEN', 'DEF'),
+               Player('nyg', 'Giants D/ST', 'NYG', 'DEF'),
+               Player('santos', 'Cairo Santos', 'CHI', 'K')]
+    result = AnalystFetcher(2026, session=Week11Session()).fetch(players, 11, 'half')
+    assert result.unavailable == {}
+    assert result.by_position == {'DEF': {'den': 5.0, 'nyg': 17.0}, 'K': {'santos': 7.0}}
+    assert result.provenance == {'DEF': ('DST', ''), 'K': ('K', '')}

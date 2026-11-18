@@ -370,3 +370,56 @@ def test_a_kicker_on_bye_shows_no_fake_score_or_margin(tmp_path):
     assert "| **Chris Boswell** (yours) | PIT | — |" in md
     html = build_waivers_html(9, [b], "2026-11-04")
     assert "Chris Boswell (on bye)" in html
+
+
+# --- an empty K/DEF column says why -------------------------------------------
+def test_a_column_that_read_nobody_says_why_under_the_table(tmp_path):
+    """Week 11: a Yahoo layout change blanked Boone's column in every league,
+    and the table showed dashes with no reason anywhere on the page."""
+    pool = [PoolPlayer(_p("f4", "Free K", "K"))]
+
+    def weekly(players, week, scoring):
+        return [_board("cbs_consensus", "CBS", [("f4", 14), ("m9", 2)]),
+                _board("boone_weekly", "Boone", unavailable={
+                    ALL_POSITIONS: "scoring of the linked list could not be resolved"})]
+    b = _bundle(tmp_path, pool, dict(RANKS, f4=3), weekly_boards=weekly)
+    assert "Boone Wk (K, DST): scoring of the linked list could not be resolved" in b.stream_unavailable
+    assert not any(line.startswith("CBS Wk (K)") for line in b.stream_unavailable)
+    md = render_waiver_digest(9, [b])
+    assert "_Not read: Boone Wk (K, DST): scoring of the linked list could not be resolved._" in md
+    html = build_waivers_html(9, [b], "2026-11-04")
+    assert "Not read: Boone Wk (K, DST): scoring of the linked list could not be resolved." in html
+
+
+def test_an_unposted_list_and_an_unranked_table_read_differently():
+    from ff_startsit.waivers.build import stream_unavailable
+    from ff_startsit.waivers.models import StreamRow
+    k = StreamRow(_p("k", "Some K", "K"), True, 50.0, 4, {"Boone Wk": None, "CBS Wk": None}, "")
+    d = StreamRow(_p("d", "Some D", "DEF"), True, 50.0, 4, {"Boone Wk": None, "CBS Wk": 3}, "")
+    boone = _board("boone_weekly", "Boone",
+                   unavailable={"K": "no half PPR list published for this position"})
+    cbs = _board("cbs_consensus", "CBS", [("d", 3)])
+    lines = stream_unavailable({"K": [k], "DEF": [d]}, [boone, cbs])
+    assert lines == ["Boone Wk (K): not posted yet",
+                     "Boone Wk (DST): ranked none of these players",
+                     "CBS Wk (K): ranked none of these players"]
+
+
+def test_the_freshness_note_names_only_the_kdef_lists_it_read(tmp_path):
+    from .test_waiver_freshness import _PagedECR
+    teams = [FantasyTeam("1", "My Squad", tuple(MINE), is_mine=True, faab_spent=20.0),
+             FantasyTeam("2", "Rival FC", tuple(THEIRS))]
+
+    def build(weekly):
+        return build_bundle(Settings(data_dir=tmp_path), "work",
+                            _Provider(pool=[PoolPlayer(_p("f4", "Free K", "K"))], teams=teams),
+                            MINE, 9, schedule=_NoSchedule(),
+                            signals=[_PagedECR(dict(RANKS, f4=3), experts=10)],
+                            include_columns=False, preseason=False, rehearse=False,
+                            include_trades=False, weekly_boards=weekly)
+    b = build(_kicker_weekly)             # CBS ranked the kickers; Boone isn't posted
+    assert b.freshness.endswith("This week's kicker and defense ranks from CBS are current.")
+    assert "Boone" not in b.freshness
+    nothing = build(lambda players, week, scoring: [
+        _board("boone_weekly", "Boone", unavailable={ALL_POSITIONS: "page down"})])
+    assert "kicker" not in nothing.freshness and "Boone" not in nothing.freshness

@@ -42,6 +42,10 @@ FAILURE_TTL = 10 * 60
 REPUBLISH_WINDOW = 30 * 60
 PARTNER = 'https://partners.fantasypros.com/api/v1/consensus-rankings.php'
 WIDGET_PATH = '/external/widget/fp-widget.php'
+#: Yahoo's embed since Week 11 of 2026 (see ``card_sets``); the older
+#: ``rankingPro`` widget is still accepted.
+CARD_TYPE = 'sports-player-card'
+CARD_MODULE = 'fantasyPro'
 UA = HEADERS
 VERIFY_REASON = 'byline or week could not be verified in the article'
 PARSE_REASON = 'rankings table could not be parsed'
@@ -224,13 +228,52 @@ def widget_nodes(body: str) -> list[dict]:
                 node, _ = decoder.raw_decode(chunk[1][start.start():])
             except ValueError:
                 continue
-            if node.get('type') == 'rankingPro':
+            if node.get('type') == 'rankingPro' or (
+                    node.get('type') == CARD_TYPE
+                    and (node.get('attribs') or {}).get('module-type') == CARD_MODULE):
                 nodes[json.dumps(node, sort_keys=True)] = node
     return list(nodes.values())
 
 
+def card_sets(node: dict, week: int, season: int) -> dict[tuple[str, str], dict]:
+    """The sets a ``sports-player-card`` / ``fantasyPro`` node offers.
+
+    Yahoo replaced the ``rankingPro`` widget with this card in Week 11 of 2026
+    (``meta-data: "sport:NFL;positions:QB,RB;scoring:HALF;experts:317;week:11;
+    year:2026;"``). It carries no widget URL to cross-check, so every field is
+    checked on its own and it fails closed exactly as ``widget_sets`` does. The
+    value it maps to is the contributor alone, the same for every card, so the
+    hub's HALF and PPR cards both offering the universal QB/K/DST lists are one
+    agreeing set rather than a conflict ``_article`` would drop.
+    """
+    meta = {}
+    for part in str((node.get('attribs') or {}).get('meta-data', '')).split(';'):
+        if part:
+            name, sep, value = part.partition(':')
+            if not sep or name in meta:
+                raise ValueError('unrecognized ranking card metadata')
+            meta[name] = value
+    if meta.get('sport') != 'NFL' or meta.get('year') != str(season) or meta.get('week') != str(week):
+        raise ValueError('ranking card served another season or week')
+    expert = meta.get('experts', '')
+    if not expert.isdigit():
+        raise ValueError('ranking card must name one contributor')
+    scoring = {'HALF': 'half', 'PPR': 'ppr'}.get(meta.get('scoring', ''))
+    if scoring is None:
+        raise ValueError('ranking card names no half or full PPR scoring')
+    value = {'expert': expert, 'proFilters': expert}
+    result = {}
+    for pos in meta.get('positions', '').split(','):
+        kind = {'FLX': 'FLEX', 'ALL': 'OVERALL'}.get(pos, pos)
+        if kind in KINDS:
+            result[(kind, '' if kind in UNIVERSAL_KINDS else scoring)] = value
+    return result
+
+
 def widget_sets(node: dict, week: int, season: int) -> dict[tuple[str, str], dict]:
     """Validate URL/config agreement and return only explicitly offered buckets."""
+    if node.get('type') == CARD_TYPE:
+        return card_sets(node, week, season)
     parsed = urlsplit(node.get('url', ''))
     if parsed.scheme != 'https' or parsed.netloc != 'partners.fantasypros.com' or parsed.path != WIDGET_PATH:
         raise ValueError('unrecognized ranking widget')

@@ -372,6 +372,11 @@ def build_bundle(settings: Settings, label: str, provider: LeagueViewProvider,
         bundle.weekly_boards = list(weekly)
         bundle.stream_rows = _stream_rows(index, pool, my_scores, rules, bundle, weekly,
                                           bye_teams, held)
+        bundle.stream_unavailable = stream_unavailable(bundle.stream_rows, weekly)
+        read = [b.short for b in weekly if _stream_board_read(bundle.stream_rows, b)]
+        if bundle.freshness and read and bundle.ecr_week_ok is not False:
+            bundle.freshness += (f" This week's kicker and defense ranks from "
+                                 f"{' and '.join(read)} are current.")
 
     if writer_sources:
         _attach_expert_board(bundle, writer_boards, pool_players(pool), season_ranks,
@@ -412,8 +417,11 @@ def _record_ecr_freshness(bundle: WaiverBundle, signals: Sequence, week: int,
     Almost everything on this report reads that consensus — which free agents
     are ranked, every depth ratio, the drop pool — so the report says so, and
     the retry marker records it (``board.bundles_read``) so a later run with a
-    fuller consensus republishes. The writers' columns and charts, and CBS and
-    Boone for K/DEF, are current on Tuesday; the note says that too.
+    fuller consensus republishes. The writers' columns and charts are current
+    on Tuesday, and the note says so. CBS's and Boone's weekly K/DEF lists are
+    named only after they were read (``build_bundle``): this runs before they
+    are fetched, and claiming them here called a Boone column that read nobody
+    "current" over a table of dashes (Week 11, when Yahoo changed its embed).
     """
     ecr = next((s for s in signals if getattr(s, "name", "") == "ecr"), None)
     if ecr is None or not hasattr(ecr, "min_experts"):
@@ -430,8 +438,7 @@ def _record_ecr_freshness(bundle: WaiverBundle, signals: Sequence, week: int,
                             f"{bundle.ecr_experts} experts so far (most rankers publish "
                             "Wednesday or later), so its weekly ranks, and the adds, "
                             "drops and depth figures built on them, may still move. "
-                            "The writers' columns and charts, and CBS and Boone for "
-                            "kickers and defenses, are current.")
+                            "The writers' columns and charts are current.")
 
 
 def _fetch_boards(sources: Sequence, players: Sequence[Player], week: int,
@@ -449,6 +456,41 @@ def _fetch_boards(sources: Sequence, players: Sequence[Player], week: int,
                                       kind=getattr(source, "kind", "weekly"),
                                       unavailable={ALL_POSITIONS: f"{source.label}: {exc}"}))
     return boards
+
+
+def _stream_board_read(stream_rows: dict, board) -> bool:
+    """Whether ``board`` ranked anyone in the K/DEF table."""
+    return any(row.ranks.get(board.header) is not None
+               for rows in stream_rows.values() for row in rows)
+
+
+def stream_unavailable(stream_rows: dict, weekly: Sequence) -> list[str]:
+    """One line per weekly K/DEF column that ranked nobody at a position the
+    table shows, with the board's own reason.
+
+    A column of dashes reads the same whether the expert hasn't posted, his
+    page broke, or he ranked none of these players, and in Week 11 a Yahoo
+    layout change blanked Boone's column in every league with nothing on the
+    page saying so. Same rule as ``no_adds_reason``: an empty reading says why.
+    """
+    from ..boards.models import ALL_POSITIONS
+    from ..sources.analysts import not_published_yet
+    lines = []
+    for board in weekly:
+        missing: dict[str, list[str]] = {}
+        for pos, rows in stream_rows.items():
+            if any(row.ranks.get(board.header) is not None for row in rows):
+                continue
+            reason = (board.unavailable.get(ALL_POSITIONS) or board.unavailable.get(pos)
+                      or ("ranked none of these players" if rows else None))
+            if reason is None:
+                continue
+            if not_published_yet(reason):
+                reason = "not posted yet"
+            missing.setdefault(reason, []).append("DST" if pos == "DEF" else pos)
+        for reason, positions in missing.items():
+            lines.append(f"{board.header} ({', '.join(positions)}): {reason}")
+    return lines
 
 
 #: Free agents per position shown in the K/DEF comparison, beside your own.

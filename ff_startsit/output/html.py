@@ -670,6 +670,8 @@ def _waiver_stream_table(bundle) -> str:
                        f"<td class='num'>{escape(score)}</td><td class='expert'>{escape(fp)}</td>"
                        f"{cells}<td>{escape(status)}</td></tr>")
         out.append("</tbody></table>")
+    for line in bundle.stream_unavailable:
+        out.append(f"<p class='note'>Not read: {escape(line)}.</p>")
     out.append(f"<p class='note'>{escape(STREAM_TABLE_NOTE)}</p>")
     return "".join(out)
 
