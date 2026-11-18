@@ -116,6 +116,8 @@ def _stream_section(bundle: WaiverBundle) -> list[str]:
                 cells[0] = f"**{cells[0]}** (yours)"
             lines.append("| " + " | ".join(cells) + " |")
         lines.append("")
+    for line in bundle.stream_unavailable:
+        lines += [f"_Not read: {md_cell(line)}._", ""]
     lines += [f"_{STREAM_TABLE_NOTE}_", ""]
     return lines
 

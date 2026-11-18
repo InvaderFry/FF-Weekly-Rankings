@@ -780,6 +780,19 @@ Swift` into a live GitHub issue, and every test fixture being named
 `Alpha`/`Bravo` is why nothing caught it — apostrophe names are common enough
 (D'Andre, Ja'Marr, De'Von) that `tests/test_report_markdown.py` now pins one.
 
+**Yahoo changed the embed in Week 11 of 2026.** The `rankingPro` widget (a
+URL plus `proFilters`/`expert` fields) became a `sports-player-card` node with
+`module-type: fantasyPro` and only a `meta-data` string
+(`sport:NFL;positions:QB,RB;scoring:HALF;experts:317;week:11;year:2026;`).
+`widget_nodes` accepts both and `card_sets` reads the card, failing closed on
+every field because it has no URL to cross-check. The partner request and the
+sole-contributor check are unchanged. Until then every Boone list read "scoring
+of the linked list could not be resolved", and the K/DEF table on the waivers
+page showed a blank Boone column with no reason, under a freshness note that
+called it current. Now `WaiverBundle.stream_unavailable` puts each empty
+column's reason under that table, and the freshness note names only the K/DEF
+lists that actually ranked someone.
+
 `cli._annotate_analyst` carries the comparison to `rank` and `compare`, which
 call `pipeline.recommend` directly rather than `rank_each_position` and so
 showed nothing while the digest beside them flagged a disagreement — the same

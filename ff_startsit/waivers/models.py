@@ -367,6 +367,9 @@ class WaiverBundle:
     #: position -> your K/DEF and the best free agents there, with this week's
     #: CBS and Boone ranks side by side. Empty when neither list was configured.
     stream_rows: dict[str, list[StreamRow]] = field(default_factory=dict)
+    #: "Boone Wk (K, DST): reason" for each column that ranked nobody there
+    #: (``build.stream_unavailable``), rendered under the table.
+    stream_unavailable: list[str] = field(default_factory=list)
     #: The expert column headers ``stream_rows`` carries, in order.
     stream_columns: list[str] = field(default_factory=list)
     #: The weekly K/DEF boards behind ``stream_rows``, kept so the retry marker

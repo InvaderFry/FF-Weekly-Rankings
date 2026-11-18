@@ -24,7 +24,9 @@ def board_from_analyst_ranks(ranks: AnalystRanks) -> ExpertBoard:
     entries = {key: BoardEntry(pos_rank=float(rank))
                for by_key in ranks.by_position.values()
                for key, rank in by_key.items()}
-    unavailable = {(ALL_POSITIONS if pos == "league" else pos): reason
+    # "league" (standard scoring) and "source" (the transport itself failed)
+    # cover every position, so they must reach the column as ALL_POSITIONS.
+    unavailable = {(ALL_POSITIONS if pos in ("league", "source") else pos): reason
                    for pos, reason in ranks.unavailable.items()}
     return ExpertBoard(source_id=SOURCE_ID, short="Boone",
                        label=f"{ranks.analyst} (Yahoo)", entries=entries,
