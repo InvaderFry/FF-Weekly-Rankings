@@ -179,6 +179,10 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           TITLE=$(python -m ff_startsit.workflow identity waivers.md "waiver wire")
+          OWNER="${GITHUB_REPOSITORY%%/*}"; REPO="${GITHUB_REPOSITORY##*/}"
+          WAIVERS_URL="https://${OWNER,,}.github.io/${REPO}/waivers.html"
+          # GitHub refuses a body over 65,536 characters (workflow.fit_issue_body).
+          python -m ff_startsit.workflow fit-issue waivers.md issue-body.md "$WAIVERS_URL"
           NUM=$(gh issue list --state open --search "in:title \"$TITLE\"" \
                 --json number,title --jq ".[] | select(.title==\"$TITLE\") | .number" | head -1)
           if [ -n "$NUM" ]; then
@@ -187,17 +191,15 @@ jobs:
             # history) and comments only what changed (workflow.update_note),
             # instead of re-posting the whole report as another comment.
             echo "Updating issue #$NUM"
-            OWNER="${GITHUB_REPOSITORY%%/*}"; REPO="${GITHUB_REPOSITORY##*/}"
-            WAIVERS_URL="https://${OWNER,,}.github.io/${REPO}/waivers.html"
             gh issue view "$NUM" --json body,comments \
               --jq '.body, (.comments[].body)' > published.md
             python -m ff_startsit.workflow update-note waivers.md published.md \
               "$WAIVERS_URL" "Update" > update.md
-            gh issue edit "$NUM" --body-file waivers.md
+            gh issue edit "$NUM" --body-file issue-body.md
             gh issue comment "$NUM" --body-file update.md
           else
             echo "Creating issue: $TITLE"
-            gh issue create --title "$TITLE" --body-file waivers.md
+            gh issue create --title "$TITLE" --body-file issue-body.md
             # A new week's issue closes the earlier weeks' issues of this kind
             # (workflow.stale_issues); every reader takes the newest open one.
             gh issue list --state open --search 'in:title "waiver wire"' --limit 100 \

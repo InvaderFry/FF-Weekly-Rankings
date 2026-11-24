@@ -1615,6 +1615,14 @@ trade as the decision log, and as Discord. Note the titles are now season-aware
 (`2026 Week 1 start/sit`); pre-existing week-only issues are left standing as
 history and are never reused.
 
+**Issue bodies go through `workflow.fit_issue_body`** (`fit-issue`), because
+GitHub refuses a body over 65,536 characters and the 2026 Week 12 waiver report
+(four leagues, full writers' boards) passed it: the issue step failed while
+Discord had already gone out. It empties the folded `<details>` sections
+largest-first, cuts the tail only if that is not enough, and always keeps the
+head (`issue_title` reads it) and every `ff-*` marker (the gates read them back
+off the issue). The full report still reaches the run summary and the page.
+
 **A new week's issue closes the older ones of its kind.** When a workflow
 *creates* an issue it lists the open issues of that kind and closes each one
 `workflow.stale_issues` names: a title in exactly `issue_title`'s shape, same

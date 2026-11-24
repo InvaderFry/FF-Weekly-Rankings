@@ -235,3 +235,51 @@ def test_every_report_the_workflows_title_carries_its_identity():
             (render_waiver_digest(2, [waivers]), "waiver wire", 2026),
             (render_digest(2, "ppr", recs, lineup=Lineup([])), "start/sit", season_year())]:
         assert issue_title(report, kind) == f"{year} Week 2 {kind}"
+
+
+# --- fit_issue_body: GitHub refuses an issue body over 65,536 characters ----
+
+from ff_startsit.workflow import ISSUE_BODY_LIMIT, fit_issue_body, issue_title
+
+_HEAD = "**Data status** — Season 2026 · Week 12\n\n"
+_MARKERS = ("<!-- ff-board season=2026 week=12 mode=live read=boone_waiver -->\n"
+            "<!-- ff-adds season=2026 week=12 sig=abc123 -->\n")
+
+
+def _folded(n, size):
+    return (f"<details><summary>The other {n} players the writers named</summary>\n\n"
+            + ("| Player | Boone WW |\n" * (size // 22)) + "\n</details>\n\n")
+
+
+def test_fit_issue_body_leaves_a_report_that_fits_alone():
+    report = _HEAD + "short\n" + _MARKERS
+    assert fit_issue_body(report) == report
+
+
+def test_fit_issue_body_empties_folds_first_and_keeps_head_and_markers():
+    claims = "## League A\n\nAdd X (drop Y)\n\n"
+    report = _HEAD + claims + _folded(40, 40_000) + claims + _folded(30, 40_000) + _MARKERS
+    assert len(report) > ISSUE_BODY_LIMIT
+
+    fitted = fit_issue_body(report, url="https://example.test/waivers.html")
+
+    assert len(fitted) < ISSUE_BODY_LIMIT
+    assert issue_title(fitted, "waiver wire") == "2026 Week 12 waiver wire"
+    assert fitted.count("Add X (drop Y)") == 2   # the decisions outside the folds stay
+    assert "<summary>The other 40 players" in fitted
+    assert "https://example.test/waivers.html" in fitted
+    for marker in _MARKERS.splitlines():
+        assert marker in fitted
+
+
+def test_fit_issue_body_cuts_the_tail_but_never_a_marker():
+    report = _HEAD + ("plain line of a long table\n" * 4000) + _MARKERS
+    assert len(report) > ISSUE_BODY_LIMIT
+
+    fitted = fit_issue_body(report)
+
+    assert len(fitted) < ISSUE_BODY_LIMIT
+    assert fitted.startswith(_HEAD)
+    assert "Trimmed: too long for a GitHub issue" in fitted
+    for marker in _MARKERS.splitlines():
+        assert marker in fitted
