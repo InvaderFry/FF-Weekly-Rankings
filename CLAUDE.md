@@ -1623,6 +1623,14 @@ largest-first, cuts the tail only if that is not enough, and always keeps the
 head (`issue_title` reads it) and every `ff-*` marker (the gates read them back
 off the issue). The full report still reaches the run summary and the page.
 
+**The Pages deploy is retried once, in the same job.** `deploy-pages` can list
+the run's artifacts before the upload a second earlier is visible ("No
+artifacts named github-pages", actions/deploy-pages#451; three manual runs in a
+row hit it in Week 12). It fails before creating a deployment, so the workflows
+retry it after 30 seconds (`deploy_first` / `deploy_retry`). Don't "fix" it by
+re-running the job: that uploads a second `github-pages` artifact and fails on
+"Multiple artifacts" instead.
+
 **A new week's issue closes the older ones of its kind.** When a workflow
 *creates* an issue it lists the open issues of that kind and closes each one
 `workflow.stale_issues` names: a title in exactly `issue_title`'s shape, same

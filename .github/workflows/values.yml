@@ -63,7 +63,7 @@ jobs:
     runs-on: ubuntu-latest
     environment:
       name: ${{ inputs.artifact_only && 'publishing-test' || 'github-pages' }}
-      url: ${{ steps.deployment.outputs.page_url }}
+      url: ${{ steps.deploy_first.outputs.page_url || steps.deploy_retry.outputs.page_url }}
     env:
       FF_ROSTER_SOURCE: espn
       FF_LEAGUES: ${{ secrets.FF_LEAGUES }}
@@ -276,9 +276,24 @@ jobs:
         with:
           path: ./site
 
+      # deploy-pages can list this run's artifacts a moment before the upload
+      # above is visible and fail with "No artifacts named github-pages"
+      # (actions/deploy-pages#451). It fails before creating a deployment, so
+      # one retry after a pause is safe. Re-running the job is not: it uploads
+      # a second github-pages artifact and fails on "Multiple artifacts".
       - name: Deploy to GitHub Pages
         if: steps.site.outputs.complete == 'true' && !inputs.artifact_only
-        id: deployment
+        id: deploy_first
+        continue-on-error: true
+        uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346 # v5.0.1
+
+      - name: Wait before retrying the deploy
+        if: steps.deploy_first.outcome == 'failure'
+        run: sleep 30
+
+      - name: Deploy to GitHub Pages (retry)
+        if: steps.deploy_first.outcome == 'failure'
+        id: deploy_retry
         uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346 # v5.0.1
 
       # Only now is this week's waivers refresh done: rebuilt *and* live. The
@@ -286,7 +301,7 @@ jobs:
       # reads it. Recorded any earlier, a failed restore or deploy left the
       # retry believing the refresh had landed, and Tuesday's page stood.
       - name: Record the waivers refresh
-        if: ${{ !inputs.artifact_only && steps.refresh.outcome == 'success' && steps.deployment.outcome == 'success' }}
+        if: ${{ !inputs.artifact_only && steps.refresh.outcome == 'success' && (steps.deploy_first.outcome == 'success' || steps.deploy_retry.outcome == 'success') }}
         continue-on-error: true
         env:
           GH_TOKEN: ${{ github.token }}
