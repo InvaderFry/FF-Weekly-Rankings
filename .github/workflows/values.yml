@@ -198,7 +198,8 @@ jobs:
             WAIVERS_URL="https://${OWNER,,}.github.io/${REPO}/waivers.html"
             python -m ff_startsit.workflow update-note waivers.md previous-waivers.md \
               "$WAIVERS_URL" "Wednesday update" > wednesday.md
-            gh issue edit "$NUM" --body-file waivers.md
+            python -m ff_startsit.workflow fit-issue waivers.md waivers-body.md "$WAIVERS_URL"
+            gh issue edit "$NUM" --body-file waivers-body.md
             gh issue comment "$NUM" --body-file wednesday.md
           fi
 
@@ -236,14 +237,18 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           TITLE=$(python -m ff_startsit.workflow identity values.md "trade values")
+          OWNER="${GITHUB_REPOSITORY%%/*}"; REPO="${GITHUB_REPOSITORY##*/}"
+          # GitHub refuses a body over 65,536 characters (workflow.fit_issue_body).
+          python -m ff_startsit.workflow fit-issue values.md values-body.md \
+            "https://${OWNER,,}.github.io/${REPO}/values.html"
           NUM=$(gh issue list --state open --search "in:title \"$TITLE\"" \
                 --json number,title --jq ".[] | select(.title==\"$TITLE\") | .number" | head -1)
           if [ -n "$NUM" ]; then
             echo "Updating issue #$NUM"
-            gh issue comment "$NUM" --body-file values.md
+            gh issue comment "$NUM" --body-file values-body.md
           else
             echo "Creating issue: $TITLE"
-            gh issue create --title "$TITLE" --body-file values.md
+            gh issue create --title "$TITLE" --body-file values-body.md
             # A new week's issue closes the earlier weeks' issues of this kind
             # (workflow.stale_issues); every reader takes the newest open one.
             gh issue list --state open --search 'in:title "trade values"' --limit 100 \

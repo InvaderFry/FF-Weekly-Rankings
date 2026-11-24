@@ -447,6 +447,57 @@ def startsit_update_note(report: str, previous: str, url: str = "",
     return "\n".join(lines + [""] + markers) + "\n"
 
 
+# GitHub refuses an issue body or comment over 65,536 characters (the Week 12
+# waiver report, four leagues with full writers' boards, was the first to
+# reach it). The margin leaves room for the trim notes below.
+ISSUE_BODY_LIMIT = 65536
+_FIT_TARGET = ISSUE_BODY_LIMIT - 1536
+_FF_MARKER = re.compile(r"<!-- ff-[^>]*-->")
+_DETAILS = re.compile(r"(<details[^>]*><summary>.*?</summary>)(.*?)(</details>)", re.S)
+
+
+def fit_issue_body(report: str, url: str = "", limit: int = _FIT_TARGET) -> str:
+    """Shrink ``report`` to fit an issue body without losing what the gates read.
+
+    A report that fits is returned unchanged. Otherwise the folded
+    ``<details>`` sections (research and source detail, already behind a fold
+    on the page) are emptied largest first, and only if that is not enough is
+    the tail cut. Either way two things survive, because the scheduled gates
+    read them back off the issue: the head (``issue_title`` reads the Data
+    status line) and every ``ff-*`` marker (``has_news``, ``adds_changed``,
+    the lineup diff). A marker lost to a cut is appended at the end.
+    """
+    if len(report) <= limit:
+        return report
+    where = f" See the [full page]({url})." if url else " See the site or the run summary."
+    note = f"_Trimmed: too long for a GitHub issue.{where}_"
+    markers = _FF_MARKER.findall(report)
+    text = report
+    blocks = sorted(_DETAILS.finditer(text), key=lambda m: len(m[2]), reverse=True)
+    spans = []
+    saved = 0
+    for m in blocks:
+        if len(text) - saved <= limit:
+            break
+        kept = "".join(_FF_MARKER.findall(m[2]))
+        body = f"\n\n{note}\n\n{kept}"
+        if len(m[2]) <= len(body):
+            continue
+        spans.append((m.start(2), m.end(2), body))
+        saved += len(m[2]) - len(body)
+    for start, end, body in sorted(spans, reverse=True):
+        text = text[:start] + body + text[end:]
+    if len(text) > limit:
+        tail_markers = "\n".join(markers)
+        room = limit - len(note) - len(tail_markers) - 8
+        cut = text.rfind("\n", 0, room)
+        text = text[:cut if cut > 0 else room].rstrip() + f"\n\n{note}\n"
+    missing = [m for m in markers if m not in text]
+    if missing:
+        text = text.rstrip("\n") + "\n\n" + "\n".join(missing) + "\n"
+    return text
+
+
 def in_season(event, today=None, output=None):
     """Whether this run should do its work: ``run=true`` or ``run=false``.
 
@@ -505,6 +556,11 @@ def main():
         print(startsit_update_note(Path(sys.argv[2]).read_text(encoding="utf-8"),
                                    previous.read_text(encoding="utf-8") if previous.exists() else "",
                                    *sys.argv[4:6]), end="")
+    elif sys.argv[1] == "fit-issue":
+        # fit-issue REPORT OUT [URL]
+        Path(sys.argv[3]).write_text(
+            fit_issue_body(Path(sys.argv[2]).read_text(encoding="utf-8"),
+                           *sys.argv[4:5]), encoding="utf-8")
     elif sys.argv[1] == "refresh-needed":
         refresh_needed(sys.argv[2], sys.argv[3])
     elif sys.argv[1] == "refreshed-marker":
